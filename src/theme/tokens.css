@@ -1,0 +1,127 @@
+@import '@fontsource/manrope/300.css';
+@import '@fontsource/manrope/400.css';
+@import '@fontsource/manrope/500.css';
+@import '@fontsource/manrope/600.css';
+@import '@fontsource/manrope/700.css';
+@import '@fontsource/manrope/800.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --dc-vault: #08080a;
+  --dc-card: #0f0f13;
+  --dc-panel: #0d0d11;
+  --dc-border: rgba(255, 255, 255, 0.08);
+  --dc-border-strong: rgba(255, 255, 255, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--dc-vault);
+  color: #f3f3f6;
+  font-family: 'Manrope', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(229, 72, 77, 0.3);
+}
+
+a {
+  color: #d7d7dd;
+  text-decoration: none;
+}
+a:hover {
+  color: #fff;
+}
+
+input,
+button,
+select,
+textarea {
+  font-family: inherit;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #56565d;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: #0b0b0e;
+}
+::-webkit-scrollbar-thumb {
+  background: #26262c;
+  border-radius: 6px;
+}
+
+/* Scroll-reveal (progressive-enhancement; visible by default if JS/observer absent) */
+[data-reveal] {
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+[data-reveal].dc-in {
+  opacity: 1;
+  transform: none;
+}
+
+.dc-hover-lift {
+  transition:
+    transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1),
+    border-color 0.35s,
+    box-shadow 0.35s;
+}
+.dc-hover-lift:hover {
+  transform: translateY(-5px);
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+}
+
+.dc-btn-anim {
+  transition:
+    transform 0.18s ease,
+    filter 0.2s ease,
+    box-shadow 0.25s ease;
+}
+.dc-btn-anim:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+}
+.dc-btn-anim:active {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reveal] {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+  .dc-hover-lift,
+  .dc-btn-anim {
+    transition: none !important;
+  }
+}
