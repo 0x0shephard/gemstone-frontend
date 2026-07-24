@@ -1,20 +1,36 @@
 import type {
-  DecoratedGem,
+  ActivityItem,
   Auction,
   Bid,
-  Offer,
-  SwapRequest,
-  Redemption,
-  ActivityItem,
+  BuyListingRequest,
+  BuyNowRequest,
+  CancelListingRequest,
+  CancelRedemptionRequest,
+  ClaimRefundRequest,
+  ClaimTreasuryPayoutRequest,
+  CreateOfferRequest,
+  CreateSwapRequest,
+  DecoratedGem,
   FeeTier,
+  FundReserveRequest,
+  HowStep,
+  ListRequest,
+  Offer,
+  OfferRequest,
+  PaymentAsset,
+  PendingRefund,
+  PendingTreasuryPayout,
+  Redemption,
+  RedemptionRequest,
+  SettleAuctionRequest,
+  SwapRequest,
+  SwapRequestAction,
   TreasurySplitItem,
   TrustSignal,
-  HowStep,
-  PaymentAsset,
   TxResult,
+  BidRequest,
 } from './types';
 
-/** Aggregate returned for the Profile/Portfolio page. */
 export interface ProfileData {
   owned: DecoratedGem[];
   bids: Bid[];
@@ -30,7 +46,6 @@ export interface ProfileData {
   };
 }
 
-/** Landing-page content bundle. */
 export interface LandingData {
   featured: DecoratedGem[];
   auctions: Auction[];
@@ -41,18 +56,12 @@ export interface LandingData {
   featuredCaption: string;
 }
 
-/**
- * The single interface every page/hook depends on. The mock implementation
- * serves fixtures today; a wagmi-backed implementation will satisfy the same
- * contract against real ABIs later — with no page changes.
- */
 export interface IDataService {
-  // reads
   getGems(): Promise<DecoratedGem[]>;
-  getGem(id: string): Promise<DecoratedGem | undefined>;
+  getGem(gemId: bigint): Promise<DecoratedGem | undefined>;
   getListings(): Promise<DecoratedGem[]>;
   getAuctions(): Promise<Auction[]>;
-  getAuction(gemId: string): Promise<Auction | undefined>;
+  getAuction(gemId: bigint): Promise<Auction | undefined>;
   getOffers(): Promise<Offer[]>;
   getSwapRequests(): Promise<SwapRequest[]>;
   getRedemptions(): Promise<Redemption[]>;
@@ -60,20 +69,24 @@ export interface IDataService {
   getLanding(): Promise<LandingData>;
   getFeeTiers(): Promise<FeeTier[]>;
   getPaymentAssets(): Promise<PaymentAsset[]>;
+  getPendingAuctionRefunds(address?: string): Promise<PendingRefund[]>;
+  getPendingTreasuryPayout(address?: string): Promise<PendingTreasuryPayout | undefined>;
 
-  // writes (mocked tx today)
-  buyNow(gemId: string, asset: string): Promise<TxResult>;
-  buy(gemId: string, asset: string): Promise<TxResult>;
-  list(gemId: string, priceUsd: number): Promise<TxResult>;
-  cancelListing(gemId: string): Promise<TxResult>;
-  bid(gemId: string, asset: string, amountUsd: number): Promise<TxResult>;
-  settleAuction(gemId: string): Promise<TxResult>;
-  claimRefund(asset: string): Promise<TxResult>;
-  createOffer(gemId: string, asset: string, amountUsd: number): Promise<TxResult>;
-  acceptOffer(gemId: string): Promise<TxResult>;
-  createSwap(offeredGemId: string, requestedGemId: string, cashDeltaUsd: number): Promise<TxResult>;
-  acceptSwap(swapGemId: string): Promise<TxResult>;
-  requestRedemption(gemId: string): Promise<TxResult>;
-  cancelRedemption(gemId: string): Promise<TxResult>;
-  fundReserve(gemId: string, asset: string): Promise<TxResult>;
+  buyNow(request: BuyNowRequest): Promise<TxResult>;
+  buy(request: BuyListingRequest): Promise<TxResult>;
+  list(request: ListRequest): Promise<TxResult>;
+  cancelListing(request: CancelListingRequest): Promise<TxResult>;
+  bid(request: BidRequest): Promise<TxResult>;
+  settleAuction(request: SettleAuctionRequest): Promise<TxResult>;
+  claimRefund(request: ClaimRefundRequest): Promise<TxResult>;
+  claimTreasuryPayout(request: ClaimTreasuryPayoutRequest): Promise<TxResult>;
+  createOffer(request: CreateOfferRequest): Promise<TxResult>;
+  acceptOffer(request: OfferRequest): Promise<TxResult>;
+  refundExpiredOffer(request: OfferRequest): Promise<TxResult>;
+  createSwap(request: CreateSwapRequest): Promise<TxResult>;
+  acceptSwap(request: SwapRequestAction): Promise<TxResult>;
+  cancelSwap(request: SwapRequestAction): Promise<TxResult>;
+  requestRedemption(request: RedemptionRequest): Promise<TxResult>;
+  cancelRedemption(request: CancelRedemptionRequest): Promise<TxResult>;
+  fundReserve(request: FundReserveRequest): Promise<TxResult>;
 }

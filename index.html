@@ -3,12 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#08080A" />
+    <meta name="theme-color" content="#181818" />
     <meta
       name="description"
       content="Digital Carat — the vault for tokenized gemstones. Verified custody, on-chain reserves, and physical redemption."
     />
     <title>Digital Carat · Tokenized Gemstones</title>
+    <script>
+      try {
+        const savedScheme = localStorage.getItem('digital-carat-color-scheme');
+        document.documentElement.dataset.colorScheme =
+          savedScheme === 'garnet' ? 'garnet' : 'atelier';
+        if (savedScheme === 'garnet') {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#07080B');
+        }
+      } catch {
+        document.documentElement.dataset.colorScheme = 'atelier';
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

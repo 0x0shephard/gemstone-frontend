@@ -2,7 +2,10 @@
 
 export function fmtUsd(n: number, opts?: { compact?: boolean }): string {
   if (opts?.compact && Math.abs(n) >= 1000) {
-    return '$' + new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+    return (
+      '$' +
+      new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(n)
+    );
   }
   return '$' + n.toLocaleString('en-US');
 }

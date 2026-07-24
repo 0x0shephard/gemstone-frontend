@@ -1,3 +1,6 @@
+@import '@fontsource/geologica/400.css';
+@import '@fontsource/geologica/500.css';
+@import '@fontsource/geologica/600.css';
 @import '@fontsource/manrope/300.css';
 @import '@fontsource/manrope/400.css';
 @import '@fontsource/manrope/500.css';
@@ -14,11 +17,59 @@
 
 :root {
   color-scheme: dark;
-  --dc-vault: #08080a;
-  --dc-card: #0f0f13;
-  --dc-panel: #0d0d11;
-  --dc-border: rgba(255, 255, 255, 0.08);
-  --dc-border-strong: rgba(255, 255, 255, 0.16);
+  --dc-vault: #181818;
+  --dc-sidebar: #1a1d20;
+  --dc-card: #20262d;
+  --dc-panel: #252c33;
+  --dc-elevated: #2b323a;
+  --dc-frost: #ffffff;
+  --dc-accent: #83c3ff;
+  --dc-accent-rgb: 131 195 255;
+  --dc-accent-2: #f59a56;
+  --dc-ruby: #df6874;
+  --dc-ruby-rgb: 223 104 116;
+  --dc-sapphire: #83c3ff;
+  --dc-sapphire-rgb: 131 195 255;
+  --dc-emerald: #74d58b;
+  --dc-emerald-rgb: 116 213 139;
+  --dc-amber: #f59a56;
+  --dc-amber-rgb: 245 154 86;
+  --dc-border: rgba(255, 255, 255, 0.082);
+  --dc-border-strong: rgba(255, 255, 255, 0.18);
+  --dc-ring: rgba(131, 195, 255, 0.76);
+  --dc-header: rgba(24, 24, 24, 0.84);
+  --dc-selection: rgba(131, 195, 255, 0.32);
+  --dc-button-top: #b8ddff;
+  --dc-button-bottom: #83c3ff;
+  --dc-button-ink: #111820;
+}
+
+:root[data-color-scheme='garnet'] {
+  --dc-vault: #07080b;
+  --dc-sidebar: #090b0f;
+  --dc-card: #0d1015;
+  --dc-panel: #11151c;
+  --dc-elevated: #151a22;
+  --dc-frost: #f2f4f7;
+  --dc-accent: #d85661;
+  --dc-accent-rgb: 216 86 97;
+  --dc-accent-2: #7798ff;
+  --dc-ruby: #d85661;
+  --dc-ruby-rgb: 216 86 97;
+  --dc-sapphire: #7798ff;
+  --dc-sapphire-rgb: 119 152 255;
+  --dc-emerald: #4cc99a;
+  --dc-emerald-rgb: 76 201 154;
+  --dc-amber: #e9ad5b;
+  --dc-amber-rgb: 233 173 91;
+  --dc-border: rgba(227, 233, 242, 0.08);
+  --dc-border-strong: rgba(227, 233, 242, 0.17);
+  --dc-ring: rgba(119, 152, 255, 0.75);
+  --dc-header: rgba(7, 8, 11, 0.8);
+  --dc-selection: rgba(216, 86, 97, 0.34);
+  --dc-button-top: #f4f6f8;
+  --dc-button-bottom: #c8cfd8;
+  --dc-button-ink: #090b0f;
 }
 
 * {
@@ -33,20 +84,35 @@ body,
 
 body {
   margin: 0;
-  background: var(--dc-vault);
+  background:
+    radial-gradient(
+      circle at 74% 4%,
+      color-mix(in srgb, var(--dc-accent) 13%, transparent),
+      transparent 31rem
+    ),
+    var(--dc-vault);
   color: #f3f3f6;
   font-family: 'Manrope', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
+h1,
+h2,
+h3,
+h4 {
+  font-family: 'Geologica', 'Manrope', system-ui, sans-serif;
+  font-variation-settings: 'CRSV' 0;
+}
+
 ::selection {
-  background: rgba(229, 72, 77, 0.3);
+  background: var(--dc-selection);
 }
 
 a {
-  color: #d7d7dd;
+  color: #dce1e8;
   text-decoration: none;
+  transition: color 160ms ease;
 }
 a:hover {
   color: #fff;
@@ -58,9 +124,23 @@ select,
 textarea {
   font-family: inherit;
 }
+
+:focus-visible {
+  outline: 2px solid var(--dc-ring);
+  outline-offset: 3px;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
 input::placeholder,
 textarea::placeholder {
-  color: #56565d;
+  color: #626a76;
 }
 
 ::-webkit-scrollbar {
@@ -68,20 +148,21 @@ textarea::placeholder {
   height: 9px;
 }
 ::-webkit-scrollbar-track {
-  background: #0b0b0e;
+  background: #090b0f;
 }
 ::-webkit-scrollbar-thumb {
-  background: #26262c;
-  border-radius: 6px;
+  background: #2b3039;
+  border-radius: 999px;
+  border: 2px solid #090b0f;
 }
 
 /* Scroll-reveal (progressive-enhancement; visible by default if JS/observer absent) */
 [data-reveal] {
   opacity: 0;
-  transform: translateY(26px);
+  transform: translateY(18px);
   transition:
-    opacity 0.7s cubic-bezier(0.22, 0.61, 0.36, 1),
-    transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
+    opacity 0.62s cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 0.62s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 [data-reveal].dc-in {
   opacity: 1;
@@ -90,14 +171,14 @@ textarea::placeholder {
 
 .dc-hover-lift {
   transition:
-    transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1),
-    border-color 0.35s,
-    box-shadow 0.35s;
+    transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1),
+    border-color 0.28s,
+    box-shadow 0.28s;
 }
 .dc-hover-lift:hover {
-  transform: translateY(-5px);
-  border-color: rgba(255, 255, 255, 0.24) !important;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+  transform: translateY(-3px);
+  border-color: rgba(227, 233, 242, 0.2) !important;
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.34);
 }
 
 .dc-btn-anim {
@@ -107,11 +188,64 @@ textarea::placeholder {
     box-shadow 0.25s ease;
 }
 .dc-btn-anim:hover {
-  transform: translateY(-2px);
-  filter: brightness(1.06);
+  transform: translateY(-1px);
+  filter: brightness(1.07);
 }
 .dc-btn-anim:active {
   transform: translateY(0);
+}
+
+.dc-surface {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.018), transparent 42%), var(--dc-card);
+  border: 1px solid var(--dc-border);
+}
+
+.dc-facet-border {
+  position: relative;
+}
+
+.dc-facet-border::before {
+  position: absolute;
+  inset: -1px;
+  z-index: -1;
+  content: '';
+  border-radius: inherit;
+  background: linear-gradient(
+    135deg,
+    rgba(242, 244, 247, 0.18),
+    color-mix(in srgb, var(--dc-accent) 7%, transparent) 32%,
+    transparent 58%,
+    color-mix(in srgb, var(--dc-accent-2) 9%, transparent)
+  );
+}
+
+.dc-card-sheen {
+  isolation: isolate;
+}
+
+.dc-card-sheen::after {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  content: '';
+  background: linear-gradient(112deg, transparent 32%, rgba(255, 255, 255, 0.075), transparent 58%);
+  transform: translateX(-110%);
+  transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.dc-card-sheen:hover::after {
+  transform: translateX(110%);
+}
+
+.dc-dot-grid {
+  background-image: radial-gradient(rgba(227, 233, 242, 0.1) 0.75px, transparent 0.75px);
+  background-size: 18px 18px;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+}
+
+.dc-mobile-safe {
+  padding-bottom: calc(5.6rem + env(safe-area-inset-bottom));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -121,7 +255,12 @@ textarea::placeholder {
     transition: none !important;
   }
   .dc-hover-lift,
-  .dc-btn-anim {
+  .dc-btn-anim,
+  .dc-card-sheen::after {
     transition: none !important;
+  }
+
+  .dc-card-sheen::after {
+    display: none;
   }
 }

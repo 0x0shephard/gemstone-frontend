@@ -1,41 +1,36 @@
-/**
- * Domain models consumed by the UI. These are intentionally UI-shaped (mirroring
- * the mockup data model). A future wagmi-backed service maps on-chain reads/events
- * into these same shapes so pages never change.
- */
+import type { Address, Hash } from 'viem';
 
-export type GemType = 'ruby' | 'sapphire' | 'emerald';
+export type GemType = string;
+export type RedeemStatus = 'Eligible' | 'KYC required' | 'Blocked';
 
-export type RedeemStatus = 'Eligible' | 'KYC required';
-
-/** Core gemstone / DGE NFT model. */
 export interface Gem {
-  id: string;
+  gemId: bigint;
+  tokenId?: bigint;
+  displayId: string;
   name: string;
   type: GemType;
   typeLabel: string;
-  gemId: string;
-  /** Estimated USD value. */
+  valueUsd: bigint;
   value: number;
   carats: number;
-  /** Reserve funded percentage (>= 100 means fully funded). */
   reserve: number;
+  reserveBalanceUsd: bigint;
+  reserveShortfallUsd: bigint;
   feeTier: string;
   feePct: number;
-  custody: string;
+  custodyProvider: string;
+  custodyCountry: string;
   redeem: RedeemStatus;
+  metadataUri?: string;
 }
 
-/** A gem enriched with derived, presentational fields. */
 export interface DecoratedGem extends Gem {
   color: string;
   valueFmt: string;
   caratsFmt: string;
-  /** CSS background for the faux-faceted thumbnail. */
   thumb: string;
   reserveLabel: string;
   reserveColor: string;
-  /** True when reserve >= 100. */
   funded: boolean;
   feeLabel: string;
   custodyLabel: string;
@@ -44,11 +39,10 @@ export interface DecoratedGem extends Gem {
 export interface Auction {
   gem: DecoratedGem;
   highestBidFmt: string;
-  highestBidder?: string;
+  highestBidder?: Address;
   bids: number;
-  /** Seconds remaining (0 = expired). */
   secondsLeft: number;
-  floorUsd: number;
+  floorUsd: bigint;
 }
 
 export interface Bid {
@@ -61,25 +55,30 @@ export interface Bid {
 }
 
 export interface Offer {
+  offerId: bigint;
   gem: DecoratedGem;
   offerFmt: string;
   from: string;
-  status: 'Pending' | 'Declined' | 'Accepted';
+  status: 'Pending' | 'Accepted' | 'Expired' | 'Refunded';
   statusColor: string;
-  /** Seconds until the 24h offer expires. */
   secondsLeft: number;
 }
 
 export interface SwapRequest {
+  offerId: bigint;
   gem: DecoratedGem;
+  offeredTokenId: bigint;
+  requestedTokenId: bigint;
   giveName: string;
-  giveId: string;
+  giveDisplayId: string;
   diff: string;
-  status: string;
+  status: 'Active' | 'Accepted' | 'Cancelled' | 'Expired';
   statusColor: string;
 }
 
 export interface Redemption {
+  workflowId: string;
+  tokenId: bigint;
   gem: DecoratedGem;
   stage: string;
   progress: number;
@@ -90,10 +89,11 @@ export interface Redemption {
 export interface ActivityItem {
   kind: string;
   gem: string;
-  gemId: string;
+  displayId: string;
   amount: string;
   date: string;
   color: string;
+  txHash?: Hash;
 }
 
 export interface FeeTier {
@@ -121,18 +121,105 @@ export interface HowStep {
 }
 
 export interface PaymentAsset {
-  /** address(0) for native ETH. */
-  address: string;
+  address: Address;
   symbol: string;
   name: string;
   decimals: number;
-  /** USD price used for preview math. */
   usdPrice: number;
+  enabled: boolean;
   isNative: boolean;
 }
 
-/** Result of a write action while ABIs are mocked. */
+export interface PendingRefund {
+  paymentAsset: Address;
+  symbol: PaymentAsset['symbol'];
+  amount: bigint;
+  amountFmt: string;
+}
+
+export interface PendingTreasuryPayout {
+  amount: bigint;
+  amountFmt: string;
+}
+
 export interface TxResult {
-  hash: `0x${string}`;
+  hash: Hash;
   status: 'success';
+}
+
+export interface BuyNowRequest {
+  gemId: bigint;
+  paymentAsset: Address;
+  maximumAmount?: bigint;
+}
+
+export interface BuyListingRequest {
+  tokenId: bigint;
+  paymentAsset: Address;
+  maximumAmount?: bigint;
+}
+
+export interface ListRequest {
+  tokenId: bigint;
+  priceUsd: bigint;
+}
+
+export interface CancelListingRequest {
+  tokenId: bigint;
+}
+
+export interface BidRequest {
+  gemId: bigint;
+  paymentAsset: Address;
+  amountUsd: bigint;
+}
+
+export interface SettleAuctionRequest {
+  gemId: bigint;
+}
+
+export interface ClaimRefundRequest {
+  paymentAsset: Address;
+}
+
+export interface ClaimTreasuryPayoutRequest {
+  recipient: Address;
+}
+
+export interface CreateOfferRequest {
+  tokenId: bigint;
+  paymentAsset: Address;
+  amountUsd: bigint;
+}
+
+export interface OfferRequest {
+  offerId: bigint;
+}
+
+export interface CreateSwapRequest {
+  offeredTokenId: bigint;
+  requestedTokenId: bigint;
+  paymentAsset: Address;
+  cashAmountUsd: bigint;
+  proposerPays: boolean;
+  expiresAt: bigint;
+}
+
+export interface SwapRequestAction {
+  offerId: bigint;
+}
+
+export interface RedemptionRequest {
+  tokenId: bigint;
+  requestHash: Hash;
+}
+
+export interface CancelRedemptionRequest {
+  tokenId: bigint;
+}
+
+export interface FundReserveRequest {
+  gemId: bigint;
+  paymentAsset: Address;
+  amountUsd: bigint;
 }

@@ -17,12 +17,17 @@ const columns: Column<ActivityItem>[] = [
     header: 'Gem',
     render: (r) => (
       <span>
-        {r.gem} <span className="font-mono text-[11.5px] text-ink-dim">· {r.gemId}</span>
+        {r.gem} <span className="font-mono text-[11.5px] text-ink-dim">· {r.displayId}</span>
       </span>
     ),
   },
   { key: 'amt', header: 'Amount', align: 'right', mono: true, render: (r) => r.amount },
-  { key: 'date', header: 'Date', align: 'right', render: (r) => <span className="text-ink-muted">{r.date}</span> },
+  {
+    key: 'date',
+    header: 'Date',
+    align: 'right',
+    render: (r) => <span className="text-ink-muted">{r.date}</span>,
+  },
 ];
 
 /** Protocol activity / transaction history table. */
@@ -31,7 +36,7 @@ export function TransactionHistory({ items }: { items: ActivityItem[] }) {
     <DataTable
       columns={columns}
       rows={items}
-      rowKey={(r, i) => `${r.kind}-${r.gemId}-${i}`}
+      rowKey={(r, i) => `${r.kind}-${r.displayId}-${i}`}
       empty="No transactions yet."
     />
   );

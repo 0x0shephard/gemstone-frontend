@@ -12,10 +12,27 @@ import { dataService } from '@/services';
 import { cn } from '@/lib/cn';
 
 const STEPS = [
-  { n: '01', title: 'Verify ownership', body: 'Confirm you hold the token and the reserve is fully funded.' },
-  { n: '02', title: 'Compliance check', body: 'ComplianceRegistry.canRedeem must pass for your address.' },
-  { n: '03', title: 'Request & lock', body: 'requestRedemption locks the NFT pending custodian confirmation.' },
-  { n: '04', title: 'Burn & release', body: 'On confirmation the NFT burns and the physical stone is released.', danger: true },
+  {
+    n: '01',
+    title: 'Verify ownership',
+    body: 'Confirm you hold the token and the reserve is fully funded.',
+  },
+  {
+    n: '02',
+    title: 'Compliance check',
+    body: 'ComplianceRegistry.canRedeem must pass for your address.',
+  },
+  {
+    n: '03',
+    title: 'Request & lock',
+    body: 'requestRedemption locks the NFT pending custodian confirmation.',
+  },
+  {
+    n: '04',
+    title: 'Burn & release',
+    body: 'On confirmation the NFT burns and the physical stone is released.',
+    danger: true,
+  },
 ];
 
 export default function RedeemPage() {
@@ -26,21 +43,39 @@ export default function RedeemPage() {
   return (
     <div className="space-y-8">
       {/* Process */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {STEPS.map((s) => (
-          <Card
-            key={s.n}
-            className={cn('p-5', s.danger && 'border-ruby/30')}
-            style={s.danger ? { background: 'rgba(229,72,77,.05)' } : undefined}
-          >
-            <div className={cn('font-mono text-[13px]', s.danger ? 'text-ruby' : 'text-ink-dim')}>
-              {s.n}
-            </div>
-            <h3 className="mt-3 text-[15px] font-semibold text-ink">{s.title}</h3>
-            <p className="mt-2 text-[12.5px] leading-relaxed text-ink-muted">{s.body}</p>
-          </Card>
-        ))}
-      </div>
+      <section className="overflow-hidden rounded-[20px] border border-white/[0.075] bg-gradient-to-br from-card to-inset p-5 sm:p-6">
+        <div className="mb-6 max-w-xl">
+          <p className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier">
+            Physical fulfillment
+          </p>
+          <h2 className="mt-2 font-display text-[23px] font-medium tracking-[-0.03em] text-ink">
+            Redemption follows a verifiable custody path.
+          </h2>
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
+            Your token is locked before the custodian releases the stone, then permanently burned
+            when fulfillment is confirmed.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {STEPS.map((s) => (
+            <Card
+              key={s.n}
+              className={cn('relative p-4', s.danger && 'border-ruby/25')}
+              style={
+                s.danger
+                  ? { background: 'color-mix(in srgb, var(--dc-ruby) 5%, transparent)' }
+                  : undefined
+              }
+            >
+              <div className={cn('font-mono text-[11px]', s.danger ? 'text-ruby' : 'text-ink-dim')}>
+                {s.n}
+              </div>
+              <h3 className="mt-3 font-display text-[14px] font-medium text-ink">{s.title}</h3>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-ink-muted">{s.body}</p>
+            </Card>
+          ))}
+        </div>
+      </section>
 
       {/* In-progress redemptions */}
       {redemptions && redemptions.length > 0 && (
@@ -49,10 +84,17 @@ export default function RedeemPage() {
           {redemptions.map((r, i) => (
             <Card key={i} className="p-5">
               <div className="flex items-center gap-3">
-                <GemThumb gem={r.gem} height={44} rounded="rounded-[10px]" showTag={false} showCarat={false} className="w-11" />
+                <GemThumb
+                  gem={r.gem}
+                  height={44}
+                  rounded="rounded-[10px]"
+                  showTag={false}
+                  showCarat={false}
+                  className="w-11"
+                />
                 <div className="flex-1">
                   <div className="text-[14px] font-semibold text-ink">{r.gem.name}</div>
-                  <div className="font-mono text-[11.5px] text-ink-dim">{r.gem.gemId}</div>
+                  <div className="font-mono text-[11.5px] text-ink-dim">{r.gem.displayId}</div>
                 </div>
                 <StatusBadge color={r.statusColor} dot>
                   {r.status}
@@ -69,7 +111,7 @@ export default function RedeemPage() {
                 <TxButton
                   size="sm"
                   variant="ghost"
-                  action={() => dataService.cancelRedemption(r.gem.id)}
+                  action={() => dataService.cancelRedemption({ tokenId: r.tokenId })}
                   pendingLabel="Cancelling…"
                 >
                   Cancel redemption
@@ -86,35 +128,49 @@ export default function RedeemPage() {
         {isLoading ? (
           <Skeleton className="h-40" />
         ) : (
-          <Card className="divide-y divide-white/[0.06]">
+          <Card className="divide-y divide-white/[0.06] overflow-hidden">
             {profile?.owned.map((gem) => {
               const canRedeem = gem.funded && gem.redeem === 'Eligible';
               return (
-                <div key={gem.id} className="flex items-center gap-3 p-4">
-                  <GemThumb gem={gem} height={44} rounded="rounded-[10px]" showTag={false} showCarat={false} className="w-11" />
+                <div
+                  key={gem.gemId.toString()}
+                  className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
+                >
+                  <GemThumb
+                    gem={gem}
+                    height={44}
+                    rounded="rounded-[10px]"
+                    showTag={false}
+                    showCarat={false}
+                    className="w-11"
+                  />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[14px] font-semibold text-ink">{gem.name}</div>
-                    <div className="font-mono text-[11.5px] text-ink-dim">{gem.gemId}</div>
+                    <div className="font-mono text-[11.5px] text-ink-dim">{gem.displayId}</div>
                   </div>
-                  {canRedeem ? (
-                    <StatusBadge tone="success" dot>
-                      Eligible
-                    </StatusBadge>
-                  ) : gem.redeem === 'KYC required' ? (
-                    <StatusBadge tone="danger">KYC required</StatusBadge>
-                  ) : (
-                    <StatusBadge tone="warning" dot>
-                      Reserve short
-                    </StatusBadge>
-                  )}
-                  <Button
-                    size="sm"
-                    variant={canRedeem ? 'primary' : 'ghost'}
-                    disabled={!canRedeem}
-                    onClick={() => modals.open('redeem', gem)}
-                  >
-                    Redeem
-                  </Button>
+                  <div>
+                    {canRedeem ? (
+                      <StatusBadge tone="success" dot>
+                        Eligible
+                      </StatusBadge>
+                    ) : gem.redeem === 'KYC required' ? (
+                      <StatusBadge tone="danger">KYC required</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="warning" dot>
+                        Reserve short
+                      </StatusBadge>
+                    )}
+                  </div>
+                  <div>
+                    <Button
+                      size="sm"
+                      variant={canRedeem ? 'primary' : 'ghost'}
+                      disabled={!canRedeem}
+                      onClick={() => modals.open('redeem', gem)}
+                    >
+                      Start redemption
+                    </Button>
+                  </div>
                 </div>
               );
             })}

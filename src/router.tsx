@@ -1,37 +1,56 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
-import { AppShell } from '@/components/layout/AppShell';
-import LandingPage from '@/pages/LandingPage';
-import LoginPage from '@/pages/LoginPage';
-import SignupPage from '@/pages/SignupPage';
-import OnboardingPage from '@/pages/OnboardingPage';
-import MarketplacePage from '@/pages/MarketplacePage';
-import GemDetailPage from '@/pages/GemDetailPage';
-import AuctionsPage from '@/pages/AuctionsPage';
-import SwapsPage from '@/pages/SwapsPage';
-import RedeemPage from '@/pages/RedeemPage';
-import ProfilePage from '@/pages/ProfilePage';
-import SellerPage from '@/pages/SellerPage';
-import AboutPage from '@/pages/AboutPage';
-import NotFoundPage from '@/pages/NotFoundPage';
+import { Skeleton } from '@/components/ui/States';
+
+const AppShell = lazy(() =>
+  import('@/components/layout/AppShell').then((module) => ({ default: module.AppShell })),
+);
+const LandingPage = lazy(() => import('@/pages/LandingPage'));
+const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const SignupPage = lazy(() => import('@/pages/SignupPage'));
+const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'));
+const MarketplacePage = lazy(() => import('@/pages/MarketplacePage'));
+const GemDetailPage = lazy(() => import('@/pages/GemDetailPage'));
+const AuctionsPage = lazy(() => import('@/pages/AuctionsPage'));
+const SwapsPage = lazy(() => import('@/pages/SwapsPage'));
+const RedeemPage = lazy(() => import('@/pages/RedeemPage'));
+const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
+const SellerPage = lazy(() => import('@/pages/SellerPage'));
+const AboutPage = lazy(() => import('@/pages/AboutPage'));
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
+
+function route(element: ReactNode) {
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto w-full max-w-content p-8">
+          <Skeleton className="h-64" />
+        </div>
+      }
+    >
+      {element}
+    </Suspense>
+  );
+}
 
 export const router = createBrowserRouter([
-  { path: '/', element: <LandingPage /> },
-  { path: '/login', element: <LoginPage /> },
-  { path: '/signup', element: <SignupPage /> },
-  { path: '/onboarding', element: <OnboardingPage /> },
+  { path: '/', element: route(<LandingPage />) },
+  { path: '/login', element: route(<LoginPage />) },
+  { path: '/signup', element: route(<SignupPage />) },
+  { path: '/onboarding', element: route(<OnboardingPage />) },
   {
-    element: <AppShell />,
+    element: route(<AppShell />),
     children: [
-      { path: '/marketplace', element: <MarketplacePage /> },
-      { path: '/gem/:gemId', element: <GemDetailPage /> },
-      { path: '/auctions', element: <AuctionsPage /> },
-      { path: '/swaps', element: <SwapsPage /> },
-      { path: '/redeem', element: <RedeemPage /> },
-      { path: '/profile', element: <ProfilePage /> },
-      { path: '/seller', element: <SellerPage /> },
-      { path: '/about', element: <AboutPage /> },
+      { path: '/marketplace', element: route(<MarketplacePage />) },
+      { path: '/gem/:gemId', element: route(<GemDetailPage />) },
+      { path: '/auctions', element: route(<AuctionsPage />) },
+      { path: '/swaps', element: route(<SwapsPage />) },
+      { path: '/redeem', element: route(<RedeemPage />) },
+      { path: '/profile', element: route(<ProfilePage />) },
+      { path: '/seller', element: route(<SellerPage />) },
+      { path: '/about', element: route(<AboutPage />) },
     ],
   },
   { path: '/app', element: <Navigate to="/marketplace" replace /> },
-  { path: '*', element: <NotFoundPage /> },
+  { path: '*', element: route(<NotFoundPage />) },
 ]);

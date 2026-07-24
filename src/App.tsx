@@ -1,23 +1,25 @@
-import { WagmiProvider } from 'wagmi';
-import { QueryClientProvider } from '@tanstack/react-query';
-import { RainbowKitProvider } from '@rainbow-me/rainbowkit';
+import { lazy, Suspense } from 'react';
 import { RouterProvider } from 'react-router-dom';
-import { wagmiConfig } from './providers/wagmi';
-import { queryClient } from './providers/queryClient';
-import { rainbowTheme } from './providers/rainbowTheme';
-import { AuthProvider } from './providers/AuthProvider';
+import * as Sentry from '@sentry/react';
 import { router } from './router';
+import { ConfigurationGate } from './components/config/ConfigurationGate';
+
+const Web3Providers = lazy(() => import('./providers/Web3Providers'));
 
 export default function App() {
   return (
-    <WagmiProvider config={wagmiConfig}>
-      <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={rainbowTheme} modalSize="compact">
-          <AuthProvider>
+    <Sentry.ErrorBoundary
+      fallback={<p role="alert">Digital Carat encountered an unexpected error.</p>}
+    >
+      <Suspense
+        fallback={<div className="min-h-screen bg-vault" aria-label="Loading application" />}
+      >
+        <Web3Providers>
+          <ConfigurationGate>
             <RouterProvider router={router} />
-          </AuthProvider>
-        </RainbowKitProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+          </ConfigurationGate>
+        </Web3Providers>
+      </Suspense>
+    </Sentry.ErrorBoundary>
   );
 }

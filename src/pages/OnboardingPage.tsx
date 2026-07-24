@@ -1,96 +1,60 @@
 import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAccount, useChainId } from 'wagmi';
 import { AuthShell } from '@/components/auth/AuthShell';
 import { Button } from '@/components/ui/Button';
-import { WalletStatus } from '@/components/wallet/WalletStatus';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useAuth } from '@/providers/AuthProvider';
-import { activeChain } from '@/config/chains';
-import { shortenAddress } from '@/lib/format';
 
+/**
+ * OAuth and magic-link return route. Wallet setup now lives exclusively in
+ * the account menu so a completed session can move straight to the homepage.
+ */
 export default function OnboardingPage() {
-  const { user, configured, linkedWallet, linkWallet } = useAuth();
-  const { address, isConnected } = useAccount();
-  const chainId = useChainId();
   const navigate = useNavigate();
-  const wrongNetwork = isConnected && chainId !== activeChain.id;
+  const { user, loading, authError } = useAuth();
 
-  // Auto-link the connected address to the profile once available.
   useEffect(() => {
-    if (address && address !== linkedWallet) linkWallet(address);
-  }, [address, linkedWallet, linkWallet]);
-
-  const identity = user
-    ? (user.user_metadata?.full_name as string) || user.email
-    : 'Guest (not signed in)';
+    if (!loading && user) navigate('/', { replace: true });
+  }, [loading, navigate, user]);
 
   return (
     <AuthShell>
-      <div className="w-full max-w-[460px] rounded-[16px] border border-white/[0.08] bg-card p-7">
-        <h1 className="text-[22px] font-bold text-ink">Connect your wallet</h1>
-        <p className="mt-1 text-[13px] text-ink-muted">
-          Link an EVM wallet to your profile to trade, bid and redeem.
-        </p>
-
-        {/* Signed-in identity */}
-        <div className="mt-6 rounded-[12px] border border-white/[0.08] bg-panel p-4">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-ink-dim">
-            App account
-          </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-[14px] font-semibold text-ink">{identity}</span>
-            {configured && user ? (
-              <StatusBadge tone="success" dot>
-                Signed in
-              </StatusBadge>
-            ) : (
-              <Link to="/login" className="text-[12.5px] text-ink-soft hover:text-ink">
-                Sign in →
-              </Link>
+      <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[22px] p-7 text-center shadow-lift sm:p-8">
+        {loading || user ? (
+          <>
+            <span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-white/[0.12] border-t-atelier" />
+            <h1 className="mt-5 text-[22px] font-semibold tracking-tight text-ink">
+              Finishing sign-in
+            </h1>
+            <p className="mt-2 text-[13px] text-ink-muted">
+              Your secure session is ready. Taking you home…
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">
+              Account access
+            </p>
+            <h1 className="mt-2 text-[24px] font-semibold tracking-tight text-ink">
+              Sign in to continue
+            </h1>
+            <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
+              Connect and verify your trading wallet later from the account menu in the header.
+            </p>
+            {authError && (
+              <p className="mt-4 rounded-[10px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
+                {authError}
+              </p>
             )}
-          </div>
-        </div>
-
-        {/* Wallet */}
-        <div className="mt-4 rounded-[12px] border border-white/[0.08] bg-panel p-4">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-ink-dim">Wallet</div>
-          <div className="mt-3">
-            <WalletStatus variant="full" />
-          </div>
-
-          {wrongNetwork && (
-            <div
-              className="mt-3 rounded-[8px] px-3 py-2 text-[12px]"
-              style={{ background: 'rgba(229,72,77,.06)', border: '1px solid rgba(229,72,77,.28)', color: '#F0B8BA' }}
-            >
-              Wrong network — switch to <strong>{activeChain.name}</strong> to continue.
-            </div>
-          )}
-
-          {isConnected && !wrongNetwork && (
-            <div className="mt-3 flex items-center gap-2 text-[12.5px] text-emerald">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-              Linked {shortenAddress(address)} to your profile.
-            </div>
-          )}
-        </div>
-
-        <Button
-          size="lg"
-          block
-          className="mt-6"
-          disabled={!isConnected || wrongNetwork}
-          onClick={() => navigate('/marketplace')}
-        >
-          Enter the marketplace
-        </Button>
-        <button
-          onClick={() => navigate('/marketplace')}
-          className="mt-3 w-full text-center text-[12.5px] text-ink-muted hover:text-ink"
-        >
-          Skip for now →
-        </button>
+            <Link to="/login" className="mt-6 block">
+              <Button size="lg" block>
+                Sign in
+              </Button>
+            </Link>
+            <Link to="/" className="mt-3 inline-block text-[12.5px] text-ink-muted hover:text-ink">
+              Return home
+            </Link>
+          </>
+        )}
       </div>
     </AuthShell>
   );

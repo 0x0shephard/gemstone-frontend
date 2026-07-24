@@ -9,43 +9,104 @@ import type { GemType } from '@/services/types';
 type Filter = 'all' | GemType;
 type Sort = 'value-desc' | 'value-asc' | 'reserve';
 
-const FILTERS: { value: Filter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'ruby', label: 'Ruby' },
-  { value: 'sapphire', label: 'Sapphire' },
-  { value: 'emerald', label: 'Emerald' },
-];
-
 export default function MarketplacePage() {
   const { data: gems, isLoading, isError } = useListings();
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('value-desc');
+  const [search, setSearch] = useState('');
+  const filters = useMemo(
+    () => [
+      { value: 'all', label: 'All' },
+      ...[...new Map((gems ?? []).map((gem) => [gem.type, gem.typeLabel])).entries()].map(
+        ([value, label]) => ({ value, label }),
+      ),
+    ],
+    [gems],
+  );
 
   const visible = useMemo(() => {
     let list = gems ?? [];
     if (filter !== 'all') list = list.filter((g) => g.type === filter);
+    const query = search.trim().toLowerCase();
+    if (query) {
+      list = list.filter((gem) =>
+        [gem.name, gem.displayId, gem.typeLabel, gem.custodyCountry, gem.custodyProvider].some(
+          (value) => value.toLowerCase().includes(query),
+        ),
+      );
+    }
     const sorted = [...list];
     if (sort === 'value-desc') sorted.sort((a, b) => b.value - a.value);
     if (sort === 'value-asc') sorted.sort((a, b) => a.value - b.value);
     if (sort === 'reserve') sorted.sort((a, b) => a.reserve - b.reserve);
     return sorted;
-  }, [gems, filter, sort]);
+  }, [gems, filter, search, sort]);
 
   useScrollReveal([visible]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <FilterPills options={FILTERS} value={filter} onChange={setFilter} />
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as Sort)}
-          className="h-9 rounded-[9px] border border-white/[0.08] bg-card px-3 text-[13px] text-ink-soft outline-none"
-        >
-          <option value="value-desc">Value: high → low</option>
-          <option value="value-asc">Value: low → high</option>
-          <option value="reserve">Reserve: lowest first</option>
-        </select>
+    <div className="space-y-7">
+      <section className="relative overflow-hidden rounded-[22px] border border-white/[0.08] bg-gradient-to-br from-card to-inset px-5 py-6 sm:px-7 sm:py-8">
+        <div className="dc-dot-grid pointer-events-none absolute inset-y-0 right-0 w-1/2 opacity-45" />
+        <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-atelier">
+              Vault inventory
+            </p>
+            <h2 className="mt-2 max-w-xl font-display text-[25px] font-medium leading-tight tracking-[-0.035em] text-ink sm:text-[31px]">
+              Find a physical gemstone you can verify, trade and redeem.
+            </h2>
+            <p className="mt-3 max-w-xl text-[13.5px] leading-relaxed text-ink-muted">
+              Compare expert-approved value, reserve health and public custody details before
+              opening a position.
+            </p>
+          </div>
+          <div className="shrink-0 text-left lg:text-right">
+            <div className="font-mono text-[22px] font-medium text-ink">
+              {isLoading ? '—' : visible.length}
+            </div>
+            <div className="text-[10px] uppercase tracking-[0.14em] text-ink-dim">
+              matching stones
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="rounded-[16px] border border-white/[0.07] bg-white/[0.018] p-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <label className="relative min-w-0 flex-1">
+            <span className="sr-only">Search marketplace</span>
+            <svg
+              aria-hidden
+              viewBox="0 0 24 24"
+              className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-dim"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            >
+              <circle cx="10.5" cy="10.5" r="6" />
+              <path d="m15 15 4 4" />
+            </svg>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search name, gemstone type, origin or ID"
+              className="h-11 w-full rounded-[11px] border border-white/[0.09] bg-inset pl-10 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-dim focus:border-atelier/45"
+            />
+          </label>
+          <FilterPills options={filters} value={filter} onChange={setFilter} />
+          <select
+            aria-label="Sort marketplace listings"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as Sort)}
+            className="h-11 rounded-[11px] border border-white/[0.09] bg-inset px-3 text-[12.5px] text-ink-soft outline-none focus:border-atelier/45"
+          >
+            <option value="value-desc">Value · high to low</option>
+            <option value="value-asc">Value · low to high</option>
+            <option value="reserve">Reserve · needs funding</option>
+          </select>
+        </div>
       </div>
 
       {isLoading ? (
@@ -53,11 +114,20 @@ export default function MarketplacePage() {
       ) : isError ? (
         <ErrorState />
       ) : visible.length === 0 ? (
-        <EmptyState title="No gems match" hint="Try a different filter." />
+        <EmptyState
+          title="No stones match this view"
+          hint="Clear the search or choose another gemstone type."
+        />
       ) : (
-        <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
+        <div className="grid gap-4 sm:gap-5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
           {visible.map((gem, i) => (
-            <GemCard key={gem.id} gem={gem} revealDelay={(i % 4) * 60} />
+            <GemCard
+              key={gem.gemId.toString()}
+              gem={gem}
+              href={`/gem/${gem.gemId}?market=secondary`}
+              ctaLabel="Purchase →"
+              revealDelay={(i % 4) * 60}
+            />
           ))}
         </div>
       )}

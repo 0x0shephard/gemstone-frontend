@@ -8,8 +8,12 @@ import {
   type ReactNode,
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
+import { getAddress, type Address } from 'viem';
+import { createSiweMessage } from 'viem/siwe';
+import { useSignMessage } from 'wagmi';
 import { supabase } from './supabase';
-import { authConfigured } from '@/config/env';
+import { authConfigured, env } from '@/config/env';
+import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
 
 export interface AuthState {
   /** Whether Supabase env is present. When false, auth actions are disabled. */
@@ -17,29 +21,46 @@ export interface AuthState {
   loading: boolean;
   user: User | null;
   session: Session | null;
-  /** Wallet address linked to the profile (persisted locally as a fallback). */
+  googleAuthAvailable: boolean | null;
+  authError: string | null;
+  /** Server-verified primary wallet. */
   linkedWallet: string | null;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<AuthActionResult>;
   signInWithEmail: (email: string) => Promise<{ ok: boolean; message: string }>;
-  signUpWithEmail: (
-    email: string,
-    fullName: string,
-  ) => Promise<{ ok: boolean; message: string }>;
+  signUpWithEmail: (email: string, fullName: string) => Promise<{ ok: boolean; message: string }>;
   signOut: () => Promise<void>;
-  linkWallet: (address: string) => Promise<void>;
+  linkWallet: (
+    address: Address,
+    confirmRelink?: boolean,
+  ) => Promise<{ ok: boolean; message: string; requiresConfirmation?: boolean }>;
 }
-
-const LINKED_WALLET_KEY = 'dc.linkedWallet';
 
 const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { signMessageAsync } = useSignMessage();
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [linkedWallet, setLinkedWallet] = useState<string | null>(
-    () => localStorage.getItem(LINKED_WALLET_KEY),
+  const [linkedWallet, setLinkedWallet] = useState<string | null>(null);
+  const [googleAuthAvailable, setGoogleAuthAvailable] = useState<boolean | null>(
+    authConfigured ? null : false,
   );
+  const [authError, setAuthError] = useState<string | null>(() =>
+    oauthRedirectError(window.location.hash),
+  );
+
+  const loadPrimaryWallet = useCallback(async (profileId: string) => {
+    if (!supabase) return;
+    const { data } = await supabase
+      .from('wallet_links')
+      .select('wallet_address')
+      .eq('profile_id', profileId)
+      .eq('is_primary', true)
+      .not('verified_at', 'is', null)
+      .maybeSingle();
+    setLinkedWallet(data?.wallet_address ?? null);
+  }, []);
 
   useEffect(() => {
     if (!supabase) {
@@ -51,25 +72,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!mounted) return;
       setSession(data.session);
       setUser(data.session?.user ?? null);
+      if (data.session?.user) void loadPrimaryWallet(data.session.user.id);
       setLoading(false);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
+      if (s?.user) void loadPrimaryWallet(s.user.id);
+      else setLinkedWallet(null);
     });
     return () => {
       mounted = false;
       sub.subscription.unsubscribe();
     };
+  }, [loadPrimaryWallet]);
+
+  useEffect(() => {
+    if (!authConfigured) return;
+    const controller = new AbortController();
+    void fetch(`${env.supabaseUrl}/auth/v1/settings`, {
+      headers: { apikey: env.supabaseAnonKey },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Auth settings returned ${response.status}`);
+        return response.json() as Promise<{ external?: { google?: boolean } }>;
+      })
+      .then((settings) => setGoogleAuthAvailable(settings.external?.google === true))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        // Unknown availability should not block an OAuth attempt.
+        setGoogleAuthAvailable(null);
+      });
+    return () => controller.abort();
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    if (!supabase) return;
-    await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: `${window.location.origin}/onboarding` },
-    });
-  }, []);
+    if (!supabase) return { ok: false, message: 'Auth is not configured.' };
+    if (googleAuthAvailable === false) {
+      const message = friendlyAuthError('Unsupported provider: provider is not enabled');
+      setAuthError(message);
+      return { ok: false, message };
+    }
+    try {
+      setAuthError(null);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: `${window.location.origin}/onboarding` },
+      });
+      if (error) {
+        const message = friendlyAuthError(error);
+        setAuthError(message);
+        return { ok: false, message };
+      }
+      return { ok: true, message: 'Redirecting to Google…' };
+    } catch (error) {
+      const message = friendlyAuthError(error);
+      setAuthError(message);
+      return { ok: false, message };
+    }
+  }, [googleAuthAvailable]);
 
   const signInWithEmail = useCallback(async (email: string) => {
     if (!supabase) return { ok: false, message: 'Auth is not configured.' };
@@ -100,19 +162,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (supabase) await supabase.auth.signOut();
     setUser(null);
     setSession(null);
+    setLinkedWallet(null);
   }, []);
 
-  const linkWallet = useCallback(async (address: string) => {
-    setLinkedWallet(address);
-    localStorage.setItem(LINKED_WALLET_KEY, address);
-    // Best-effort persistence to a `profiles` row when auth is live.
-    if (supabase && user) {
-      await supabase
-        .from('profiles')
-        .upsert({ id: user.id, wallet_address: address })
-        .then(() => undefined, () => undefined);
-    }
-  }, [user]);
+  const linkWallet = useCallback(
+    async (address: Address, confirmRelink = false) => {
+      if (!supabase || !user) return { ok: false, message: 'Sign in before linking a wallet.' };
+      const domain = window.location.host;
+      const uri = window.location.origin;
+      const { data: nonceData, error: nonceError } = await supabase.functions.invoke(
+        'v1-siwe-nonce',
+        { body: { domain, uri, chainId: env.chainId } },
+      );
+      if (nonceError || !nonceData?.nonce) {
+        return { ok: false, message: nonceError?.message ?? 'Could not issue a SIWE nonce.' };
+      }
+      const issuedAt = new Date();
+      const expirationTime = new Date(nonceData.expiresAt);
+      const message = createSiweMessage({
+        address: getAddress(address),
+        chainId: env.chainId,
+        domain,
+        uri,
+        version: '1',
+        nonce: nonceData.nonce,
+        statement: 'Link this wallet as your verified Digital Carat primary wallet.',
+        issuedAt,
+        expirationTime,
+      });
+      try {
+        const signature = await signMessageAsync({ message });
+        const { data, error } = await supabase.functions.invoke('v1-siwe-verify', {
+          body: { message, signature, confirmRelink },
+        });
+        if (error || data?.error) {
+          return {
+            ok: false,
+            message: data?.error ?? error?.message ?? 'Wallet verification failed.',
+            requiresConfirmation: Boolean(data?.requiresConfirmation),
+          };
+        }
+        setLinkedWallet(data.wallet_address);
+        return { ok: true, message: 'Wallet verified.' };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : 'Signature rejected.',
+        };
+      }
+    },
+    [signMessageAsync, user],
+  );
 
   const value = useMemo<AuthState>(
     () => ({
@@ -120,6 +220,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       user,
       session,
+      googleAuthAvailable,
+      authError,
       linkedWallet,
       signInWithGoogle,
       signInWithEmail,
@@ -127,7 +229,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       linkWallet,
     }),
-    [loading, user, session, linkedWallet, signInWithGoogle, signInWithEmail, signUpWithEmail, signOut, linkWallet],
+    [
+      loading,
+      user,
+      session,
+      googleAuthAvailable,
+      authError,
+      linkedWallet,
+      signInWithGoogle,
+      signInWithEmail,
+      signUpWithEmail,
+      signOut,
+      linkWallet,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

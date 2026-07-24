@@ -1,49 +1,31 @@
-import { useCallback, useSyncExternalStore } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { env, isConfigured } from '@/config/env';
+import { getKycStatus, issueSumsubToken, type KycStatus } from '@/services/offchain/workflows';
 
-export type KycState = 'none' | 'pending' | 'approved' | 'rejected';
-
-const KEY = 'dc.kycStatus';
-
-/**
- * Seller KYC status. The real flow mints a Sumsub access token from a backend
- * (`VITE_SUMSUB_BACKEND_URL`) — never a frontend secret. Here we track a local
- * mock status so seller-gated UI is demonstrable; `beginKyc` would POST to the
- * backend to obtain a token in production.
- */
-function read(): KycState {
-  return (localStorage.getItem(KEY) as KycState) || 'none';
-}
-
-function subscribe(cb: () => void) {
-  window.addEventListener('storage', cb);
-  window.addEventListener('dc:kyc', cb);
-  return () => {
-    window.removeEventListener('storage', cb);
-    window.removeEventListener('dc:kyc', cb);
-  };
-}
+const KYC_KEY = ['kyc-status'] as const;
 
 export function useKyc() {
-  const status = useSyncExternalStore(subscribe, read, () => 'none' as KycState);
-
-  const set = useCallback((next: KycState) => {
-    localStorage.setItem(KEY, next);
-    window.dispatchEvent(new Event('dc:kyc'));
-  }, []);
-
-  const beginKyc = useCallback(() => {
-    // In production: fetch(`${env.sumsubBackendUrl}/token`) → open Sumsub SDK.
-    // Mock: move to pending, then auto-approve to demonstrate the gated flow.
-    set('pending');
-    setTimeout(() => set('approved'), 1500);
-  }, [set]);
-
+  const client = useQuery({
+    queryKey: KYC_KEY,
+    queryFn: getKycStatus,
+    enabled: isConfigured(env.supabaseUrl),
+    refetchInterval: 15_000,
+  });
+  const queryClient = useQueryClient();
+  const begin = useMutation({
+    mutationFn: issueSumsubToken,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: KYC_KEY }),
+  });
+  const status: KycStatus = client.data ?? 'not_started';
   return {
     status,
-    backendConfigured: isConfigured(env.sumsubBackendUrl),
+    backendConfigured: isConfigured(env.sumsubBackendUrl) || isConfigured(env.supabaseUrl),
     isApproved: status === 'approved',
-    beginKyc,
-    set,
+    beginKyc: begin.mutateAsync,
+    accessToken: begin.data?.token,
+    isStarting: begin.isPending,
+    error: begin.error ?? client.error,
   };
 }
+
+export type { KycStatus };

@@ -6,7 +6,7 @@ import { activeChain, supportedChains } from '@/config/chains';
 /**
  * wagmi + RainbowKit config. A WalletConnect projectId is required for the
  * modal; when absent we still build a config (injected/browser wallets work)
- * but pass a placeholder so the app doesn't crash in local dev.
+ * with a development-only project identifier.
  */
 export const wagmiConfig = getDefaultConfig({
   appName: 'Digital Carat',

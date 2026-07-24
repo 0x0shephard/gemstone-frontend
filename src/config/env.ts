@@ -1,34 +1,58 @@
-/**
- * Centralized, typed access to Vite env vars. Import from here rather than
- * touching `import.meta.env` directly so missing/optional config is explicit.
- */
+import { z } from 'zod';
 
-const raw = import.meta.env;
+const optionalUrl = z
+  .string()
+  .trim()
+  .refine((value) => value === '' || URL.canParse(value), 'Must be an absolute URL');
 
-function num(value: string | undefined, fallback: number): number {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+const supabaseUrl = z
+  .string()
+  .trim()
+  .refine(
+    (value) => value === '' || /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(value),
+    'Must use the project API URL: https://<project-ref>.supabase.co',
+  );
+
+const schema = z.object({
+  VITE_DATA_MODE: z.enum(['mock', 'chain']).default('mock'),
+  VITE_CHAIN_ID: z.coerce.number().int().positive().default(11155111),
+  VITE_DEPLOYMENT_BLOCK: z.coerce.bigint().nonnegative().optional(),
+  VITE_RPC_URL: optionalUrl.default(''),
+  VITE_EXPLORER_BASE_URL: optionalUrl.default('https://sepolia.etherscan.io'),
+  VITE_IPFS_GATEWAY: optionalUrl.default('https://ipfs.io/ipfs/'),
+  VITE_WALLETCONNECT_PROJECT_ID: z.string().trim().default(''),
+  VITE_SUPABASE_URL: supabaseUrl.default(''),
+  VITE_SUPABASE_ANON_KEY: z.string().trim().default(''),
+  VITE_SUMSUB_BACKEND_URL: optionalUrl.default(''),
+  VITE_SENTRY_DSN: z.string().trim().default(''),
+  VITE_POSTHOG_KEY: z.string().trim().default(''),
+  VITE_POSTHOG_HOST: optionalUrl.default('https://us.i.posthog.com'),
+});
+
+const parsed = schema.safeParse(import.meta.env);
+
+export const environmentErrors = parsed.success
+  ? []
+  : parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+
+const values = parsed.success ? parsed.data : schema.parse({});
 
 export const env = {
-  // Chain / RPC — Sepolia (11155111) by default, overridable.
-  chainId: num(raw.VITE_CHAIN_ID, 11155111),
-  rpcUrl: raw.VITE_RPC_URL ?? '',
-  walletConnectProjectId: raw.VITE_WALLETCONNECT_PROJECT_ID ?? '',
-
-  // Auth (Supabase)
-  supabaseUrl: raw.VITE_SUPABASE_URL ?? '',
-  supabaseAnonKey: raw.VITE_SUPABASE_ANON_KEY ?? '',
-
-  // Seller KYC — token must be minted by a backend, never a frontend secret.
-  sumsubBackendUrl: raw.VITE_SUMSUB_BACKEND_URL ?? '',
-
-  // Block explorer base (e.g. https://sepolia.etherscan.io)
-  explorerBaseUrl: raw.VITE_EXPLORER_BASE_URL ?? 'https://sepolia.etherscan.io',
+  dataMode: values.VITE_DATA_MODE,
+  chainId: values.VITE_CHAIN_ID,
+  deploymentBlock: values.VITE_DEPLOYMENT_BLOCK,
+  rpcUrl: values.VITE_RPC_URL,
+  explorerBaseUrl: values.VITE_EXPLORER_BASE_URL,
+  ipfsGateway: values.VITE_IPFS_GATEWAY,
+  walletConnectProjectId: values.VITE_WALLETCONNECT_PROJECT_ID,
+  supabaseUrl: values.VITE_SUPABASE_URL,
+  supabaseAnonKey: values.VITE_SUPABASE_ANON_KEY,
+  sumsubBackendUrl: values.VITE_SUMSUB_BACKEND_URL,
+  sentryDsn: values.VITE_SENTRY_DSN,
+  posthogKey: values.VITE_POSTHOG_KEY,
+  posthogHost: values.VITE_POSTHOG_HOST,
 } as const;
 
-/** True when a value is configured (non-empty). */
-export const isConfigured = (v: string): boolean => v.trim().length > 0;
-
+export const isConfigured = (value: string): boolean => value.length > 0;
 export const authConfigured = isConfigured(env.supabaseUrl) && isConfigured(env.supabaseAnonKey);
 export const walletConnectConfigured = isConfigured(env.walletConnectProjectId);

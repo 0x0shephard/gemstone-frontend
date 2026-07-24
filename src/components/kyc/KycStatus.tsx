@@ -1,11 +1,12 @@
-import type { KycState } from '@/hooks/useKyc';
+import type { KycStatus as KycState } from '@/hooks/useKyc';
 import { StatusBadge, type StatusTone } from '@/components/ui/StatusBadge';
 
 const MAP: Record<KycState, { tone: StatusTone; label: string }> = {
-  none: { tone: 'neutral', label: 'KYC not started' },
+  not_started: { tone: 'neutral', label: 'KYC not started' },
   pending: { tone: 'warning', label: 'KYC in review' },
   approved: { tone: 'success', label: 'KYC verified' },
   rejected: { tone: 'danger', label: 'KYC rejected' },
+  on_hold: { tone: 'warning', label: 'KYC on hold' },
 };
 
 /** Seller KYC status pill. */

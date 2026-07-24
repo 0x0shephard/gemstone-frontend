@@ -1,0 +1,27 @@
+[build]
+  command = "npm run check"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "24"
+  NPM_FLAGS = "--prefer-offline"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[context.deploy-preview.environment]
+  VITE_DATA_MODE = "mock"
+
+[context.production]
+  command = "npm run check"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Permissions-Policy = "camera=(self), microphone=(self), geolocation=()"
+

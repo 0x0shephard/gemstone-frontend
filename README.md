@@ -1,98 +1,122 @@
-# Digital Carat — Frontend
+# Digital Carat frontend
 
-React frontend for **Digital Carat**, a gemstone-backed NFT protocol where each DGE
-NFT represents one verified physical gemstone. The UI covers the full protocol surface:
-primary buy-now & auctions, a secondary marketplace with 24-hour offers, DGE-to-DGE
-swaps, reserve top-ups, physical redemption, and a seller portal.
+Production-oriented React frontend for the Digital Carat gemstone protocol. It supports public
+browsing plus trader and seller flows for primary sales, auctions, the secondary marketplace,
+escrowed offers, DGE swaps, reserve funding, and physical redemption.
 
-> **Status:** the UI is complete and runs against a **mock data service**. Real on-chain
-> integration (wagmi + generated ABIs) is deferred — see [Contract integration](#contract-integration).
+The app has two explicit data modes:
+
+- `mock` is a deliberate, independently buildable demo.
+- `chain` reads contracts and events directly. It never substitutes mock data when configuration or
+  RPC access fails.
+
+Sepolia addresses and the deployment block are intentionally pending. Until they are provided,
+chain mode displays a blocking configuration report.
 
 ## Stack
 
-- **Vite + React + TypeScript** (SPA)
-- **Tailwind CSS** — design tokens in `src/theme/tokens.css` + `tailwind.config.js`
-- **wagmi + viem + RainbowKit** — wallet connection (chain from `VITE_CHAIN_ID`, default Sepolia)
-- **TanStack Query** — all reads/writes go through hooks in `src/hooks/useData.ts`
-- **Supabase** — Google OAuth + email magic-link auth (`src/providers/AuthProvider.tsx`)
-- **React Three Fiber** — the rotating 3D ruby on the landing hero (`src/components/three/GemScene.tsx`)
-- **React Hook Form + Zod** — form validation
+- Vite, React, TypeScript, Tailwind
+- wagmi, viem, RainbowKit
+- TanStack Query and an IndexedDB chain-event projection
+- Supabase Auth, Postgres, Storage, and Edge Functions
+- Sumsub sandbox KYC/KYB
+- Vitest, React Testing Library, Playwright, axe, ESLint, Prettier
+- Sentry with sanitization and opt-in PostHog product events
+- Netlify SPA deployment
 
-## Getting started
+## Run locally
 
-```bash
-npm install
-cp .env.example .env      # fill in what you have; blanks degrade gracefully
-npm run dev               # http://localhost:5173
+```sh
+npm ci
+cp .env.example .env
+npm run dev
 ```
 
-Other scripts:
+Mock mode needs no contract addresses. Supabase-backed authentication and private workflows require
+their public project configuration.
 
-```bash
-npm run build       # typecheck + production build
-npm run typecheck   # tsc --noEmit
-npm run preview     # serve the production build
+## Quality gates
+
+```sh
+npm run contracts:check
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+npm run test:a11y
+npm run test:contracts
 ```
 
-The app is fully explorable **without any env configured** — auth shows an "auth not
-configured" notice, the wallet modal supports injected wallets, and all data comes from
-the mock service.
-
-## Environment variables
-
-See [`.env.example`](./.env.example). Summary:
-
-| Variable | Purpose |
-|---|---|
-| `VITE_CHAIN_ID` | Target chain (default `11155111` Sepolia; `31337` for local) |
-| `VITE_RPC_URL` | RPC endpoint |
-| `VITE_EXPLORER_BASE_URL` | Block-explorer base for tx/address links |
-| `VITE_WALLETCONNECT_PROJECT_ID` | WalletConnect modal (from cloud.walletconnect.com) |
-| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | Supabase auth |
-| `VITE_SUMSUB_BACKEND_URL` | Backend that mints Sumsub KYC tokens (**never a Sumsub secret**) |
-| `VITE_CONTRACT_*` | Address of each protocol module (blank until deployed) |
+`npm run check` runs ABI checksum verification, typechecking, lint, unit tests, and the production
+build. CI also runs browser accessibility checks and the real Solidity fuzz/invariant suite from
+[`0x0shephard/gemstone-contracts`](https://github.com/0x0shephard/gemstone-contracts).
 
 ## Architecture
 
-```
+```text
 src/
-  config/       env, chains, contract address map (from env, no hardcoded addresses)
-  providers/    wagmi, RainbowKit theme, TanStack Query, Supabase, AuthProvider
-  services/     data-service ABSTRACTION — IDataService, mock impl, seed data
-  hooks/        useData (TanStack Query wrappers), useKyc, useCountdown, useScrollReveal…
-  contracts/    PLACEHOLDER ABIs + address pairing (not wired to reads yet)
-  components/    ui/ · gem/ · wallet/ · payment/ · tx/ · kyc/ · modals/ · layout/ · three/
-  pages/        Landing, Login, Signup, Onboarding, Marketplace, GemDetail,
-                Auctions, Swaps, Redeem, Profile, Seller, About
-  theme/        tokens.css (design tokens + fonts)
+  config/                  validated env and deployment manifest
+  contracts/generated/     checksummed Foundry ABIs
+  services/chain/          reads, event projection, reducers, transaction pipeline
+  services/offchain/       private Supabase workflow client
+  providers/               wallet, query, auth, Supabase
+  components/              accessible UI, sync state, payments, transaction lifecycle
+  pages/                   public, trader, redemption, and seller routes
+supabase/
+  schema.sql               RLS tables and private Storage policies
+  functions/               SIWE, Sumsub, seller and redemption commitments
 ```
 
-### Data layer (the key abstraction)
+The browser projection is keyed by chain ID and deployment-manifest hash. It scans bounded adaptive
+block ranges, rescans the latest 64 blocks, marks data finalized after 12 confirmations, persists
+history, and can serve an explicitly stale cache while RPC access is unavailable. Contract
+multicalls remain authoritative for current state.
 
-Every page consumes `IDataService` (`src/services/IDataService.ts`) through the hooks in
-`src/hooks/useData.ts`. Today the active implementation is `mockService`
-(`src/services/index.ts`), which serves the fixtures in `src/services/mockData.ts` (ported
-from the design mockup). Writes resolve a mock tx hash after simulated confirmation latency.
+All contract IDs and values use `bigint` and base units. `gemId`, `tokenId`, marketplace `offerId`,
+swap `offerId`, private workflow ID, and display ID are separate types/fields.
 
-## Contract integration
+## Authentication and private workflows
 
-Real ABIs are intentionally deferred. To integrate:
+Public browsing is open. Transactions require:
 
-1. Compile the contracts and copy generated ABIs into `src/contracts/abis/` (replace the
-   placeholder fragments; each carries a `// TODO: replace with generated ABI` banner).
-2. Set `VITE_CONTRACT_*` addresses in `.env`.
-3. Add a `wagmiService` implementing `IDataService` (reads via `viem`/wagmi, events for
-   history) and switch it in at `src/services/index.ts`.
+1. a Supabase session,
+2. a connected wallet,
+3. a server-verified EIP-4361 SIWE primary-wallet link,
+4. the configured chain.
 
-No page or component changes are required — the service interface is the seam.
+SIWE nonces are single-use and expiring. Wallet replacement requires another signature plus explicit
+confirmation. Certificates, gem media, and redemption documents use private buckets, row-level
+policies, file constraints, and user-scoped paths.
 
-Conventions the UI already follows: `address(0)` for native ETH; ERC-20 payments show an
-approve-then-call note; reserve shortfall is **always** surfaced (never hidden) and added to
-the buyer's total; seller/redemption actions are gated on KYC and never claim on-chain roles
-the wallet may not hold ("Requires protocol approval").
+Seller and redemption commitments are generated in Edge Functions from RFC 8785 canonical JSON and
+`keccak256(UTF8(payload))`, with a random 32-byte nonce. The exact canonical payload is retained
+privately; only its hash and approved public metadata reach the protocol.
 
-## Design
+## Environment and deployment
 
-All-black luxury-vault aesthetic: vault-black `#08080A` surfaces, graphite cards with silver
-hairline borders, silver-gradient primary buttons, and ruby/sapphire/emerald/amber gem
-accents. Manrope for text, JetBrains Mono for all figures.
+See [`.env.example`](./.env.example) for the complete contract. Important values include data mode,
+chain/RPC, deployment block, module addresses, USDC, IPFS gateway, Supabase, Sentry, and PostHog.
+The Supabase URL must be the API URL (`https://<project-ref>.supabase.co`).
+
+### Google authentication setup
+
+Google sign-in requires project-side configuration in addition to the public frontend keys:
+
+1. Create a Google OAuth client of type **Web application**.
+2. Add the Supabase callback URL shown on the Supabase Google provider page as an authorized
+   redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`.
+3. In **Supabase → Authentication → Providers → Google**, enable Google and save the OAuth client ID
+   and client secret.
+4. In **Supabase → Authentication → URL Configuration**, set the stable production Site URL and
+   allow `http://localhost:5173/onboarding` plus the deployed `/onboarding` URLs used by Netlify
+   previews.
+
+The app checks the project’s public Auth settings. When Google is disabled, it shows a specific
+configuration message instead of presenting a non-functional OAuth button.
+
+Netlify configuration and SPA rewrites are in [`netlify.toml`](./netlify.toml). Deploy previews use
+mock mode by default. A stable Sepolia chain build should be enabled only after addresses, deployment
+block, oracle/payment configuration, seeded gems, and role-operated auctions have been validated.
+
+Contract/ABI ownership details are in [INTEGRATION.md](./INTEGRATION.md). Protocol documentation
+lives in the contracts repository rather than being duplicated here.

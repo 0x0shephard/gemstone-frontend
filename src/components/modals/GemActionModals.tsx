@@ -10,14 +10,7 @@ import {
 } from './index';
 
 export type GemModalType =
-  | 'bid'
-  | 'buyNow'
-  | 'buy'
-  | 'reserve'
-  | 'offer'
-  | 'list'
-  | 'swap'
-  | 'redeem';
+  'bid' | 'buyNow' | 'buy' | 'reserve' | 'offer' | 'list' | 'swap' | 'redeem';
 
 export interface GemModalState {
   type: GemModalType;

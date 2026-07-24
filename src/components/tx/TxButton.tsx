@@ -3,6 +3,8 @@ import type { TxResult } from '@/services/types';
 import { Button, type ButtonVariant, type ButtonSize } from '@/components/ui/Button';
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
+import { captureProductEvent } from '@/lib/telemetry';
+import { useQueryClient } from '@tanstack/react-query';
 
 type TxState = 'idle' | 'pending' | 'success' | 'error';
 
@@ -16,6 +18,7 @@ interface TxButtonProps {
   block?: boolean;
   disabled?: boolean;
   onDone?: (result: TxResult) => void;
+  telemetryFlow?: string;
 }
 
 /**
@@ -31,7 +34,9 @@ export function TxButton({
   block,
   disabled,
   onDone,
+  telemetryFlow = 'transaction',
 }: TxButtonProps) {
+  const queryClient = useQueryClient();
   const [state, setState] = useState<TxState>('idle');
   const [hash, setHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,19 +44,23 @@ export function TxButton({
   async function run() {
     setState('pending');
     setError(null);
+    captureProductEvent('transaction_started', { flow: telemetryFlow });
     try {
       const res = await action();
       setHash(res.hash);
       setState('success');
+      captureProductEvent('transaction_confirmed', { flow: telemetryFlow, result: 'success' });
+      await queryClient.invalidateQueries();
       onDone?.(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Transaction failed');
       setState('error');
+      captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'error' });
     }
   }
 
   return (
-    <div className={block ? 'w-full space-y-2' : 'space-y-2'}>
+    <div className={block ? 'w-full space-y-2.5' : 'space-y-2.5'}>
       <Button
         variant={variant}
         size={size}
@@ -69,19 +78,36 @@ export function TxButton({
         )}
       </Button>
 
-      {state === 'success' && hash && (
-        <a
-          href={explorerTxUrl(hash)}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 text-[12px] text-emerald hover:underline"
-        >
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-          Confirmed · {shortenAddress(hash, 6)} ↗
-        </a>
-      )}
+      <div aria-live="polite">
+        {state === 'pending' && (
+          <div className="flex items-start gap-2.5 rounded-[10px] border border-atelier/20 bg-atelier/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-atelier" />
+            Follow the wallet prompts. The app will simulate the action, request any approval and
+            wait for confirmation.
+          </div>
+        )}
+        {state === 'success' && hash && (
+          <a
+            href={explorerTxUrl(hash)}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-between gap-3 rounded-[10px] border border-emerald/20 bg-emerald/[0.055] px-3 py-2.5 text-[11.5px] text-emerald"
+          >
+            <span className="flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
+              Transaction confirmed
+            </span>
+            <span className="font-mono">{shortenAddress(hash, 6)} ↗</span>
+          </a>
+        )}
+      </div>
       {state === 'error' && (
-        <p className="text-[12px] text-ruby">{error ?? 'Transaction rejected.'}</p>
+        <p
+          role="alert"
+          className="rounded-[10px] border border-ruby/20 bg-ruby/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ruby"
+        >
+          {error ?? 'Transaction rejected.'}
+        </p>
       )}
     </div>
   );
@@ -90,7 +116,7 @@ export function TxButton({
 function Spinner() {
   return (
     <span
-      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[2px] border-black/30 border-t-black/80"
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[2px] border-black/25 border-t-black/80"
       aria-hidden
     />
   );

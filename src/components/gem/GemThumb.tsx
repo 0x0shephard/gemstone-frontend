@@ -27,10 +27,22 @@ export function GemThumb({
       className={cn('relative overflow-hidden', rounded, className)}
       style={{ height, background: gem.thumb }}
     >
+      <div
+        aria-hidden
+        className="absolute inset-0 opacity-60"
+        style={{
+          background:
+            'radial-gradient(circle at 28% 12%, rgba(255,255,255,.12), transparent 26%), linear-gradient(150deg, transparent 45%, rgba(0,0,0,.28))',
+        }}
+      />
       {showTag && (
         <span
           className="absolute left-3 top-3 rounded-[6px] px-2 py-1 text-[11px] font-semibold"
-          style={{ color: gem.color, background: `${gem.color}1f`, border: `1px solid ${gem.color}55` }}
+          style={{
+            color: gem.color,
+            background: `${gem.color}1f`,
+            border: `1px solid ${gem.color}55`,
+          }}
         >
           {gem.typeLabel}
         </span>

@@ -1,8 +1,6 @@
 /**
- * Contract registry: pairs each module's (placeholder) ABI with its configured
- * address. Consumed by a future wagmi-backed data service. Nothing here performs
- * real reads yet — addresses may be `undefined` until env is set, and the ABIs
- * are placeholders (see `./abis`).
+ * Contract registry pairing generated, checksummed Foundry ABIs with the
+ * validated deployment-manifest addresses used by the chain data service.
  */
 import { contractAddresses, type ContractModule } from '@/config/contracts';
 import {
@@ -21,7 +19,10 @@ import {
 export const contracts = {
   DGENFT: { address: contractAddresses.DGENFT, abi: dgeNftAbi },
   GemRegistry: { address: contractAddresses.GemRegistry, abi: gemRegistryAbi },
-  PaymentTokenRegistry: { address: contractAddresses.PaymentTokenRegistry, abi: paymentTokenRegistryAbi },
+  PaymentTokenRegistry: {
+    address: contractAddresses.PaymentTokenRegistry,
+    abi: paymentTokenRegistryAbi,
+  },
   ReserveManager: { address: contractAddresses.ReserveManager, abi: reserveManagerAbi },
   Treasury: { address: contractAddresses.Treasury, abi: treasuryAbi },
   PrimarySaleAuction: { address: contractAddresses.PrimarySaleAuction, abi: primarySaleAuctionAbi },

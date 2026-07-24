@@ -1,13 +1,5 @@
 import type { IDataService, ProfileData, LandingData } from './IDataService';
-import type {
-  DecoratedGem,
-  Auction,
-  Bid,
-  Offer,
-  SwapRequest,
-  Redemption,
-  TxResult,
-} from './types';
+import type { DecoratedGem, Auction, Bid, Offer, SwapRequest, Redemption, TxResult } from './types';
 import { decorate, reserveShortfallUsd } from '@/lib/gem';
 import {
   gems,
@@ -31,17 +23,19 @@ const delay = <T>(value: T, ms = LATENCY): Promise<T> =>
   new Promise((resolve) => setTimeout(() => resolve(value), ms));
 
 function randomHash(): `0x${string}` {
-  const hex = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  const hex = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(
+    '',
+  );
   return `0x${hex}`;
 }
 const ok = (): Promise<TxResult> => delay({ hash: randomHash(), status: 'success' as const }, 700);
 
 const decoratedGems = (): DecoratedGem[] => gems.map(decorate);
-const byId = (id: string): DecoratedGem | undefined => {
-  const g = gems.find((x) => x.id === id);
+const byId = (gemId: bigint): DecoratedGem | undefined => {
+  const g = gems.find((x) => x.gemId === gemId);
   return g ? decorate(g) : undefined;
 };
-const dgById = (id: string): DecoratedGem => byId(id) ?? decorate(gems[0]);
+const dgById = (gemId: bigint): DecoratedGem => byId(gemId) ?? decorate(gems[0]);
 
 function buildAuctions(): Auction[] {
   return auctionSeeds.map(([gemId, bid, count, secondsLeft]) => {
@@ -51,7 +45,7 @@ function buildAuctions(): Auction[] {
       highestBidFmt: '$' + bid.toLocaleString('en-US'),
       bids: count,
       secondsLeft,
-      floorUsd: Math.round(gem.value * 0.85),
+      floorUsd: BigInt(Math.round(gem.value * 0.85)) * 10n ** 18n,
     };
   });
 }
@@ -62,43 +56,55 @@ function buildBids(): Bid[] {
     myBidFmt: '$' + my.toLocaleString('en-US'),
     topBidFmt: '$' + top.toLocaleString('en-US'),
     status,
-    statusColor: status === 'Leading' ? '#35B98A' : '#E5484D',
+    statusColor: status === 'Leading' ? 'var(--dc-emerald)' : 'var(--dc-ruby)',
     secondsLeft,
   }));
 }
 
 function buildOffers(): Offer[] {
-  return offerSeeds.map(([gemId, amount, from, status, secondsLeft]) => ({
+  return offerSeeds.map(([offerId, gemId, amount, from, status, secondsLeft]) => ({
+    offerId,
     gem: dgById(gemId),
     offerFmt: '$' + amount.toLocaleString('en-US'),
     from,
     status,
-    statusColor: status === 'Pending' ? '#E5A23C' : status === 'Accepted' ? '#35B98A' : '#8B8B94',
+    statusColor:
+      status === 'Pending'
+        ? 'var(--dc-amber)'
+        : status === 'Accepted'
+          ? 'var(--dc-emerald)'
+          : '#8B8B94',
     secondsLeft,
   }));
 }
 
 function buildSwaps(): SwapRequest[] {
-  return swapSeeds.map(([gemId, giveId, diff, status]) => {
+  return swapSeeds.map(([offerId, gemId, giveId, diff, status]) => {
     const give = dgById(giveId);
+    const requested = dgById(gemId);
     return {
-      gem: dgById(gemId),
+      offerId,
+      gem: requested,
+      offeredTokenId: give.tokenId!,
+      requestedTokenId: requested.tokenId!,
       giveName: give.name,
-      giveId: give.gemId,
+      giveDisplayId: give.displayId,
       diff,
       status,
-      statusColor: '#E5A23C',
+      statusColor: 'var(--dc-amber)',
     };
   });
 }
 
 function buildRedemptions(): Redemption[] {
-  return redemptionSeeds.map(([gemId, stage, progress, status]) => ({
+  return redemptionSeeds.map(([workflowId, gemId, stage, progress, status]) => ({
+    workflowId,
+    tokenId: dgById(gemId).tokenId!,
     gem: dgById(gemId),
     stage,
     progress,
     status,
-    statusColor: '#E5A23C',
+    statusColor: 'var(--dc-amber)',
   }));
 }
 
@@ -107,7 +113,7 @@ export const mockService: IDataService = {
   getGem: (id) => delay(byId(id)),
   getListings: () => delay(decoratedGems()),
   getAuctions: () => delay(buildAuctions()),
-  getAuction: (gemId) => delay(buildAuctions().find((a) => a.gem.id === gemId)),
+  getAuction: (gemId) => delay(buildAuctions().find((a) => a.gem.gemId === gemId)),
   getOffers: () => delay(buildOffers()),
   getSwapRequests: () => delay(buildSwaps()),
   getRedemptions: () => delay(buildRedemptions()),
@@ -147,6 +153,20 @@ export const mockService: IDataService = {
 
   getFeeTiers: () => delay(feeTiers),
   getPaymentAssets: () => delay(paymentAssets),
+  getPendingAuctionRefunds: () =>
+    delay([
+      {
+        paymentAsset: paymentAssets[0].address,
+        symbol: paymentAssets[0].symbol,
+        amount: 125000000000000000n,
+        amountFmt: '0.125 ETH',
+      },
+    ]),
+  getPendingTreasuryPayout: () =>
+    delay({
+      amount: 400000000000000000n,
+      amountFmt: '0.4 ETH',
+    }),
 
   // writes — resolve a mock tx hash after simulated confirmation latency
   buyNow: ok,
@@ -156,10 +176,13 @@ export const mockService: IDataService = {
   bid: ok,
   settleAuction: ok,
   claimRefund: ok,
+  claimTreasuryPayout: ok,
   createOffer: ok,
   acceptOffer: ok,
+  refundExpiredOffer: ok,
   createSwap: ok,
   acceptSwap: ok,
+  cancelSwap: ok,
   requestRedemption: ok,
   cancelRedemption: ok,
   fundReserve: ok,

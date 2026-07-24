@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { z } from 'zod';
 import { AuthShell } from '@/components/auth/AuthShell';
 import { GoogleButton } from '@/components/auth/GoogleButton';
@@ -13,11 +13,29 @@ const schema = z.object({
 });
 
 export default function SignupPage() {
-  const { configured, signInWithGoogle, signUpWithEmail } = useAuth();
+  const {
+    configured,
+    loading,
+    user,
+    googleAuthAvailable,
+    authError,
+    signInWithGoogle,
+    signUpWithEmail,
+  } = useAuth();
   const [form, setForm] = useState({ fullName: '', email: '' });
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'google' | 'email' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  if (!loading && user) return <Navigate to="/" replace />;
+
+  async function onGoogle() {
+    setErrors({});
+    setBusy('google');
+    const result = await signInWithGoogle();
+    setBusy(null);
+    if (!result.ok) setErrors({ google: result.message });
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,17 +47,22 @@ export default function SignupPage() {
       return;
     }
     setErrors({});
-    setBusy(true);
+    setBusy('email');
     const res = await signUpWithEmail(form.email, form.fullName);
-    setBusy(false);
+    setBusy(null);
     if (res.ok) setNotice(res.message);
     else setErrors({ email: res.message });
   }
 
   return (
     <AuthShell>
-      <div className="w-full max-w-[440px] rounded-[16px] border border-white/[0.08] bg-card p-7">
-        <h1 className="text-[22px] font-bold text-ink">Create account</h1>
+      <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[22px] p-7 shadow-lift sm:p-8">
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">
+          Join the vault
+        </p>
+        <h1 className="mt-2 text-[26px] font-semibold tracking-tight text-ink">
+          Create your account
+        </h1>
         <p className="mt-1 text-[13px] text-ink-muted">
           Browse, buy, bid and swap freely — no KYC required.
         </p>
@@ -52,7 +75,23 @@ export default function SignupPage() {
         )}
 
         <div className="mt-6 space-y-3">
-          <GoogleButton label="Sign up with Google" onClick={signInWithGoogle} />
+          <GoogleButton
+            label="Sign up with Google"
+            onClick={() => void onGoogle()}
+            disabled={!configured || googleAuthAvailable === false || busy !== null}
+            loading={busy === 'google'}
+          />
+          {configured && googleAuthAvailable === false && (
+            <p className="rounded-[10px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber">
+              Google sign-up is disabled in this Supabase project. Use an email link until the
+              provider is enabled.
+            </p>
+          )}
+          {(errors.google || authError) && (
+            <p className="rounded-[10px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
+              {errors.google ?? authError}
+            </p>
+          )}
           <OrDivider />
           <form onSubmit={onSubmit} className="space-y-3">
             <Field
@@ -71,10 +110,7 @@ export default function SignupPage() {
               error={errors.email}
             />
 
-            <div
-              className="flex items-start gap-2 rounded-[10px] px-3 py-2.5 text-[12.5px]"
-              style={{ background: 'rgba(53,185,138,.06)', border: '1px solid rgba(53,185,138,.24)', color: '#9FD9C1' }}
-            >
+            <div className="flex items-start gap-2 rounded-[12px] border border-emerald/25 bg-emerald/[0.06] px-3 py-2.5 text-[12.5px] text-emerald">
               <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald" />
               <span>
                 Open access for buyers. <strong className="text-ink">Redemption and selling</strong>{' '}
@@ -82,8 +118,8 @@ export default function SignupPage() {
               </span>
             </div>
 
-            <Button type="submit" size="lg" block disabled={busy}>
-              {busy ? 'Creating account…' : 'Create account'}
+            <Button type="submit" size="lg" block disabled={busy !== null}>
+              {busy === 'email' ? 'Creating account…' : 'Create account'}
             </Button>
           </form>
           {notice && (

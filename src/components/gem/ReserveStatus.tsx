@@ -19,8 +19,10 @@ export function ReserveStatus({ gem, showShortfall = true, className }: ReserveS
   const shortfall = reserveShortfallUsd(gem);
   return (
     <div className={cn('space-y-2', className)}>
-      <div className="flex items-center justify-between text-[12px]">
-        <span className="uppercase tracking-[0.12em] text-ink-muted">Reserve</span>
+      <div className="flex items-center justify-between text-[11.5px]">
+        <span className="font-semibold uppercase tracking-[0.12em] text-ink-muted">
+          Reserve health
+        </span>
         <span className="font-semibold" style={{ color: gem.reserveColor }}>
           {gem.reserveLabel}
         </span>
@@ -28,8 +30,12 @@ export function ReserveStatus({ gem, showShortfall = true, className }: ReserveS
       <ProgressBar value={gem.reserve} funded={gem.funded} />
       {showShortfall && !gem.funded && (
         <div
-          className="rounded-[8px] px-3 py-2 text-[12px]"
-          style={{ background: 'rgba(229,162,60,.08)', border: '1px solid rgba(229,162,60,.28)', color: '#E5C99A' }}
+          className="rounded-[10px] px-3 py-2.5 text-[11.5px] leading-relaxed"
+          style={{
+            background: 'rgba(233,173,91,.07)',
+            border: '1px solid rgba(233,173,91,.24)',
+            color: '#EBCB9E',
+          }}
         >
           Reserve short — top-up of{' '}
           <span className="font-mono font-semibold">{fmtUsd(shortfall)}</span> required before this

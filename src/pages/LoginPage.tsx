@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { AuthShell } from '@/components/auth/AuthShell';
 import { GoogleButton } from '@/components/auth/GoogleButton';
@@ -10,12 +10,30 @@ import { useAuth } from '@/providers/AuthProvider';
 const emailSchema = z.string().email('Enter a valid email address.');
 
 export default function LoginPage() {
-  const { configured, signInWithGoogle, signInWithEmail } = useAuth();
+  const {
+    configured,
+    loading,
+    user,
+    googleAuthAvailable,
+    authError,
+    signInWithGoogle,
+    signInWithEmail,
+  } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'google' | 'email' | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  if (!loading && user) return <Navigate to="/" replace />;
+
+  async function onGoogle() {
+    setError(null);
+    setBusy('google');
+    const result = await signInWithGoogle();
+    setBusy(null);
+    if (!result.ok) setError(result.message);
+  }
 
   async function onEmail(e: React.FormEvent) {
     e.preventDefault();
@@ -25,17 +43,23 @@ export default function LoginPage() {
       return;
     }
     setError(null);
-    setBusy(true);
+    setBusy('email');
     const res = await signInWithEmail(email);
-    setBusy(false);
-    res.ok ? setNotice(res.message) : setError(res.message);
+    setBusy(null);
+    if (res.ok) setNotice(res.message);
+    else setError(res.message);
   }
 
   return (
     <AuthShell>
-      <div className="w-full max-w-[380px] rounded-[16px] border border-white/[0.08] bg-card p-7">
-        <h1 className="text-[22px] font-bold text-ink">Sign in</h1>
-        <p className="mt-1 text-[13px] text-ink-muted">Access your gemstone portfolio.</p>
+      <div className="dc-surface dc-facet-border w-full max-w-[400px] rounded-[22px] p-7 shadow-lift sm:p-8">
+        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">
+          Secure access
+        </p>
+        <h1 className="mt-2 text-[26px] font-semibold tracking-tight text-ink">Welcome back</h1>
+        <p className="mt-1 text-[13px] text-ink-muted">
+          Sign in to manage your vault and trading activity.
+        </p>
 
         {!configured && (
           <div className="mt-4 rounded-[10px] border border-white/[0.1] bg-white/[0.03] px-3 py-2 text-[12px] text-ink-dim">
@@ -45,7 +69,23 @@ export default function LoginPage() {
         )}
 
         <div className="mt-6 space-y-3">
-          <GoogleButton label="Continue with Google" onClick={signInWithGoogle} />
+          <GoogleButton
+            label="Continue with Google"
+            onClick={() => void onGoogle()}
+            disabled={!configured || googleAuthAvailable === false || busy !== null}
+            loading={busy === 'google'}
+          />
+          {configured && googleAuthAvailable === false && (
+            <p className="rounded-[10px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber">
+              Google sign-in is disabled in this Supabase project. Use an email link until the
+              provider is enabled.
+            </p>
+          )}
+          {!error && authError && (
+            <p className="rounded-[10px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
+              {authError}
+            </p>
+          )}
           <OrDivider />
           <form onSubmit={onEmail} className="space-y-3">
             <Field
@@ -56,8 +96,8 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               error={error ?? undefined}
             />
-            <Button type="submit" size="lg" block disabled={busy}>
-              {busy ? 'Sending link…' : 'Email me a magic link'}
+            <Button type="submit" size="lg" block disabled={busy !== null}>
+              {busy === 'email' ? 'Sending link…' : 'Email me a magic link'}
             </Button>
           </form>
           {notice && (

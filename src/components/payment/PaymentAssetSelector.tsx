@@ -16,11 +16,11 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
   const { data: assets = [], isLoading } = usePaymentAssets();
 
   if (isLoading) {
-    return <div className="h-10 animate-pulse rounded-[10px] bg-white/[0.04]" />;
+    return <div className="h-[58px] animate-pulse rounded-[12px] bg-white/[0.04]" />;
   }
 
   return (
-    <div className={cn('flex flex-wrap gap-2', className)}>
+    <div className={cn('grid grid-cols-2 gap-2', className)}>
       {assets.map((asset) => {
         const active = value === asset.address;
         return (
@@ -28,19 +28,31 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
             key={asset.address}
             type="button"
             onClick={() => onChange(asset)}
+            aria-pressed={active}
             className={cn(
-              'dc-btn-anim inline-flex items-center gap-2 rounded-[9px] border px-3.5 py-2 text-[13px] font-medium',
+              'flex min-h-[58px] items-center justify-between rounded-[12px] border px-3.5 py-2.5 text-left transition-colors',
               active
-                ? 'border-transparent bg-btn-primary text-[#0A0A0C]'
-                : 'border-white/[0.1] bg-white/[0.03] text-ink-faint',
+                ? 'border-atelier/40 bg-atelier/[0.08] text-ink shadow-[inset_0_0_0_1px_rgb(var(--dc-accent-rgb)/.08)]'
+                : 'border-white/[0.09] bg-inset text-ink-faint hover:border-white/[0.16]',
             )}
           >
-            <span className="font-semibold">{asset.symbol}</span>
-            {asset.isNative && (
-              <span className={cn('font-mono text-[10px]', active ? 'text-black/50' : 'text-ink-dim')}>
-                native
+            <span>
+              <span className="block text-[13px] font-semibold">{asset.symbol}</span>
+              <span className="mt-0.5 block text-[10.5px] text-ink-dim">
+                {asset.isNative ? 'Native payment' : 'Stablecoin'}
               </span>
-            )}
+            </span>
+            <span
+              aria-hidden="true"
+              className={cn(
+                'flex h-5 w-5 items-center justify-center rounded-full border text-[10px]',
+                active
+                  ? 'border-atelier bg-atelier text-[var(--dc-button-ink)]'
+                  : 'border-white/[0.13] text-transparent',
+              )}
+            >
+              ✓
+            </span>
           </button>
         );
       })}

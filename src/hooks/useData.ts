@@ -15,17 +15,29 @@ export const qk = {
   landing: ['landing'] as const,
   feeTiers: ['feeTiers'] as const,
   paymentAssets: ['paymentAssets'] as const,
+  pendingAuctionRefunds: (address?: string) =>
+    ['pendingAuctionRefunds', address ?? 'disconnected'] as const,
+  pendingTreasuryPayout: (address?: string) =>
+    ['pendingTreasuryPayout', address ?? 'disconnected'] as const,
 };
 
 export const useGems = () => useQuery({ queryKey: qk.gems, queryFn: () => dataService.getGems() });
 export const useGem = (id: string) =>
-  useQuery({ queryKey: qk.gem(id), queryFn: () => dataService.getGem(id), enabled: !!id });
+  useQuery({
+    queryKey: qk.gem(id),
+    queryFn: () => dataService.getGem(BigInt(id)),
+    enabled: /^\d+$/.test(id),
+  });
 export const useListings = () =>
   useQuery({ queryKey: qk.listings, queryFn: () => dataService.getListings() });
 export const useAuctions = () =>
   useQuery({ queryKey: qk.auctions, queryFn: () => dataService.getAuctions() });
 export const useAuction = (id: string) =>
-  useQuery({ queryKey: qk.auction(id), queryFn: () => dataService.getAuction(id), enabled: !!id });
+  useQuery({
+    queryKey: qk.auction(id),
+    queryFn: () => dataService.getAuction(BigInt(id)),
+    enabled: /^\d+$/.test(id),
+  });
 export const useOffers = () =>
   useQuery({ queryKey: qk.offers, queryFn: () => dataService.getOffers() });
 export const useSwaps = () =>
@@ -40,6 +52,18 @@ export const useFeeTiers = () =>
   useQuery({ queryKey: qk.feeTiers, queryFn: () => dataService.getFeeTiers() });
 export const usePaymentAssets = () =>
   useQuery({ queryKey: qk.paymentAssets, queryFn: () => dataService.getPaymentAssets() });
+export const usePendingAuctionRefunds = (address?: string) =>
+  useQuery({
+    queryKey: qk.pendingAuctionRefunds(address),
+    queryFn: () => dataService.getPendingAuctionRefunds(address),
+    enabled: Boolean(address),
+  });
+export const usePendingTreasuryPayout = (address?: string) =>
+  useQuery({
+    queryKey: qk.pendingTreasuryPayout(address),
+    queryFn: () => dataService.getPendingTreasuryPayout(address),
+    enabled: Boolean(address),
+  });
 
 /**
  * Generic write helper: runs a data-service action, then invalidates queries so
