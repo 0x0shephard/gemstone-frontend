@@ -20,7 +20,13 @@ interface StatusBadgeProps {
 }
 
 /** Small colored status pill (green/amber/red/blue/grey triad + info). */
-export function StatusBadge({ tone = 'neutral', color, dot, children, className }: StatusBadgeProps) {
+export function StatusBadge({
+  tone = 'neutral',
+  color,
+  dot,
+  children,
+  className,
+}: StatusBadgeProps) {
   const c = color ?? toneColor[tone];
   return (
     <span

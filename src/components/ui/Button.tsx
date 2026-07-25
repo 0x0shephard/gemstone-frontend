@@ -19,7 +19,8 @@ const variants: Record<ButtonVariant, string> = {
     'bg-btn-primary text-[var(--dc-button-ink)] border border-white/20 shadow-[0_8px_24px_rgba(0,0,0,.24)]',
   secondary:
     'bg-white/[0.045] text-ink border border-white/[0.14] hover:border-white/25 hover:bg-white/[0.065]',
-  ghost: 'bg-transparent text-ink-faint border border-white/[0.08] hover:border-white/[0.15] hover:text-ink',
+  ghost:
+    'bg-transparent text-ink-faint border border-white/[0.08] hover:border-white/[0.15] hover:text-ink',
   danger: 'bg-btn-danger text-white border border-transparent',
 };
 

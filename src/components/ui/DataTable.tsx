@@ -19,7 +19,9 @@ interface DataTableProps<T> {
 /** Dark data table: uppercase header row + mono figures, silver hairline rows. */
 export function DataTable<T>({ columns, rows, rowKey, empty, className }: DataTableProps<T>) {
   return (
-    <div className={cn('overflow-x-auto rounded-[18px] border border-white/[0.08] bg-card', className)}>
+    <div
+      className={cn('overflow-x-auto rounded-[18px] border border-white/[0.08] bg-card', className)}
+    >
       <table className="w-full min-w-[560px] border-collapse text-left">
         <thead>
           <tr className="bg-white/[0.025]">
@@ -39,7 +41,10 @@ export function DataTable<T>({ columns, rows, rowKey, empty, className }: DataTa
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="px-4 py-10 text-center text-[13px] text-ink-dim">
+              <td
+                colSpan={columns.length}
+                className="px-4 py-10 text-center text-[13px] text-ink-dim"
+              >
                 {empty ?? 'Nothing here yet.'}
               </td>
             </tr>

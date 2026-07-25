@@ -14,9 +14,16 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(
   ({ label, error, className, id, ...rest }, ref) => (
     <label className="block">
       {label && (
-        <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">{label}</span>
+        <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
+          {label}
+        </span>
       )}
-      <input ref={ref} id={id} className={cn(inputClass, error && 'border-ruby/60', className)} {...rest} />
+      <input
+        ref={ref}
+        id={id}
+        className={cn(inputClass, error && 'border-ruby/60', className)}
+        {...rest}
+      />
       {error && <span className="mt-1 block text-[11.5px] text-ruby">{error}</span>}
     </label>
   ),

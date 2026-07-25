@@ -13,7 +13,15 @@ interface ModalProps {
 }
 
 /** Centered overlay dialog matching the mockup modal treatment. */
-export function Modal({ open, onClose, title, subtitle, children, footer, maxWidth = 480 }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+  footer,
+  maxWidth = 480,
+}: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -53,8 +61,14 @@ export function Modal({ open, onClose, title, subtitle, children, footer, maxWid
         {(title || subtitle) && (
           <div className="mb-5 pr-10">
             <div className="mb-2 h-px w-8 bg-atelier" />
-            {title && <h2 className="font-display text-[20px] font-medium tracking-[-0.02em] text-ink">{title}</h2>}
-            {subtitle && <p className="mt-1.5 text-[13px] leading-relaxed text-ink-muted">{subtitle}</p>}
+            {title && (
+              <h2 className="font-display text-[20px] font-medium tracking-[-0.02em] text-ink">
+                {title}
+              </h2>
+            )}
+            {subtitle && (
+              <p className="mt-1.5 text-[13px] leading-relaxed text-ink-muted">{subtitle}</p>
+            )}
           </div>
         )}
         <div className="space-y-4">{children}</div>
