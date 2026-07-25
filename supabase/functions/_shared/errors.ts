@@ -1,5 +1,5 @@
 export function safeErrorMessage(error: unknown, fallback: string): string {
-  const candidate =
+  const shortMessage =
     error &&
     typeof error === 'object' &&
     'shortMessage' in error &&
@@ -8,6 +8,15 @@ export function safeErrorMessage(error: unknown, fallback: string): string {
       : error instanceof Error
         ? error.message
         : fallback;
+  const details =
+    error &&
+    typeof error === 'object' &&
+    'details' in error &&
+    typeof error.details === 'string' &&
+    error.details !== shortMessage
+      ? error.details
+      : '';
+  const candidate = details ? `${shortMessage} — ${details}` : shortMessage;
   return (
     candidate
       .split('\n')[0]

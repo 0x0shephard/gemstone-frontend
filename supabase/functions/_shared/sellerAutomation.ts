@@ -141,40 +141,50 @@ async function recoverRegisteredGem(
   chain: ReturnType<typeof operatorChain>,
   submission: SellerSubmission,
 ): Promise<bigint | undefined> {
-  const logs = await chain.publicClient.getLogs({
-    address: chain.addresses.registry,
-    event: {
-      type: 'event',
-      name: 'GemRegistered',
-      inputs: [
-        { name: 'gemId', type: 'uint256', indexed: true },
-        { name: 'seller', type: 'address', indexed: true },
-        { name: 'custodian', type: 'address', indexed: true },
-      ],
-    },
-    args: {
-      seller: getAddress(submission.seller_wallet),
-      custodian: chain.account.address,
-    },
-    fromBlock: chain.deploymentBlock,
-    toBlock: 'latest',
-  });
-  for (const log of [...logs].reverse()) {
-    const gem = (await chain.publicClient.readContract({
+  const latestBlock = await chain.publicClient.getBlockNumber();
+  const earliestBlock = latestBlock > 127n ? latestBlock - 127n : chain.deploymentBlock;
+  const lowerBound = earliestBlock > chain.deploymentBlock ? earliestBlock : chain.deploymentBlock;
+  let toBlock = latestBlock;
+  while (toBlock >= lowerBound) {
+    const candidateFrom = toBlock >= 9n ? toBlock - 9n : 0n;
+    const fromBlock = candidateFrom > lowerBound ? candidateFrom : lowerBound;
+    const logs = await chain.publicClient.getLogs({
       address: chain.addresses.registry,
-      abi: gemRegistryAbi,
-      functionName: 'getGem',
-      args: [log.args.gemId!],
-    })) as {
-      metadataURI: string;
-      certificateHash: Hash;
-    };
-    if (
-      gem.metadataURI === submission.metadata_uri &&
-      gem.certificateHash.toLowerCase() === submission.certificate_hash?.toLowerCase()
-    ) {
-      return log.args.gemId;
+      event: {
+        type: 'event',
+        name: 'GemRegistered',
+        inputs: [
+          { name: 'gemId', type: 'uint256', indexed: true },
+          { name: 'seller', type: 'address', indexed: true },
+          { name: 'custodian', type: 'address', indexed: true },
+        ],
+      },
+      args: {
+        seller: getAddress(submission.seller_wallet),
+        custodian: chain.account.address,
+      },
+      fromBlock,
+      toBlock,
+    });
+    for (const log of [...logs].reverse()) {
+      const gem = (await chain.publicClient.readContract({
+        address: chain.addresses.registry,
+        abi: gemRegistryAbi,
+        functionName: 'getGem',
+        args: [log.args.gemId!],
+      })) as {
+        metadataURI: string;
+        certificateHash: Hash;
+      };
+      if (
+        gem.metadataURI === submission.metadata_uri &&
+        gem.certificateHash.toLowerCase() === submission.certificate_hash?.toLowerCase()
+      ) {
+        return log.args.gemId;
+      }
     }
+    if (fromBlock === lowerBound) break;
+    toBlock = fromBlock - 1n;
   }
 }
 
@@ -275,7 +285,9 @@ export async function activateSellerSubmission(admin: AdminClient, submissionId:
     }
 
     let gemId = submission.onchain_gem_id ? BigInt(submission.onchain_gem_id) : undefined;
-    if (!gemId) gemId = await recoverRegisteredGem(chain, submission);
+    if (!gemId && submission.activation_attempts > 0) {
+      gemId = await recoverRegisteredGem(chain, submission);
+    }
     if (!gemId) {
       latestHash = await writeAndConfirm(chain, {
         address: chain.addresses.registry,

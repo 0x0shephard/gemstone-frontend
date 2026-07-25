@@ -19,4 +19,16 @@ describe('seller automation error sanitization', () => {
       'Primary failure',
     );
   });
+
+  it('retains sanitized RPC details for diagnosis', () => {
+    expect(
+      safeErrorMessage(
+        {
+          shortMessage: 'JSON is not a valid request object.',
+          details: 'invalid transaction at https://rpc.example/private',
+        },
+        'Fallback',
+      ),
+    ).toBe('JSON is not a valid request object. — invalid transaction at [RPC endpoint]');
+  });
 });
