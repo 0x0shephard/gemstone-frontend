@@ -25,7 +25,7 @@ npm-debug.log*
 
 # project reference material
 prompt.md
-UI/
+/UI/
 
 # Supabase CLI local link/cache state
 supabase/.temp/
