@@ -12,6 +12,9 @@ verify_jwt = false
 [functions.v1-seller-commitment]
 verify_jwt = false
 
+[functions.v1-seller-activate]
+verify_jwt = false
+
 [functions.v1-redemption-commitment]
 verify_jwt = false
 

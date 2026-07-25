@@ -150,9 +150,11 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
 
   const submissionId = String(submission.submissionId);
   const uploadedObjects: Array<{ bucket: string; objectPath: string }> = [];
+  let verificationStarted = false;
   try {
     await uploadEvidence(user.id, submissionId, 'certificate', input.certificates, uploadedObjects);
     await uploadEvidence(user.id, submissionId, 'gem_media', input.media, uploadedObjects);
+    verificationStarted = true;
     const { data: verification, error: verificationError } = await client.functions.invoke(
       'v1-seller-submit',
       {
@@ -163,7 +165,11 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
         },
       },
     );
-    if (verificationError || verification?.error || verification?.status !== 'approved') {
+    if (
+      verificationError ||
+      verification?.error ||
+      !['approved', 'registered'].includes(String(verification?.status))
+    ) {
       throw new Error(
         verification?.error ??
           verificationError?.message ??
@@ -171,12 +177,14 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
       );
     }
   } catch (uploadError) {
-    await Promise.all(
-      uploadedObjects.map(({ bucket, objectPath }) =>
-        client.storage.from(bucket).remove([objectPath]),
-      ),
-    );
-    await client.from('seller_submissions').delete().eq('id', submissionId);
+    if (!verificationStarted) {
+      await Promise.all(
+        uploadedObjects.map(({ bucket, objectPath }) =>
+          client.storage.from(bucket).remove([objectPath]),
+        ),
+      );
+      await client.from('seller_submissions').delete().eq('id', submissionId);
+    }
     throw uploadError;
   }
   return submissionId;
@@ -197,6 +205,10 @@ export interface SellerSubmissionSummary {
   metadataUri?: string;
   certificateHash?: Hash;
   onchainGemId?: string;
+  activationState?: string;
+  activationError?: string;
+  valuationMethod?: string;
+  approvedValuationUsd?: string;
   createdAt: string;
 }
 
@@ -204,7 +216,7 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
   const { data, error } = await requireClient()
     .from('seller_submissions')
     .select(
-      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id,created_at',
+      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id,activation_state,activation_error,valuation_method,approved_valuation_usd,created_at',
     )
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -217,8 +229,24 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
     certificateHash: (submission.certificate_hash as Hash | null) ?? undefined,
     onchainGemId:
       submission.onchain_gem_id === null ? undefined : String(submission.onchain_gem_id),
+    activationState: submission.activation_state ?? undefined,
+    activationError: submission.activation_error ?? undefined,
+    valuationMethod: submission.valuation_method ?? undefined,
+    approvedValuationUsd:
+      submission.approved_valuation_usd === null
+        ? undefined
+        : String(submission.approved_valuation_usd),
     createdAt: submission.created_at,
   }));
+}
+
+export async function activateSellerGem(submissionId: string): Promise<void> {
+  const { data, error } = await requireClient().functions.invoke('v1-seller-activate', {
+    body: { submissionId },
+  });
+  if (error || data?.error) {
+    throw new Error(data?.error ?? error?.message ?? 'Seller activation failed');
+  }
 }
 
 export async function createSellerCommitment(

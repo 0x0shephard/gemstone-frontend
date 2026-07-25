@@ -113,8 +113,8 @@ export default function SignupPage() {
             <div className="flex items-start gap-2 rounded-[12px] border border-emerald/25 bg-emerald/[0.06] px-3 py-2.5 text-[12.5px] text-emerald">
               <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald" />
               <span>
-                Open access for buyers. <strong className="text-ink">Redemption and selling</strong>{' '}
-                unlock after Sumsub KYC verification.
+                Open access for buyers. <strong className="text-ink">Selling</strong> uses the
+                Sepolia MVP verification flow; production KYC will be integrated later.
               </span>
             </div>
 

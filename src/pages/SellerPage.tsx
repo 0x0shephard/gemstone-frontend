@@ -11,7 +11,7 @@ import { env } from '@/config/env';
 import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
 import {
-  createSellerCommitment,
+  activateSellerGem,
   getSellerSubmissions,
   submitSellerGem,
   type SellerAttributes,
@@ -47,7 +47,7 @@ export default function SellerPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string }>();
   const [submissions, setSubmissions] = useState<SellerSubmissionSummary[]>([]);
-  const [commitmentId, setCommitmentId] = useState<string>();
+  const [activationId, setActivationId] = useState<string>();
   const walletVerified = Boolean(address && linkedWallet?.toLowerCase() === address.toLowerCase());
   const registryAddress = getContractAddress('GemRegistry');
   const sellerApproval = useReadContract({
@@ -99,7 +99,7 @@ export default function SellerPage() {
       });
       setResult({
         ok: true,
-        message: `Submission ${submissionId} passed MVP auto-verification. Its private evidence is ready for commitment preparation.`,
+        message: `Submission ${submissionId} passed MVP auto-verification and entered automatic Sepolia activation.`,
       });
       setAttributes(EMPTY_ATTRIBUTES);
       setSaleMode('');
@@ -119,23 +119,23 @@ export default function SellerPage() {
 
   const intakeEnabled = Boolean(user && walletVerified);
 
-  async function prepareCommitment(submissionId: string) {
-    setCommitmentId(submissionId);
+  async function retryActivation(submissionId: string) {
+    setActivationId(submissionId);
     setResult(undefined);
     try {
-      const commitment = await createSellerCommitment(submissionId);
+      await activateSellerGem(submissionId);
       setResult({
         ok: true,
-        message: `Activation package prepared: ${commitment.certificateHash.slice(0, 12)}…`,
+        message: 'Sepolia activation completed.',
       });
       await reloadSubmissions();
     } catch (error) {
       setResult({
         ok: false,
-        message: error instanceof Error ? error.message : 'Commitment preparation failed',
+        message: error instanceof Error ? error.message : 'Activation retry failed',
       });
     } finally {
-      setCommitmentId(undefined);
+      setActivationId(undefined);
     }
   }
 
@@ -152,8 +152,8 @@ export default function SellerPage() {
             </h2>
             <p className="mt-1 max-w-2xl text-[13px] text-ink-muted">
               Evidence stays private. During the Sepolia MVP, complete submissions are automatically
-              verified. A canonical evidence commitment can then be registered on-chain without
-              publishing certificates or vault references.
+              verified, valued with the test-only flat-carat rule, committed and activated on-chain
+              without publishing certificates or vault references.
             </p>
           </div>
           <StatusBadge tone="info">MVP auto-verification</StatusBadge>
@@ -162,7 +162,7 @@ export default function SellerPage() {
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <StepBadge n="1" label="MVP auto-verification" done />
           <StepBadge n="2" label="SIWE wallet verified" done={walletVerified} />
-          <StepBadge n="3" label="Protocol seller approval" done={onChainApproved} pending />
+          <StepBadge n="3" label="Automatic protocol activation" done={onChainApproved} pending />
         </div>
 
         {!walletVerified && (
@@ -178,8 +178,8 @@ export default function SellerPage() {
           <div>
             <h3 className="text-[16px] font-semibold text-ink">Gemstone evidence package</h3>
             <p className="mt-1 text-[12.5px] text-ink-muted">
-              The MVP verifies completeness only. It does not calculate or imply a market value; the
-              future pricing engine will produce the versioned valuation commitment.
+              The Sepolia MVP uses $500 per carat, rounded up and capped at $100–$25,000. It is
+              recorded as mvp-flat-carat-v1 and will be replaced by the custom pricing engine.
             </p>
           </div>
           {!intakeEnabled && <StatusBadge tone="warning">Sign-in + SIWE required</StatusBadge>}
@@ -290,13 +290,13 @@ export default function SellerPage() {
                     value: 'buy_now' as const,
                     eyebrow: 'Immediate',
                     title: 'Buy now',
-                    body: 'List at the expert-approved valuation once custody is confirmed.',
+                    body: 'List at the temporary MVP valuation after automated custody activation.',
                   },
                   {
                     value: 'auction' as const,
                     eyebrow: '24 hours',
                     title: 'Auction',
-                    body: 'Open bidding at no less than the expert-approved valuation.',
+                    body: 'Open bidding at no less than the temporary MVP valuation.',
                   },
                 ].map((option) => {
                   const selected = saleMode === option.value;
@@ -403,7 +403,7 @@ export default function SellerPage() {
               <div>
                 <h3 className="text-[14px] font-semibold text-ink">Activation queue</h3>
                 <p className="mt-0.5 text-[11.5px] text-ink-muted">
-                  Approved evidence can be sealed into the commitment used for registration.
+                  Approved evidence is committed, valued and listed automatically on Sepolia.
                 </p>
               </div>
               <span className="font-mono text-[10.5px] text-ink-dim">
@@ -429,6 +429,9 @@ export default function SellerPage() {
                         {submission.verificationProvider === 'mvp-auto'
                           ? ' · MVP auto-verified'
                           : ''}
+                        {submission.approvedValuationUsd
+                          ? ` · $${Number(BigInt(submission.approvedValuationUsd) / 10n ** 18n).toLocaleString()}`
+                          : ''}
                       </p>
                     </div>
                     <StatusBadge
@@ -446,21 +449,32 @@ export default function SellerPage() {
                         ? `Gem #${submission.onchainGemId}`
                         : submission.status.replace('_', ' ')}
                     </StatusBadge>
-                    {approved && !submission.certificateHash && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        disabled={commitmentId === submission.id}
-                        onClick={() => void prepareCommitment(submission.id)}
-                      >
-                        {commitmentId === submission.id
-                          ? 'Preparing…'
-                          : 'Prepare activation package'}
-                      </Button>
-                    )}
+                    {!activated &&
+                      (submission.activationState === 'failed' ||
+                        (approved && submission.certificateHash)) && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={activationId === submission.id}
+                          onClick={() => void retryActivation(submission.id)}
+                        >
+                          {activationId === submission.id ? 'Activating…' : 'Retry activation'}
+                        </Button>
+                      )}
                     {submission.certificateHash && !activated && (
-                      <StatusBadge tone="success">Commitment ready</StatusBadge>
+                      <StatusBadge
+                        tone={submission.activationState === 'failed' ? 'danger' : 'info'}
+                      >
+                        {submission.activationState === 'failed'
+                          ? 'Activation failed'
+                          : submission.activationState?.replace('_', ' ') || 'Activating'}
+                      </StatusBadge>
+                    )}
+                    {submission.activationError && !activated && (
+                      <p className="basis-full text-[11px] text-ruby">
+                        {submission.activationError}
+                      </p>
                     )}
                   </div>
                 );
@@ -473,7 +487,9 @@ export default function SellerPage() {
       <div>
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-[16px] font-semibold text-ink">Registered gems</h3>
-          {!onChainApproved && <StatusBadge tone="warning">Operator approval pending</StatusBadge>}
+          {!onChainApproved && (
+            <StatusBadge tone="warning">Activation starts on submission</StatusBadge>
+          )}
         </div>
         <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
           {gems.slice(0, 3).map((gem) => (

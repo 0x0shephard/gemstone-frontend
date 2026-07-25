@@ -91,6 +91,35 @@ create table if not exists public.seller_submissions (
   onchain_gem_id numeric,
   activation_tx_hash text check (activation_tx_hash is null or activation_tx_hash ~ '^0x[0-9a-f]{64}$'),
   activated_at timestamptz,
+  valuation_method text,
+  approved_valuation_usd numeric(78,0),
+  valuation_hash text check (valuation_hash is null or valuation_hash ~ '^0x[0-9a-f]{64}$'),
+  valuation_matrix_hash text
+    check (valuation_matrix_hash is null or valuation_matrix_hash ~ '^0x[0-9a-f]{64}$'),
+  valuation_canonical_payload text,
+  valuation_nonce text,
+  activation_state text not null default 'pending'
+    check (
+      activation_state in (
+        'pending',
+        'prepared',
+        'registering',
+        'registered',
+        'custody_confirmed',
+        'verified',
+        'listed',
+        'auction_created',
+        'failed'
+      )
+    ),
+  activation_started_at timestamptz,
+  activation_error text,
+  activation_attempts integer not null default 0,
+  registration_tx_hash text,
+  custody_tx_hash text,
+  valuation_tx_hash text,
+  listing_tx_hash text,
+  auction_tx_hash text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -123,6 +152,16 @@ create index if not exists seller_submissions_owner on public.seller_submissions
 drop trigger if exists seller_submissions_set_updated_at on public.seller_submissions;
 create trigger seller_submissions_set_updated_at before update on public.seller_submissions
 for each row execute function public.set_updated_at();
+
+create table if not exists public.protocol_operator_leases (
+  lease_name text primary key,
+  holder_id uuid,
+  expires_at timestamptz not null default '-infinity',
+  updated_at timestamptz not null default now()
+);
+insert into public.protocol_operator_leases(lease_name)
+values ('sepolia-seller-activation')
+on conflict (lease_name) do nothing;
 
 create table if not exists public.evidence_files (
   id uuid primary key default gen_random_uuid(),

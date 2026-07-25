@@ -10,8 +10,9 @@ The app has two explicit data modes:
 - `chain` reads contracts and events directly. It never substitutes mock data when configuration or
   RPC access fails.
 
-Sepolia addresses and the deployment block are intentionally pending. Until they are provided,
-chain mode displays a blocking configuration report.
+The checked-in deployment manifest targets the current Sepolia protocol deployment. Chain mode
+displays a blocking configuration report if the manifest, deployment block, or required addresses
+are missing or inconsistent.
 
 ## Stack
 
@@ -108,9 +109,13 @@ privately; only its hash and approved public metadata reach the protocol.
 
 For the Sepolia MVP, seller intake uses a clearly marked `mvp-auto` verifier. The server verifies
 that the authenticated user controls the submitted primary wallet and that the private evidence
-package contains at least one certificate and one gemstone image before approving it. This is
-submission verification, not KYC and not a valuation. Sumsub and the offline pricing/verification
-engine can replace that transition later without changing the browser’s submission interface.
+package contains at least one certificate and one gemstone image before approving it. It then
+creates an evidence commitment and a test-only `mvp-flat-carat-v1` valuation commitment, registers
+the gem, records protocol custody, records the valuation, and activates the seller-selected buy-now
+listing or 24-hour auction. The temporary rule is $500 per carat, rounded up to whole USD and clamped
+to $100–$25,000. It is not a production appraisal. Sumsub and the offline pricing/verification
+engine can replace the approval and valuation transitions later without changing the browser’s
+submission interface.
 
 ## Environment and deployment
 
@@ -124,21 +129,35 @@ server-only `SUPABASE_SERVICE_ROLE_KEY` into deployed Edge Functions automatical
 
 ### Supabase workflow deployment
 
-The ordered migration upgrades the current `profiles`, `kyc_status`, and legacy
+The ordered migrations upgrade the current `profiles`, `kyc_status`, and legacy
 `seller_submissions` tables in place:
 
 ```sh
 npx supabase login
 npx supabase link --project-ref ozqesbzewekolpeaxaux
 npx supabase db push
-npx supabase secrets set SITE_ORIGIN=http://localhost:5173 CHAIN_ID=11155111
+npx supabase secrets set \
+  SITE_ORIGIN=http://localhost:5173 \
+  CHAIN_ID=11155111 \
+  SEPOLIA_RPC_URL=... \
+  SEPOLIA_OPERATOR_PRIVATE_KEY=... \
+  GEM_REGISTRY_ADDRESS=0x... \
+  PRIMARY_SALE_AUCTION_ADDRESS=0x... \
+  DEPLOYMENT_BLOCK=...
 npx supabase functions deploy v1-siwe-nonce
 npx supabase functions deploy v1-siwe-verify
 npx supabase functions deploy v1-seller-submit
 npx supabase functions deploy v1-seller-commitment
+npx supabase functions deploy v1-seller-activate
 npx supabase functions deploy v1-private-file-url
 npx supabase functions deploy v1-redemption-commitment
 ```
+
+`SEPOLIA_OPERATOR_PRIVATE_KEY` is a server-only testnet signer. Never prefix it with `VITE_`, expose
+it to the browser, or reuse it for mainnet. The signer must hold the deployed registry compliance,
+lister, custodian, and verifier roles plus the primary-sale lister role. Seller activation is
+resumable and records every step transaction hash so retries do not intentionally register a second
+gem.
 
 The Sumsub token and webhook sources are retained for the later integration, but they are not part
 of the MVP deployment above. Replace `SITE_ORIGIN` with the stable Netlify origin before deploying

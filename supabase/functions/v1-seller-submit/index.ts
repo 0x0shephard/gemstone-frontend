@@ -1,4 +1,6 @@
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
+import { safeErrorMessage } from '../_shared/errors.ts';
+import { activateSellerSubmission } from '../_shared/sellerAutomation.ts';
 import { json, preflight } from '../_shared/cors.ts';
 
 const walletPattern = /^0x[0-9a-f]{40}$/;
@@ -61,7 +63,7 @@ function publicMetadata(attributes: SellerAttributes): string {
   const metadata = {
     name: attributes.name,
     description:
-      'Digital Carat MVP gemstone submission. Valuation and custody activation remain operator-controlled.',
+      'Digital Carat Sepolia MVP gemstone submission with test-only automated valuation and custody activation.',
     gemstoneType: attributes.gemstoneType,
     caratWeight: attributes.caratWeight,
     origin: attributes.origin,
@@ -146,7 +148,20 @@ Deno.serve(async (request) => {
       if (submission.seller_wallet !== sellerWallet) {
         return json({ error: 'Submission wallet mismatch' }, 403);
       }
-      if (submission.status === 'approved') return json(responseFor(submission));
+      if (submission.status === 'approved' || submission.status === 'registered') {
+        try {
+          return json(await activateSellerSubmission(admin, submissionId));
+        } catch (error) {
+          return json(
+            {
+              ...responseFor(submission),
+              activationState: 'failed',
+              activationError: safeErrorMessage(error, 'Automatic activation failed'),
+            },
+            202,
+          );
+        }
+      }
       if (submission.status !== 'submitted') {
         return json({ error: 'Submission cannot be auto-verified in its current state' }, 409);
       }
@@ -191,7 +206,18 @@ Deno.serve(async (request) => {
         saleMode: submission.sale_mode,
         custodyPreference: submission.custody_preference,
       });
-      return json(responseFor(approved));
+      try {
+        return json(await activateSellerSubmission(admin, approved.id));
+      } catch (error) {
+        return json(
+          {
+            ...responseFor(approved),
+            activationState: 'failed',
+            activationError: safeErrorMessage(error, 'Automatic activation failed'),
+          },
+          202,
+        );
+      }
     }
 
     if (body.action !== undefined && body.action !== 'create') {
@@ -259,7 +285,7 @@ Deno.serve(async (request) => {
 
     return json(responseFor(submission), 201);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Seller submission failed';
+    const message = safeErrorMessage(error, 'Seller submission failed');
     const authorizationError = message === 'Missing authorization' || message === 'Invalid session';
     return json({ error: message }, authorizationError ? 401 : 400);
   }
