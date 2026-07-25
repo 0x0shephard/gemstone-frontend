@@ -19,7 +19,7 @@ chain mode displays a blocking configuration report.
 - wagmi, viem, RainbowKit
 - TanStack Query and an IndexedDB chain-event projection
 - Supabase Auth, Postgres, Storage, and Edge Functions
-- Sumsub sandbox KYC/KYB
+- MVP seller auto-verification, with Sumsub integration deferred
 - Vitest, React Testing Library, Playwright, axe, ESLint, Prettier
 - Sentry with sanitization and opt-in PostHog product events
 - Netlify SPA deployment
@@ -51,6 +51,19 @@ npm run test:contracts
 build. CI also runs browser accessibility checks and the real Solidity fuzz/invariant suite from
 [`0x0shephard/gemstone-contracts`](https://github.com/0x0shephard/gemstone-contracts).
 
+To exercise the deployed Sepolia contracts without broadcasting testnet transactions, start a clean
+fork and run the lifecycle verifier:
+
+```sh
+anvil --fork-url "$SEPOLIA_RPC_URL" --port 8546 --chain-id 11155111
+npm run verify:anvil-lifecycle
+```
+
+The verifier uses the sibling contracts deployment manifest and demo inventory. It covers mUSDC
+approvals, primary buy-now, secondary listing and purchase, auction bidding and settlement, swaps
+with and without a cash delta, offer acceptance and expiry refunds, and redemption request and
+cancellation.
+
 ## Architecture
 
 ```text
@@ -63,8 +76,9 @@ src/
   components/              accessible UI, sync state, payments, transaction lifecycle
   pages/                   public, trader, redemption, and seller routes
 supabase/
-  schema.sql               RLS tables and private Storage policies
-  functions/               SIWE, Sumsub, seller and redemption commitments
+  migrations/              executable database upgrades, RLS, and Storage policies
+  schema.sql               legacy consolidated reference; do not apply directly
+  functions/               SIWE, seller intake, private files, and commitments
 ```
 
 The browser projection is keyed by chain ID and deployment-manifest hash. It scans bounded adaptive
@@ -92,11 +106,49 @@ Seller and redemption commitments are generated in Edge Functions from RFC 8785 
 `keccak256(UTF8(payload))`, with a random 32-byte nonce. The exact canonical payload is retained
 privately; only its hash and approved public metadata reach the protocol.
 
+For the Sepolia MVP, seller intake uses a clearly marked `mvp-auto` verifier. The server verifies
+that the authenticated user controls the submitted primary wallet and that the private evidence
+package contains at least one certificate and one gemstone image before approving it. This is
+submission verification, not KYC and not a valuation. Sumsub and the offline pricing/verification
+engine can replace that transition later without changing the browser’s submission interface.
+
 ## Environment and deployment
 
 See [`.env.example`](./.env.example) for the complete contract. Important values include data mode,
 chain/RPC, deployment block, module addresses, USDC, IPFS gateway, Supabase, Sentry, and PostHog.
 The Supabase URL must be the API URL (`https://<project-ref>.supabase.co`).
+
+Never put a Supabase service-role key in a `VITE_` variable. Vite variables are client-visible, and
+the build intentionally fails if `VITE_SUPABASE_SERVICE_ROLE_KEY` exists. Supabase injects the
+server-only `SUPABASE_SERVICE_ROLE_KEY` into deployed Edge Functions automatically.
+
+### Supabase workflow deployment
+
+The ordered migration upgrades the current `profiles`, `kyc_status`, and legacy
+`seller_submissions` tables in place:
+
+```sh
+npx supabase login
+npx supabase link --project-ref ozqesbzewekolpeaxaux
+npx supabase db push
+npx supabase secrets set SITE_ORIGIN=http://localhost:5173 CHAIN_ID=11155111
+npx supabase functions deploy v1-siwe-nonce
+npx supabase functions deploy v1-siwe-verify
+npx supabase functions deploy v1-seller-submit
+npx supabase functions deploy v1-seller-commitment
+npx supabase functions deploy v1-private-file-url
+npx supabase functions deploy v1-redemption-commitment
+```
+
+The Sumsub token and webhook sources are retained for the later integration, but they are not part
+of the MVP deployment above. Replace `SITE_ORIGIN` with the stable Netlify origin before deploying
+the production frontend.
+
+For local development, Vite reuses `SEPOLIA_RPC_URL` from the sibling `../gemstone/.env` when it is
+an Alchemy Sepolia endpoint. An explicit shell, CI, or Netlify `VITE_RPC_URL` value takes precedence.
+The RPC credential is never copied into this repository. Chain mode keeps that endpoint first, then
+uses `VITE_RPC_FALLBACK_URL` and the public Sepolia transport if the preferred endpoint is unavailable.
+This is RPC failover for the same chain state; the app never substitutes mock data.
 
 ### Google authentication setup
 

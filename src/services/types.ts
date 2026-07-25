@@ -6,6 +6,8 @@ export type RedeemStatus = 'Eligible' | 'KYC required' | 'Blocked';
 export interface Gem {
   gemId: bigint;
   tokenId?: bigint;
+  market?: 'primary' | 'secondary';
+  listingSeller?: Address;
   displayId: string;
   name: string;
   type: GemType;
@@ -57,6 +59,9 @@ export interface Bid {
 export interface Offer {
   offerId: bigint;
   gem: DecoratedGem;
+  bidder: Address;
+  tokenOwner: Address;
+  listingSeller?: Address;
   offerFmt: string;
   from: string;
   status: 'Pending' | 'Accepted' | 'Expired' | 'Refunded';
@@ -67,6 +72,8 @@ export interface Offer {
 export interface SwapRequest {
   offerId: bigint;
   gem: DecoratedGem;
+  proposer: Address;
+  requestedOwner: Address;
   offeredTokenId: bigint;
   requestedTokenId: bigint;
   giveName: string;
@@ -80,6 +87,7 @@ export interface Redemption {
   workflowId: string;
   tokenId: bigint;
   gem: DecoratedGem;
+  owner: Address;
   stage: string;
   progress: number;
   status: string;
@@ -171,7 +179,7 @@ export interface CancelListingRequest {
 export interface BidRequest {
   gemId: bigint;
   paymentAsset: Address;
-  amountUsd: bigint;
+  saleAmountUsd: bigint;
 }
 
 export interface SettleAuctionRequest {
@@ -189,7 +197,7 @@ export interface ClaimTreasuryPayoutRequest {
 export interface CreateOfferRequest {
   tokenId: bigint;
   paymentAsset: Address;
-  amountUsd: bigint;
+  saleAmountUsd: bigint;
 }
 
 export interface OfferRequest {

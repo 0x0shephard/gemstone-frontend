@@ -67,6 +67,7 @@ async function uploadEvidence(
   submissionId: string,
   category: 'certificate' | 'gem_media',
   files: File[],
+  uploadedObjects: Array<{ bucket: string; objectPath: string }>,
 ) {
   const client = requireClient();
   const bucket = category === 'certificate' ? 'certificates' : 'gem-media';
@@ -78,6 +79,7 @@ async function uploadEvidence(
       upsert: false,
     });
     if (uploadError) throw uploadError;
+    uploadedObjects.push({ bucket, objectPath });
     const { error: recordError } = await client.from('evidence_files').insert({
       owner_id: userId,
       submission_id: submissionId,
@@ -99,11 +101,13 @@ export async function getKycStatus(): Promise<KycStatus> {
   } = await client.auth.getUser();
   if (!user) return 'not_started';
   const { data } = await client
-    .from('kyc_profiles')
+    .from('kyc_status')
     .select('status')
-    .eq('profile_id', user.id)
+    .eq('user_id', user.id)
     .maybeSingle();
-  return (data?.status as KycStatus | undefined) ?? 'not_started';
+  const status = data?.status;
+  if (!status || status === 'none') return 'not_started';
+  return status as KycStatus;
 }
 
 export async function issueSumsubToken(): Promise<{ token: string; expiresIn: number }> {
@@ -126,35 +130,70 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
   } = await client.auth.getUser();
   if (!user) throw new Error('Sign in before submitting a gemstone');
 
-  const { data: submission, error } = await client
-    .from('seller_submissions')
-    .insert({
-      seller_id: user.id,
-      seller_wallet: input.sellerWallet.toLowerCase(),
+  const clientSubmissionId = crypto.randomUUID();
+  const { data: submission, error } = await client.functions.invoke('v1-seller-submit', {
+    body: {
+      action: 'create',
+      clientSubmissionId,
+      sellerWallet: input.sellerWallet,
       attributes: input.attributes,
-      sale_mode: input.saleMode,
-      custody_preference: input.custodyPreference,
+      saleMode: input.saleMode,
+      custodyPreference: input.custodyPreference,
       notes: input.notes,
-    })
-    .select('id')
-    .single();
-  if (error) throw error;
+    },
+  });
+  if (error || submission?.error || !submission?.submissionId) {
+    throw new Error(
+      submission?.error ?? error?.message ?? 'The seller submission could not be verified',
+    );
+  }
 
+  const submissionId = String(submission.submissionId);
+  const uploadedObjects: Array<{ bucket: string; objectPath: string }> = [];
   try {
-    await uploadEvidence(user.id, submission.id, 'certificate', input.certificates);
-    await uploadEvidence(user.id, submission.id, 'gem_media', input.media);
+    await uploadEvidence(user.id, submissionId, 'certificate', input.certificates, uploadedObjects);
+    await uploadEvidence(user.id, submissionId, 'gem_media', input.media, uploadedObjects);
+    const { data: verification, error: verificationError } = await client.functions.invoke(
+      'v1-seller-submit',
+      {
+        body: {
+          action: 'verify',
+          submissionId,
+          sellerWallet: input.sellerWallet,
+        },
+      },
+    );
+    if (verificationError || verification?.error || verification?.status !== 'approved') {
+      throw new Error(
+        verification?.error ??
+          verificationError?.message ??
+          'The uploaded evidence could not be auto-verified',
+      );
+    }
   } catch (uploadError) {
-    await client.from('seller_submissions').delete().eq('id', submission.id);
+    await Promise.all(
+      uploadedObjects.map(({ bucket, objectPath }) =>
+        client.storage.from(bucket).remove([objectPath]),
+      ),
+    );
+    await client.from('seller_submissions').delete().eq('id', submissionId);
     throw uploadError;
   }
-  return submission.id;
+  return submissionId;
 }
 
 export interface SellerSubmissionSummary {
   id: string;
   status:
-    'submitted' | 'expert_review' | 'changes_requested' | 'approved' | 'rejected' | 'registered';
+    | 'submitted'
+    | 'in_review'
+    | 'expert_review'
+    | 'changes_requested'
+    | 'approved'
+    | 'rejected'
+    | 'registered';
   saleMode: 'buy_now' | 'auction';
+  verificationProvider?: string;
   metadataUri?: string;
   certificateHash?: Hash;
   onchainGemId?: string;
@@ -164,13 +203,16 @@ export interface SellerSubmissionSummary {
 export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]> {
   const { data, error } = await requireClient()
     .from('seller_submissions')
-    .select('id,status,sale_mode,metadata_uri,certificate_hash,onchain_gem_id,created_at')
+    .select(
+      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id,created_at',
+    )
     .order('created_at', { ascending: false });
   if (error) throw error;
   return (data ?? []).map((submission) => ({
     id: submission.id,
     status: submission.status,
     saleMode: submission.sale_mode,
+    verificationProvider: submission.verification_provider ?? undefined,
     metadataUri: submission.metadata_uri ?? undefined,
     certificateHash: (submission.certificate_hash as Hash | null) ?? undefined,
     onchainGemId:

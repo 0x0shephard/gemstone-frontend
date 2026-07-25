@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "gemId": "1",
+  "tokenId": "1",
+  "displayId": "DGE-SEPOLIA-RUBY-001",
+  "testnetOnly": true,
+  "redeemable": false,
+  "seller": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "custodian": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "approvedValuationUsd": "100000000000000000000",
+  "saleMode": "buy_now",
+  "purchase": {
+    "paymentAsset": "0x29f4b1eF7261A372DB73493004CCf6A28175Dc54",
+    "paymentAssetSymbol": "mUSDC",
+    "paymentAssetDecimals": 6,
+    "saleAmount": "100000000",
+    "reserveAmount": "10000000",
+    "totalAmount": "110000000"
+  },
+  "metadata": {
+    "caratWeight": 1.25,
+    "custodian": {
+      "country": "Pakistan",
+      "provider": "Digital Carat Test Custody"
+    },
+    "description": "Synthetic ruby testnet specimen. Not a claim on a physical redeemable gemstone.",
+    "displayId": "DGE-SEPOLIA-RUBY-001",
+    "gemstoneType": "synthetic ruby",
+    "name": "Digital Carat Sepolia Test Ruby #001",
+    "network": "ethereum-sepolia",
+    "redeemable": false,
+    "testnet": true
+  },
+  "commitments": {
+    "timestamp": "2026-07-24T17:51:22.514Z",
+    "nonce": "0xc81822123194e9582e42fc0c630ae0344f14187afa3c6e5adec4255be333c835",
+    "metadataDigest": "0x339749ee2fa354e488d884cf8f64da2b4d9438a7bc5b8124ee36ea4853fea303",
+    "certificatePayload": "{\"evidenceDigest\":\"0x339749ee2fa354e488d884cf8f64da2b4d9438a7bc5b8124ee36ea4853fea303\",\"evidenceType\":\"synthetic-testnet-seed\",\"gemDisplayId\":\"DGE-SEPOLIA-RUBY-001\",\"nonce\":\"0xc81822123194e9582e42fc0c630ae0344f14187afa3c6e5adec4255be333c835\",\"sellerWallet\":\"0xCc624fFA5df1F3F4b30aa8abd30186a86254F406\",\"timestamp\":\"2026-07-24T17:51:22.514Z\"}",
+    "certificateHash": "0x937caf2730fdeee2b1e2aa8ff845c29314bac56010b5b068394742d385b4175e",
+    "valuationPayload": "{\"approvedValuationUsd\":\"100000000000000000000\",\"currency\":\"USD\",\"gemDisplayId\":\"DGE-SEPOLIA-RUBY-001\",\"matrixHash\":\"0x99547a26999d0de5e25bc1be0c5b7d513832407dc9591519b00e6d1ad1a598a8\",\"nonce\":\"0xc81822123194e9582e42fc0c630ae0344f14187afa3c6e5adec4255be333c835\",\"reviewer\":\"Digital Carat MVP\",\"saleMode\":\"buy_now\",\"timestamp\":\"2026-07-24T17:51:22.514Z\",\"valuationVersion\":\"1.0.0\"}",
+    "valuationHash": "0x8390f719c6acc53810378fae72bb57827e350db08a6c90cf977636c3154bd3ea",
+    "matrixPayload": "{\"currency\":\"USD\",\"matrixId\":\"digital-carat-mvp-test\",\"version\":\"1.0.0\"}",
+    "matrixHash": "0x99547a26999d0de5e25bc1be0c5b7d513832407dc9591519b00e6d1ad1a598a8"
+  },
+  "transactions": {
+    "sellerApproval": {
+      "hash": "0x57d29427eaec7b5385869820986d22347b0dde78e94a3a60b297c3dd0f8bfdd2",
+      "blockNumber": 11342293
+    },
+    "registration": {
+      "hash": "0x9c292dac0c12d5399c7f872a2a1b60f499df60719b46302523a327cde358956b",
+      "blockNumber": 11342295
+    },
+    "custodyConfirmation": {
+      "hash": "0xabef042e282e0bc0867f73265f92d1d927b42b28f8aac97ebdc4524cc9f3d470",
+      "blockNumber": 11342296
+    },
+    "valuationVerification": {
+      "hash": "0xb6198df8c89cd11cc719ad4546090461565fa00b3c4b6c5cabd6ebeabe134d5a",
+      "blockNumber": 11342297
+    },
+    "primaryListing": {
+      "hash": "0x7cbbe8c07b2fb527e10c113d9761226f84826fbc10cccdad79cc9feb2d080a36",
+      "blockNumber": 11342299
+    },
+    "paymentApproval": {
+      "hash": "0x94530bb7e5852fd6443038a28bcaaccb92f6d3f38807582056bfa68ce146d6fe",
+      "blockNumber": 11342315
+    },
+    "purchase": {
+      "hash": "0xb0f623caa84e970f61b40d1fdeaf6981289fca7382e3985f6bcb4f5e57c7f105",
+      "blockNumber": 11342324
+    },
+    "marketplaceApproval": {
+      "hash": "0x51750b91dc1fe7f83d28783b7f9fb0bb677981760415588412296813654b255c",
+      "blockNumber": 11342342
+    },
+    "marketplaceListing": {
+      "hash": "0x27ff87e78a4a2fdc46d26d74658b3dcb7764f5ea6b85ff320935cc25bbbb9a03",
+      "blockNumber": 11342350
+    },
+    "marketplaceCancellation": {
+      "hash": "0x9dfb4aa63f74689373edb46ddd0c85745914c6f6173325f460ea15c5d51793af",
+      "blockNumber": 11342360
+    }
+  },
+  "finalState": {
+    "owner": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+    "registryStatus": "Minted",
+    "listingSeller": "0x0000000000000000000000000000000000000000",
+    "reserveBalanceUsd": "10000000000000000000",
+    "requiredReserveUsd": "10000000000000000000",
+    "coverageRatioBps": "10000",
+    "underfundedGemCount": "0",
+    "nftApproval": "0x0000000000000000000000000000000000000000",
+    "primarySaleAllowance": "0"
+  }
+}

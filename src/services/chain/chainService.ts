@@ -17,6 +17,7 @@ import {
   type DeploymentManifest,
 } from '@/config/contracts';
 import { env } from '@/config/env';
+import { ownershipPathSteps } from '@/content/ownershipPath';
 import { contracts } from '@/contracts';
 import { decorate } from '@/lib/gem';
 import type { IDataService, LandingData, ProfileData } from '../IDataService';
@@ -123,12 +124,16 @@ async function metadata(uri: string): Promise<Metadata> {
   }
 }
 
-async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
-  const registryGem = (await client.readContract({
+async function readRegistryGem(gemId: bigint): Promise<RegistryGem> {
+  return (await client.readContract({
     ...contract('GemRegistry'),
     functionName: 'getGem',
     args: [gemId],
   })) as RegistryGem;
+}
+
+async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
+  const registryGem = await readRegistryGem(gemId);
   if (Number(registryGem.status) === 0 || Number(registryGem.status) === 8) return;
 
   const connectedAddress = getAccount(wagmiConfig).address;
@@ -154,7 +159,7 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
             client.readContract({
               ...contract('ComplianceRegistry'),
               functionName: 'canRedeem',
-              args: [connectedAddress, registryGem.tokenId],
+              args: [connectedAddress],
             }) as Promise<boolean>
           ).catch(() => false)
         : Promise.resolve(false),
@@ -340,8 +345,25 @@ async function getAuctions(): Promise<Auction[]> {
 
 async function getListings(): Promise<DecoratedGem[]> {
   const snapshot = await projection();
+  const primaryGemIds = discoveredIds(snapshot, 'GemListed', 'gemId');
+  const primaryResults = await Promise.all(
+    primaryGemIds.map(async (gemId) => {
+      const [registryGem, mode] = await Promise.all([
+        readRegistryGem(gemId),
+        client.readContract({
+          ...contract('GemRegistry'),
+          functionName: 'primarySaleMode',
+          args: [gemId],
+        }) as Promise<number>,
+      ]);
+      if (Number(registryGem.status) !== 4 || Number(mode) !== 1) return;
+      const gem = await readGem(gemId);
+      return gem ? { ...gem, market: 'primary' as const } : undefined;
+    }),
+  );
+
   const tokenIds = discoveredIds(snapshot, 'Listed', 'tokenId');
-  const results = await Promise.all(
+  const secondaryResults = await Promise.all(
     tokenIds.map(async (tokenId) => {
       const listing = (await client.readContract({
         ...contract('Marketplace'),
@@ -359,13 +381,15 @@ async function getListings(): Promise<DecoratedGem[]> {
       const value = Number(formatUnits(listing[1], 18));
       return {
         ...gem,
+        market: 'secondary' as const,
+        listingSeller: listing[0],
         valueUsd: listing[1],
         value,
         valueFmt: `$${value.toLocaleString('en-US')}`,
       };
     }),
   );
-  return results.filter((gem): gem is DecoratedGem => Boolean(gem));
+  return [...primaryResults, ...secondaryResults].filter((gem) => gem !== undefined);
 }
 
 async function getOffers(): Promise<Offer[]> {
@@ -389,6 +413,8 @@ async function getOffers(): Promise<Offer[]> {
         args: [offerId],
       })) as readonly [Address, bigint, Address, bigint, bigint, bigint, boolean];
       const tokenId = state[1] || (created.args.tokenId as bigint);
+      const bidder =
+        state[0] === zeroAddress ? (created.args.bidder as Address) : (state[0] as Address);
       const gemId = (await client.readContract({
         ...contract('DGENFT'),
         functionName: 'tokenGem',
@@ -396,6 +422,20 @@ async function getOffers(): Promise<Offer[]> {
       })) as bigint;
       const gem = await readGem(gemId);
       if (!gem) return;
+      const [tokenOwner, listing] = await Promise.all([
+        client
+          .readContract({
+            ...contract('DGENFT'),
+            functionName: 'ownerOf',
+            args: [tokenId],
+          })
+          .catch(() => zeroAddress) as Promise<Address>,
+        client.readContract({
+          ...contract('Marketplace'),
+          functionName: 'listings',
+          args: [tokenId],
+        }) as Promise<readonly [Address, bigint]>,
+      ]);
       const expiry = state[5] || (created.args.expiry as bigint);
       const expired = expiry <= now;
       const terminal = snapshot.events.find(
@@ -416,8 +456,11 @@ async function getOffers(): Promise<Offer[]> {
       return {
         offerId,
         gem,
+        bidder,
+        tokenOwner,
+        listingSeller: listing[0] === zeroAddress ? undefined : listing[0],
         offerFmt: `$${Number(formatUnits(saleUsdValue, 18)).toLocaleString()}`,
-        from: state[0] === zeroAddress ? String(created.args.bidder) : state[0],
+        from: bidder,
         status,
         statusColor: status === 'Pending' ? 'var(--dc-amber)' : '#8B8B94',
         secondsLeft: Number(expiry > now ? expiry - now : 0n),
@@ -461,9 +504,16 @@ async function getSwaps(): Promise<SwapRequest[]> {
           args: [requestedTokenId],
         }),
       ])) as [bigint, bigint];
-      const [offered, requested] = await Promise.all([
+      const [offered, requested, requestedOwner] = await Promise.all([
         readGem(offeredGemId),
         readGem(requestedGemId),
+        client
+          .readContract({
+            ...contract('DGENFT'),
+            functionName: 'ownerOf',
+            args: [requestedTokenId],
+          })
+          .catch(() => zeroAddress) as Promise<Address>,
       ]);
       if (!offered || !requested) return;
       const expiry = state[6] || (created.args.expiry as bigint);
@@ -497,6 +547,9 @@ async function getSwaps(): Promise<SwapRequest[]> {
       return {
         offerId,
         gem: requested,
+        proposer:
+          state[0] === zeroAddress ? (created.args.proposer as Address) : (state[0] as Address),
+        requestedOwner,
         offeredTokenId,
         requestedTokenId,
         giveName: offered.name,
@@ -512,14 +565,22 @@ async function getSwaps(): Promise<SwapRequest[]> {
 
 async function getRedemptions(): Promise<Redemption[]> {
   const snapshot = await projection();
-  const active = new Map<bigint, { gemId: bigint; requestHash: Hash }>();
+  const active = new Map<bigint, { gemId: bigint; requestHash: Hash; owner: Address }>();
   for (const event of snapshot.events) {
     if (event.module !== 'RedemptionManager') continue;
     const tokenId = event.args.tokenId;
     const gemId = event.args.gemId;
     if (typeof tokenId !== 'bigint' || typeof gemId !== 'bigint') continue;
-    if (event.eventName === 'RedemptionOpened' && typeof event.args.requestHash === 'string') {
-      active.set(tokenId, { gemId, requestHash: event.args.requestHash as Hash });
+    if (
+      event.eventName === 'RedemptionOpened' &&
+      typeof event.args.requestHash === 'string' &&
+      typeof event.args.owner === 'string'
+    ) {
+      active.set(tokenId, {
+        gemId,
+        requestHash: event.args.requestHash as Hash,
+        owner: event.args.owner as Address,
+      });
     }
     if (event.eventName === 'RedemptionCancelled' || event.eventName === 'RedemptionConfirmed') {
       active.delete(tokenId);
@@ -533,6 +594,7 @@ async function getRedemptions(): Promise<Redemption[]> {
         workflowId: `onchain-${opened.requestHash}`,
         tokenId,
         gem,
+        owner: opened.owner,
         stage: 'Custodian fulfillment',
         progress: 60,
         status: 'On-chain request open',
@@ -587,8 +649,8 @@ export const chainService: IDataService = {
   getSwapRequests: getSwaps,
   getRedemptions,
   getProfile: async (address): Promise<ProfileData> => {
-    const gems = await allGems();
-    const owned = address
+    const [gems, listings] = await Promise.all([allGems(), getListings()]);
+    const walletOwned = address
       ? (
           await Promise.all(
             gems.map(async (gem) => {
@@ -605,6 +667,19 @@ export const chainService: IDataService = {
           )
         ).filter((gem): gem is DecoratedGem => Boolean(gem))
       : [];
+    const escrowedListings = address
+      ? listings.filter(
+          (gem) =>
+            gem.market === 'secondary' &&
+            gem.listingSeller &&
+            isAddressEqual(gem.listingSeller, address as Address),
+        )
+      : [];
+    const owned = [
+      ...new Map(
+        [...walletOwned, ...escrowedListings].map((gem) => [gem.gemId.toString(), gem]),
+      ).values(),
+    ];
     const snapshot = await projection();
     const bidEvents = latestBidEventsForAddress(snapshot.events, address);
     const now = BigInt(Math.floor(Date.now() / 1_000));
@@ -651,12 +726,33 @@ export const chainService: IDataService = {
         }),
       )
     ).filter((bid): bid is Bid => Boolean(bid));
+    const [offers, swaps, redemptions] = await Promise.all([
+      getOffers(),
+      getSwaps(),
+      getRedemptions(),
+    ]);
+    const normalizedAddress = address?.toLowerCase();
     return {
       owned,
       bids,
-      offers: await getOffers(),
-      swaps: await getSwaps(),
-      redemptions: await getRedemptions(),
+      offers: normalizedAddress
+        ? offers.filter(
+            (offer) =>
+              offer.bidder.toLowerCase() === normalizedAddress ||
+              offer.tokenOwner.toLowerCase() === normalizedAddress ||
+              offer.listingSeller?.toLowerCase() === normalizedAddress,
+          )
+        : [],
+      swaps: normalizedAddress
+        ? swaps.filter(
+            (swap) =>
+              swap.proposer.toLowerCase() === normalizedAddress ||
+              swap.requestedOwner.toLowerCase() === normalizedAddress,
+          )
+        : [],
+      redemptions: normalizedAddress
+        ? redemptions.filter((redemption) => redemption.owner.toLowerCase() === normalizedAddress)
+        : [],
       activity: activityFor(snapshot, address),
       stats: {
         portfolioValueUsd: owned.reduce((sum, gem) => sum + gem.value, 0),
@@ -692,7 +788,7 @@ export const chainService: IDataService = {
           color: 'var(--dc-ruby)',
         },
       ],
-      howSteps: [],
+      howSteps: [...ownershipPathSteps],
       treasurySplit: split,
       gemsInVault: gems.length,
       featuredCaption: gems[0]?.displayId ?? 'No registered gems',
@@ -853,7 +949,13 @@ export const chainService: IDataService = {
       args: [request.tokenId],
     }),
   bid: async (request: BidRequest) => {
-    const amount = await usdToAsset(request.paymentAsset, request.amountUsd);
+    const gem = await readRegistryGem(request.gemId);
+    const shortfall = (await client.readContract({
+      ...contract('ReserveManager'),
+      functionName: 'shortfallUsd',
+      args: [request.gemId, gem.priceUsd],
+    })) as bigint;
+    const amount = await usdToAsset(request.paymentAsset, request.saleAmountUsd + shortfall);
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.PrimarySaleAuction;
     return runContractTransaction({
@@ -882,7 +984,18 @@ export const chainService: IDataService = {
       args: [request.recipient],
     }),
   createOffer: async (request: CreateOfferRequest) => {
-    const amount = await usdToAsset(request.paymentAsset, request.amountUsd);
+    const gemId = (await client.readContract({
+      ...contract('DGENFT'),
+      functionName: 'tokenGem',
+      args: [request.tokenId],
+    })) as bigint;
+    const gem = await readRegistryGem(gemId);
+    const shortfall = (await client.readContract({
+      ...contract('ReserveManager'),
+      functionName: 'shortfallUsd',
+      args: [gemId, gem.priceUsd],
+    })) as bigint;
+    const amount = await usdToAsset(request.paymentAsset, request.saleAmountUsd + shortfall);
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.Marketplace;
     return runContractTransaction({

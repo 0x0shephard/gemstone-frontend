@@ -8,6 +8,17 @@ test('public marketplace has no critical accessibility violations', async ({ pag
   expect(results.violations.filter((violation) => violation.impact === 'critical')).toEqual([]);
 });
 
+test('landing page keeps the complete ownership path in chain mode', async ({ page }) => {
+  await page.goto('/');
+
+  await expect(
+    page.getByRole('heading', { name: 'From expert review to physical redemption' }),
+  ).toBeVisible();
+  for (const heading of ['Certify & vault', 'Fund reserve', 'Mint & trade', 'Redeem or hold']) {
+    await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+  }
+});
+
 test('app navigation stays hidden until opened and closes after navigation', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/marketplace');

@@ -20,7 +20,9 @@ export default function GemDetailPage() {
   const { data: gem, isLoading, isError } = useGem(gemId);
   const modals = useGemModals();
   const isSecondaryListing = searchParams.get('market') === 'secondary';
+  const isAuction = searchParams.get('market') === 'auction';
   const isManageView = searchParams.get('manage') === '1';
+  const isActiveListing = isManageView && searchParams.get('listed') === '1';
 
   if (isLoading) {
     return (
@@ -125,53 +127,65 @@ export default function GemDetailPage() {
               </div>
               {isManageView ? (
                 <div className="grid grid-cols-2 gap-2.5">
-                  <Button onClick={() => modals.open('list', gem)} disabled={!gem.tokenId}>
-                    List for sale
-                  </Button>
-                  <TxButton
-                    variant="secondary"
-                    disabled={!gem.tokenId}
-                    action={() => dataService.cancelListing({ tokenId: gem.tokenId! })}
-                    pendingLabel="Cancelling…"
-                    telemetryFlow="cancel_listing"
-                  >
-                    Cancel listing
-                  </TxButton>
-                  <Button variant="secondary" onClick={() => modals.open('swap', gem)}>
-                    Propose swap
-                  </Button>
-                  {!gem.funded && (
-                    <Button variant="secondary" onClick={() => modals.open('reserve', gem)}>
-                      Fund reserve
-                    </Button>
+                  {isActiveListing ? (
+                    <>
+                      <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                        This NFT is escrowed by the Marketplace. Cancel the listing before swapping,
+                        redeeming, or accepting an offer.
+                      </p>
+                      <TxButton
+                        block
+                        variant="secondary"
+                        disabled={!gem.tokenId}
+                        action={() => dataService.cancelListing({ tokenId: gem.tokenId! })}
+                        pendingLabel="Cancelling…"
+                        telemetryFlow="cancel_listing"
+                      >
+                        Cancel listing
+                      </TxButton>
+                    </>
+                  ) : (
+                    <>
+                      <Button onClick={() => modals.open('list', gem)} disabled={!gem.tokenId}>
+                        List for sale
+                      </Button>
+                      <Button variant="secondary" onClick={() => modals.open('swap', gem)}>
+                        Propose swap
+                      </Button>
+                      {!gem.funded && (
+                        <Button variant="secondary" onClick={() => modals.open('reserve', gem)}>
+                          Fund reserve
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        className="col-span-2"
+                        onClick={() => modals.open('redeem', gem)}
+                      >
+                        Redeem physical gemstone
+                      </Button>
+                    </>
                   )}
-                  <Button
-                    variant="ghost"
-                    className="col-span-2"
-                    onClick={() => modals.open('redeem', gem)}
-                  >
-                    Redeem physical gemstone
-                  </Button>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2.5">
-                  <Button
-                    onClick={() => modals.open(isSecondaryListing ? 'buy' : 'buyNow', gem)}
-                    disabled={isSecondaryListing && !gem.tokenId}
-                  >
-                    {isSecondaryListing ? 'Purchase listing' : 'Buy now'}
-                  </Button>
-                  {!isSecondaryListing && (
+                  {isAuction ? (
                     <Button variant="secondary" onClick={() => modals.open('bid', gem)}>
                       Place bid
                     </Button>
+                  ) : (
+                    <Button
+                      onClick={() => modals.open(isSecondaryListing ? 'buy' : 'buyNow', gem)}
+                      disabled={isSecondaryListing && !gem.tokenId}
+                    >
+                      {isSecondaryListing ? 'Purchase listing' : 'Buy now'}
+                    </Button>
                   )}
-                  <Button variant="secondary" onClick={() => modals.open('offer', gem)}>
-                    Make offer
-                  </Button>
-                  <Button variant="secondary" onClick={() => modals.open('swap', gem)}>
-                    Offer swap
-                  </Button>
+                  {isSecondaryListing && (
+                    <Button variant="secondary" onClick={() => modals.open('offer', gem)}>
+                      Make offer
+                    </Button>
+                  )}
                   {!gem.funded && (
                     <Button
                       variant="ghost"

@@ -125,8 +125,8 @@ export default function ProfilePage() {
                   <GemCard
                     key={g.gemId.toString()}
                     gem={g}
-                    ctaLabel="Manage →"
-                    href={`/gem/${g.gemId}?manage=1`}
+                    ctaLabel={g.listingSeller ? 'Manage listing →' : 'Manage →'}
+                    href={`/gem/${g.gemId}?manage=1${g.listingSeller ? '&listed=1' : ''}`}
                   />
                 ))}
               </div>
@@ -135,7 +135,7 @@ export default function ProfilePage() {
             ))}
 
           {tab === 'bids' && <BidsTable rows={profile.bids} />}
-          {tab === 'offers' && <OffersTable rows={profile.offers} />}
+          {tab === 'offers' && <OffersTable rows={profile.offers} address={address} />}
 
           {tab === 'swaps' &&
             (profile.swaps.length ? (
@@ -243,72 +243,87 @@ function BidsTable({ rows }: { rows: Bid[] }) {
   );
 }
 
-const offerColumns: Column<Offer>[] = [
-  {
-    key: 'gem',
-    header: 'Gem',
-    render: (r) => (
-      <span>
-        {r.gem.name}{' '}
-        <span className="font-mono text-[11.5px] text-ink-dim">· {r.gem.displayId}</span>
-      </span>
-    ),
-  },
-  { key: 'offer', header: 'Offer', align: 'right', mono: true, render: (r) => r.offerFmt },
-  { key: 'from', header: 'From', mono: true, render: (r) => r.from },
-  {
-    key: 'status',
-    header: 'Status',
-    render: (r) => (
-      <StatusBadge color={r.statusColor} dot={r.status === 'Pending'}>
-        {r.status}
-      </StatusBadge>
-    ),
-  },
-  {
-    key: 'exp',
-    header: 'Expiry',
-    align: 'right',
-    render: (r) =>
-      r.secondsLeft > 0 ? (
-        <CountdownBadge seconds={r.secondsLeft} />
-      ) : (
-        <span className="text-ink-dim">Expired</span>
+function offerColumns(address?: string): Column<Offer>[] {
+  const normalized = address?.toLowerCase();
+  return [
+    {
+      key: 'gem',
+      header: 'Gem',
+      render: (r) => (
+        <span>
+          {r.gem.name}{' '}
+          <span className="font-mono text-[11.5px] text-ink-dim">· {r.gem.displayId}</span>
+        </span>
       ),
-  },
-  {
-    key: 'action',
-    header: '',
-    align: 'right',
-    render: (r) =>
-      r.status === 'Expired' ? (
-        <TxButton
-          size="sm"
-          variant="ghost"
-          action={() => dataService.refundExpiredOffer({ offerId: r.offerId })}
-          pendingLabel="Refunding…"
-          telemetryFlow="offer_refund"
-        >
-          Claim refund
-        </TxButton>
-      ) : r.status === 'Pending' ? (
-        <TxButton
-          size="sm"
-          variant="secondary"
-          action={() => dataService.acceptOffer({ offerId: r.offerId })}
-          pendingLabel="Accepting…"
-          telemetryFlow="offer_accept"
-        >
-          Accept
-        </TxButton>
-      ) : null,
-  },
-];
+    },
+    { key: 'offer', header: 'Offer', align: 'right', mono: true, render: (r) => r.offerFmt },
+    { key: 'from', header: 'From', mono: true, render: (r) => r.from },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (r) => (
+        <StatusBadge color={r.statusColor} dot={r.status === 'Pending'}>
+          {r.status}
+        </StatusBadge>
+      ),
+    },
+    {
+      key: 'exp',
+      header: 'Expiry',
+      align: 'right',
+      render: (r) =>
+        r.secondsLeft > 0 ? (
+          <CountdownBadge seconds={r.secondsLeft} />
+        ) : (
+          <span className="text-ink-dim">Expired</span>
+        ),
+    },
+    {
+      key: 'action',
+      header: '',
+      align: 'right',
+      render: (r) => {
+        const isBidder = normalized === r.bidder.toLowerCase();
+        const isOwner = normalized === r.tokenOwner.toLowerCase();
+        if (r.status === 'Expired' && isBidder) {
+          return (
+            <TxButton
+              size="sm"
+              variant="ghost"
+              action={() => dataService.refundExpiredOffer({ offerId: r.offerId })}
+              pendingLabel="Refunding…"
+              telemetryFlow="offer_refund"
+            >
+              Claim refund
+            </TxButton>
+          );
+        }
+        if (r.status === 'Pending' && isOwner) {
+          return (
+            <TxButton
+              size="sm"
+              variant="secondary"
+              action={() => dataService.acceptOffer({ offerId: r.offerId })}
+              pendingLabel="Accepting…"
+              telemetryFlow="offer_accept"
+            >
+              Accept
+            </TxButton>
+          );
+        }
+        if (r.status === 'Pending' && normalized === r.listingSeller?.toLowerCase()) {
+          return <span className="text-[11px] text-ink-dim">Cancel listing before accepting</span>;
+        }
+        return null;
+      },
+    },
+  ];
+}
 
-function OffersTable({ rows }: { rows: Offer[] }) {
+function OffersTable({ rows, address }: { rows: Offer[]; address?: string }) {
   return (
     <DataTable
-      columns={offerColumns}
+      columns={offerColumns(address)}
       rows={rows}
       rowKey={(r) => r.offerId.toString()}
       empty="No offers."

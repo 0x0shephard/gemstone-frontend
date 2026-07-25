@@ -308,7 +308,10 @@ export async function syncProjection(
       },
     };
   } catch (error) {
-    if (cached.events.length === 0) throw error;
+    if (cached.events.length === 0) {
+      announce({ state: 'error' });
+      throw error;
+    }
     const scannedThrough = BigInt(cached.meta?.scannedThrough ?? manifest.deploymentBlock);
     announce({ state: 'stale', latestBlock: scannedThrough.toString(), cached: true });
     return {

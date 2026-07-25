@@ -124,8 +124,8 @@ export default function MarketplacePage() {
             <GemCard
               key={gem.gemId.toString()}
               gem={gem}
-              href={`/gem/${gem.gemId}?market=secondary`}
-              ctaLabel="Purchase →"
+              href={`/gem/${gem.gemId}?market=${gem.market ?? 'secondary'}`}
+              ctaLabel={gem.market === 'primary' ? 'Buy now →' : 'Purchase →'}
               revealDelay={(i % 4) * 60}
             />
           ))}

@@ -1,5 +1,8 @@
 export const corsHeaders = {
-  'Access-Control-Allow-Origin': Deno.env.get('SITE_ORIGIN') ?? '*',
+  // Authentication and SIWE origin validation provide authorization. A wildcard
+  // here allows the browser to receive sanitized error bodies from each explicit
+  // development origin without using cookies or credentialed CORS.
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };

@@ -1,12 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useAccount, useReadContract } from 'wagmi';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Field, inputClass } from '@/components/ui/Field';
-import { KycStatus } from '@/components/kyc/KycStatus';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { GemCard } from '@/components/gem/GemCard';
-import { useKyc } from '@/hooks/useKyc';
 import { useGems } from '@/hooks/useData';
 import { useAuth } from '@/providers/AuthProvider';
 import { env } from '@/config/env';
@@ -19,8 +17,6 @@ import {
   type SellerAttributes,
   type SellerSubmissionSummary,
 } from '@/services/offchain/workflows';
-
-const SumsubWebSdk = lazy(() => import('@sumsub/websdk-react'));
 
 const EMPTY_ATTRIBUTES: SellerAttributes = {
   name: '',
@@ -37,7 +33,6 @@ const EMPTY_ATTRIBUTES: SellerAttributes = {
 };
 
 export default function SellerPage() {
-  const { status, isApproved, beginKyc, isStarting, accessToken, error: kycError } = useKyc();
   const { address } = useAccount();
   const { linkedWallet, user } = useAuth();
   const { data: gems = [] } = useGems();
@@ -102,7 +97,10 @@ export default function SellerPage() {
         certificates,
         media,
       });
-      setResult({ ok: true, message: `Submission ${submissionId} is queued for expert review.` });
+      setResult({
+        ok: true,
+        message: `Submission ${submissionId} passed MVP auto-verification. Its private evidence is ready for commitment preparation.`,
+      });
       setAttributes(EMPTY_ATTRIBUTES);
       setSaleMode('');
       setNotes('');
@@ -119,7 +117,7 @@ export default function SellerPage() {
     }
   }
 
-  const intakeEnabled = Boolean(user && isApproved && walletVerified);
+  const intakeEnabled = Boolean(user && walletVerified);
 
   async function prepareCommitment(submissionId: string) {
     setCommitmentId(submissionId);
@@ -153,55 +151,26 @@ export default function SellerPage() {
               Bring a gemstone on-chain
             </h2>
             <p className="mt-1 max-w-2xl text-[13px] text-ink-muted">
-              KYC and evidence stay private. After expert approval, a canonical evidence commitment
-              can be registered on-chain without publishing certificates or vault references.
+              Evidence stays private. During the Sepolia MVP, complete submissions are automatically
+              verified. A canonical evidence commitment can then be registered on-chain without
+              publishing certificates or vault references.
             </p>
           </div>
-          <KycStatus status={status} />
+          <StatusBadge tone="info">MVP auto-verification</StatusBadge>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <StepBadge n="1" label="Sumsub sandbox KYC" done={isApproved} />
+          <StepBadge n="1" label="MVP auto-verification" done />
           <StepBadge n="2" label="SIWE wallet verified" done={walletVerified} />
           <StepBadge n="3" label="Protocol seller approval" done={onChainApproved} pending />
         </div>
 
-        <div className="mt-5 flex flex-wrap items-center gap-3">
-          {!isApproved && (
-            <Button
-              onClick={() => void beginKyc()}
-              disabled={!user || isStarting || status === 'pending'}
-            >
-              {isStarting
-                ? 'Opening verification…'
-                : status === 'pending'
-                  ? 'Verification in review'
-                  : 'Start KYC verification'}
-            </Button>
-          )}
-          {!walletVerified && (
-            <p className="text-[12px] text-ink-muted">
-              Wallet connection and verification are managed from your account menu.
-            </p>
-          )}
-        </div>
-        {accessToken && (
-          <div className="mt-5 overflow-hidden rounded-[12px] border border-sapphire/30 bg-white">
-            <Suspense
-              fallback={<p className="p-4 text-[12px] text-black">Loading Sumsub sandbox…</p>}
-            >
-              <SumsubWebSdk
-                accessToken={accessToken}
-                testEnv
-                expirationHandler={async () => (await beginKyc()).token}
-                config={{ lang: 'en' }}
-                options={{ addViewportTag: false, adaptIframeHeight: true }}
-                onError={(error: unknown) => console.error('Sumsub WebSDK error', error)}
-              />
-            </Suspense>
-          </div>
+        {!walletVerified && (
+          <p className="mt-5 text-[12px] text-ink-muted">
+            Sign in, then connect and verify your primary wallet from the account menu before
+            submitting evidence.
+          </p>
         )}
-        {kycError && <p className="mt-3 text-[12px] text-ruby">{kycError.message}</p>}
       </Card>
 
       <Card className="p-6 sm:p-7">
@@ -209,11 +178,11 @@ export default function SellerPage() {
           <div>
             <h3 className="text-[16px] font-semibold text-ink">Gemstone evidence package</h3>
             <p className="mt-1 text-[12.5px] text-ink-muted">
-              Attributes are reviewed by an expert. Digital Carat does not calculate or imply an
-              automated market value.
+              The MVP verifies completeness only. It does not calculate or imply a market value; the
+              future pricing engine will produce the versioned valuation commitment.
             </p>
           </div>
-          {!intakeEnabled && <StatusBadge tone="warning">KYC + SIWE required</StatusBadge>}
+          {!intakeEnabled && <StatusBadge tone="warning">Sign-in + SIWE required</StatusBadge>}
         </div>
 
         <form onSubmit={submit}>
@@ -412,7 +381,7 @@ export default function SellerPage() {
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={!intakeEnabled || submitting || !saleMode}>
-              {submitting ? 'Encrypting & uploading…' : 'Submit for expert review'}
+              {submitting ? 'Verifying & uploading…' : 'Submit and auto-verify'}
             </Button>
             <span className="text-[12px] text-ink-dim">
               Exact files remain in private Supabase Storage with row-level access controls.
@@ -457,6 +426,9 @@ export default function SellerPage() {
                       <p className="mt-1 text-[11.5px] text-ink-muted">
                         {submission.saleMode === 'auction' ? '24-hour auction' : 'Buy now'} ·{' '}
                         {new Date(submission.createdAt).toLocaleDateString()}
+                        {submission.verificationProvider === 'mvp-auto'
+                          ? ' · MVP auto-verified'
+                          : ''}
                       </p>
                     </div>
                     <StatusBadge

@@ -1,0 +1,19 @@
+project_id = "digital-carat"
+
+[functions.v1-siwe-nonce]
+verify_jwt = false
+
+[functions.v1-siwe-verify]
+verify_jwt = false
+
+[functions.v1-seller-submit]
+verify_jwt = false
+
+[functions.v1-seller-commitment]
+verify_jwt = false
+
+[functions.v1-redemption-commitment]
+verify_jwt = false
+
+[functions.v1-private-file-url]
+verify_jwt = false

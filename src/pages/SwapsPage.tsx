@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSwaps, useGems } from '@/hooks/useData';
+import { useProfile, useSwaps } from '@/hooks/useData';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { GemThumb } from '@/components/gem/GemThumb';
@@ -10,13 +10,16 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
 import { inputClass } from '@/components/ui/Field';
+import { useAccount } from 'wagmi';
 
 export default function SwapsPage() {
   const { data: swaps, isLoading, isError } = useSwaps();
-  const { data: gems = [] } = useGems();
+  const { address } = useAccount();
+  const { data: profile } = useProfile(address);
+  const ownedGems = (profile?.owned ?? []).filter((gem) => !gem.listingSeller);
   const modals = useGemModals();
   const [offeredId, setOfferedId] = useState('');
-  const offered = gems.find((g) => g.gemId.toString() === offeredId);
+  const offered = ownedGems.find((g) => g.gemId.toString() === offeredId);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[.82fr_1.4fr]">
@@ -42,7 +45,7 @@ export default function SwapsPage() {
             onChange={(e) => setOfferedId(e.target.value)}
           >
             <option value="">Select an owned gem…</option>
-            {gems.map((g) => (
+            {ownedGems.map((g) => (
               <option key={g.gemId.toString()} value={g.gemId.toString()}>
                 {g.name} · {g.displayId}
               </option>
@@ -72,64 +75,74 @@ export default function SwapsPage() {
         ) : !swaps || swaps.length === 0 ? (
           <EmptyState title="No open swaps" hint="Propose one to get started." />
         ) : (
-          swaps.map((s, i) => (
-            <Card key={i} className="p-4 sm:p-5">
-              <div className="grid gap-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                <div className="flex min-w-0 items-center gap-3">
-                  <GemThumb
-                    gem={s.gem}
-                    height={52}
-                    rounded="rounded-[10px]"
-                    showTag={false}
-                    showCarat={false}
-                    className="w-[52px]"
-                  />
-                  <div>
-                    <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
-                      You receive
+          swaps.map((s) => {
+            const canCancel = address?.toLowerCase() === s.proposer.toLowerCase();
+            const canAccept = address?.toLowerCase() === s.requestedOwner.toLowerCase();
+            return (
+              <Card key={s.offerId.toString()} className="p-4 sm:p-5">
+                <div className="grid gap-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <GemThumb
+                      gem={s.gem}
+                      height={52}
+                      rounded="rounded-[10px]"
+                      showTag={false}
+                      showCarat={false}
+                      className="w-[52px]"
+                    />
+                    <div>
+                      <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
+                        You receive
+                      </div>
+                      <div className="text-[14px] font-semibold text-ink">{s.gem.name}</div>
+                      <div className="font-mono text-[11.5px] text-ink-dim">{s.gem.displayId}</div>
                     </div>
-                    <div className="text-[14px] font-semibold text-ink">{s.gem.name}</div>
-                    <div className="font-mono text-[11.5px] text-ink-dim">{s.gem.displayId}</div>
+                  </div>
+                  <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
+                  <div className="min-w-0 border-l border-white/[0.07] pl-4 sm:border-0 sm:pl-0">
+                    <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
+                      You give
+                    </div>
+                    <div className="text-[14px] font-semibold text-ink">{s.giveName}</div>
+                    <div className="font-mono text-[11.5px] text-ink-dim">{s.giveDisplayId}</div>
                   </div>
                 </div>
-                <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
-                <div className="min-w-0 border-l border-white/[0.07] pl-4 sm:border-0 sm:pl-0">
-                  <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
-                    You give
+                <div className="mt-4 flex flex-col gap-3 border-t border-white/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <StatusBadge color={s.statusColor} dot>
+                      {s.status}
+                    </StatusBadge>
+                    <span className="text-[13px] font-medium text-emerald">{s.diff}</span>
                   </div>
-                  <div className="text-[14px] font-semibold text-ink">{s.giveName}</div>
-                  <div className="font-mono text-[11.5px] text-ink-dim">{s.giveDisplayId}</div>
+                  {(canCancel || canAccept) && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canCancel && (
+                        <TxButton
+                          size="sm"
+                          variant="ghost"
+                          action={() => dataService.cancelSwap({ offerId: s.offerId })}
+                          pendingLabel="Cancelling…"
+                          telemetryFlow="swap_cancel"
+                        >
+                          Cancel
+                        </TxButton>
+                      )}
+                      {canAccept && (
+                        <TxButton
+                          size="sm"
+                          action={() => dataService.acceptSwap({ offerId: s.offerId })}
+                          pendingLabel="Accepting…"
+                          telemetryFlow="swap_accept"
+                        >
+                          Accept swap
+                        </TxButton>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="mt-4 flex flex-col gap-3 border-t border-white/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge color={s.statusColor} dot>
-                    {s.status}
-                  </StatusBadge>
-                  <span className="text-[13px] font-medium text-emerald">{s.diff}</span>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <TxButton
-                    size="sm"
-                    variant="ghost"
-                    action={() => dataService.cancelSwap({ offerId: s.offerId })}
-                    pendingLabel="Cancelling…"
-                    telemetryFlow="swap_cancel"
-                  >
-                    Cancel
-                  </TxButton>
-                  <TxButton
-                    size="sm"
-                    action={() => dataService.acceptSwap({ offerId: s.offerId })}
-                    pendingLabel="Accepting…"
-                    telemetryFlow="swap_accept"
-                  >
-                    Accept swap
-                  </TxButton>
-                </div>
-              </div>
-            </Card>
-          ))
+              </Card>
+            );
+          })
         )}
       </div>
 

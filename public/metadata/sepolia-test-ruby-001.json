@@ -1,0 +1,14 @@
+{
+  "caratWeight": 1.25,
+  "custodian": {
+    "country": "Pakistan",
+    "provider": "Digital Carat Test Custody"
+  },
+  "description": "Synthetic ruby testnet specimen. Not a claim on a physical redeemable gemstone.",
+  "displayId": "DGE-SEPOLIA-RUBY-001",
+  "gemstoneType": "synthetic ruby",
+  "name": "Digital Carat Sepolia Test Ruby #001",
+  "network": "ethereum-sepolia",
+  "redeemable": false,
+  "testnet": true
+}

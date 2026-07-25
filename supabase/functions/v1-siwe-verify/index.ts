@@ -1,7 +1,9 @@
-import { getAddress, type Address, type Hex } from 'npm:viem@2';
+import { createPublicClient, getAddress, http, type Address, type Hex } from 'npm:viem@2';
+import { sepolia } from 'npm:viem@2/chains';
 import { parseSiweMessage, verifySiweMessage } from 'npm:viem@2/siwe';
 import { adminClient, audit, requireUser, sha256 } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { resolveSiteOrigin } from '../_shared/origins.ts';
 
 Deno.serve(async (request) => {
   const early = preflight(request);
@@ -10,12 +12,11 @@ Deno.serve(async (request) => {
     const user = await requireUser(request);
     const { message, signature, confirmRelink = false } = await request.json();
     const parsed = parseSiweMessage(message);
-    const expectedOrigin = new URL(Deno.env.get('SITE_ORIGIN')!);
+    const expectedOrigin = resolveSiteOrigin(parsed.domain, parsed.uri);
     const expectedChain = Number(Deno.env.get('CHAIN_ID') ?? 11155111);
     const now = new Date();
     if (
-      parsed.domain !== expectedOrigin.host ||
-      parsed.uri !== expectedOrigin.origin ||
+      !expectedOrigin ||
       parsed.chainId !== expectedChain ||
       !parsed.address ||
       !parsed.nonce ||
@@ -26,20 +27,13 @@ Deno.serve(async (request) => {
     )
       return json({ error: 'Invalid SIWE fields' }, 400);
 
-    const admin = adminClient();
-    const nonceHash = await sha256(parsed.nonce);
-    const { data: nonce, error: nonceError } = await admin
-      .from('siwe_nonces')
-      .update({ used_at: now.toISOString() })
-      .eq('profile_id', user.id)
-      .eq('nonce_hash', nonceHash)
-      .is('used_at', null)
-      .gt('expires_at', now.toISOString())
-      .select('id')
-      .maybeSingle();
-    if (nonceError || !nonce) return json({ error: 'Nonce expired or already used' }, 409);
-
-    const verified = await verifySiweMessage({
+    const rpcUrl = Deno.env.get('SIWE_RPC_URL');
+    if (!rpcUrl) return json({ error: 'SIWE RPC is not configured' }, 503);
+    const publicClient = createPublicClient({
+      chain: sepolia,
+      transport: http(rpcUrl),
+    });
+    const verified = await verifySiweMessage(publicClient, {
       message,
       signature: signature as Hex,
       address: parsed.address as Address,
@@ -48,6 +42,22 @@ Deno.serve(async (request) => {
       time: now,
     });
     if (!verified) return json({ error: 'Invalid signature' }, 401);
+
+    const admin = adminClient();
+    const nonceHash = await sha256(parsed.nonce);
+    const { data: nonce, error: nonceError } = await admin
+      .from('siwe_nonces')
+      .update({ used_at: now.toISOString() })
+      .eq('profile_id', user.id)
+      .eq('nonce_hash', nonceHash)
+      .eq('domain', parsed.domain)
+      .eq('uri', parsed.uri)
+      .eq('chain_id', expectedChain)
+      .is('used_at', null)
+      .gt('expires_at', now.toISOString())
+      .select('id')
+      .maybeSingle();
+    if (nonceError || !nonce) return json({ error: 'Nonce expired or already used' }, 409);
 
     const walletAddress = getAddress(parsed.address).toLowerCase();
     const { data: currentPrimary } = await admin

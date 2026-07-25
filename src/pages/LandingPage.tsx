@@ -8,6 +8,7 @@ import { GemCard } from '@/components/gem/GemCard';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { CountdownBadge } from '@/components/ui/CountdownBadge';
+import { ownershipPathSteps } from '@/content/ownershipPath';
 import { useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 
@@ -88,7 +89,7 @@ export default function LandingPage() {
           </h2>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {data?.howSteps.map((step, i) => (
+          {ownershipPathSteps.map((step, i) => (
             <Card key={step.num} hoverLift data-reveal data-reveal-delay={i * 90} className="p-6">
               <div className="font-mono text-[13px] text-ink-dim">{step.num}</div>
               <h3 className="mt-3 text-[17px] font-semibold text-ink">{step.title}</h3>

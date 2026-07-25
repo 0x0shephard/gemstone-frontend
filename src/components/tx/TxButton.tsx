@@ -22,7 +22,7 @@ interface TxButtonProps {
 }
 
 /**
- * Button that runs an on-chain (mocked) write and renders the full lifecycle:
+ * Button that runs a data-adapter write and renders the full lifecycle:
  * idle → pending (spinner) → success (hash + explorer link) or error.
  */
 export function TxButton({

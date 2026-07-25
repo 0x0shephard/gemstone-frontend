@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "admin": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "token": "0x29f4b1eF7261A372DB73493004CCf6A28175Dc54",
+  "faucet": "0x387898839e6EB38886D5C0E9c6a94f6f75C1E9C8",
+  "claimAmount": "10000000000",
+  "claimAmountFormatted": "10000",
+  "tokenDecimals": 6,
+  "unlimitedClaims": true,
+  "transactions": {
+    "deployment": {
+      "hash": "0x17fdabd5733b5acf2f6e541ef03637309f78de30f05d668d9fc40fa974ac9bc7",
+      "blockNumber": 11342524
+    },
+    "tokenOwnershipTransfer": {
+      "hash": "0x799a6fef87232aa67d07b49ee5dd01562ab79a681f24e807c99978a10672e7f7",
+      "blockNumber": 11342525
+    },
+    "smokeTestClaim": {
+      "hash": "0xd72d3c8969ac9f4fb4a4d13ee86696ed3374b593084c7bc7fb4a78c5de862247",
+      "blockNumber": 11342548,
+      "recipient": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+      "balanceBefore": "999990000000",
+      "balanceAfter": "1009990000000"
+    }
+  },
+  "finalState": {
+    "tokenOwner": "0x387898839e6EB38886D5C0E9c6a94f6f75C1E9C8",
+    "faucetOwner": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+    "paused": false,
+    "totalSupply": "1010000000000"
+  }
+}

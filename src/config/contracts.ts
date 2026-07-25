@@ -40,6 +40,7 @@ export const contractAddresses = Object.fromEntries(
 ) as Record<ContractModule, Address | undefined>;
 
 export const usdcAddress = parseAddress('VITE_USDC_ADDRESS');
+export const musdcFaucetAddress = parseAddress('VITE_MUSDC_FAUCET_ADDRESS');
 
 export interface DeploymentManifest {
   schemaVersion: 1;
@@ -59,6 +60,9 @@ export const deploymentErrors = [
   ...(env.deploymentBlock === undefined ? ['VITE_DEPLOYMENT_BLOCK is required'] : []),
   ...missing.map((key) => `${key} must be a valid address`),
   ...(usdcAddress ? [] : ['VITE_USDC_ADDRESS must be a valid address']),
+  ...(env.dataMode === 'chain' && !musdcFaucetAddress
+    ? ['VITE_MUSDC_FAUCET_ADDRESS must be a valid Sepolia faucet address']
+    : []),
 ];
 
 export const deploymentManifest: DeploymentManifest | undefined =

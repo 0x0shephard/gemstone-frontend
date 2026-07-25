@@ -1,5 +1,6 @@
--- Digital Carat private workflow schema.
--- Apply with `supabase db push`; trusted transitions are Edge Function/service-role only.
+-- Legacy consolidated schema reference.
+-- Do not apply this file to an existing project.
+-- Executable, ordered changes live in supabase/migrations/.
 
 create extension if not exists pgcrypto;
 

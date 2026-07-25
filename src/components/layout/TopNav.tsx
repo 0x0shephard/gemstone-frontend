@@ -4,6 +4,7 @@ import { BrandMark } from '@/components/ui/BrandMark';
 import { Button } from '@/components/ui/Button';
 import { ColorSchemeToggle } from '@/components/theme/ColorSchemeToggle';
 import { AccountMenu } from '@/components/auth/AccountMenu';
+import { MusdcFaucetButton } from '@/components/wallet/MusdcFaucetButton';
 import { useAuth } from '@/providers/AuthProvider';
 
 const LINKS = [
@@ -42,6 +43,7 @@ export function TopNav() {
           ))}
         </div>
         <div className="flex items-center gap-2">
+          <MusdcFaucetButton compact />
           <ColorSchemeToggle />
           {user || loading ? (
             <AccountMenu />

@@ -1,7 +1,11 @@
 import { getDefaultConfig } from '@rainbow-me/rainbowkit';
-import { http } from 'wagmi';
 import { env, walletConnectConfigured } from '@/config/env';
 import { activeChain, supportedChains } from '@/config/chains';
+import { createRpcTransport, resolveRpcUrls } from '@/config/rpc';
+
+const rpcTransport = createRpcTransport(
+  resolveRpcUrls(activeChain.id, env.rpcUrl, env.rpcFallbackUrl),
+);
 
 /**
  * wagmi + RainbowKit config. A WalletConnect projectId is required for the
@@ -13,7 +17,7 @@ export const wagmiConfig = getDefaultConfig({
   projectId: walletConnectConfigured ? env.walletConnectProjectId : 'DIGITAL_CARAT_DEV',
   chains: supportedChains,
   transports: {
-    [activeChain.id]: http(env.rpcUrl || undefined),
+    [activeChain.id]: rpcTransport,
   },
   ssr: false,
 });

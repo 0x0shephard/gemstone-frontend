@@ -17,7 +17,10 @@
     "test:contracts": "cd ${CONTRACTS_DIR:-../gemstone} && forge test --offline",
     "check": "npm run contracts:check && npm run typecheck && npm run lint && npm run format:check && npm run test && npm run build",
     "contracts:sync": "node scripts/sync-contracts.mjs",
-    "contracts:check": "node scripts/check-contracts.mjs"
+    "contracts:check": "node scripts/check-contracts.mjs",
+    "seed:sepolia-demo": "node scripts/seed-sepolia-demo-inventory.mjs",
+    "verify:sepolia-demo": "node scripts/verify-sepolia-demo-inventory.mjs",
+    "verify:anvil-lifecycle": "node scripts/verify-anvil-frontend-lifecycle.mjs"
   },
   "dependencies": {
     "@fontsource/geologica": "^5.3.0",

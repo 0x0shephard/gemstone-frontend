@@ -36,7 +36,9 @@ function ApprovalNote({ asset }: { asset?: PaymentAsset }) {
 export function BidModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
   const [amount, setAmount] = useState('');
-  const usd = Number(amount) || 0;
+  const saleUsd = Number(amount) || 0;
+  const shortfall = reserveShortfallUsd(gem);
+  const total = saleUsd + shortfall;
   return (
     <Modal
       open={open}
@@ -55,27 +57,37 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">Payment asset</span>
         <PaymentAssetSelector value={asset?.address} onChange={setAsset} />
-        {usd > 0 && (
+        {saleUsd > 0 && (
           <p className="mt-1.5 font-mono text-[11.5px] text-ink-dim">
-            {assetAmountPreview(usd, asset)}
+            {assetAmountPreview(total, asset)}
           </p>
         )}
       </div>
+      {saleUsd > 0 && (
+        <div className="rounded-[12px] border border-white/[0.08] bg-panel p-3">
+          <SummaryRow label="Bid credited to auction" value={fmtUsd(saleUsd)} />
+          {shortfall > 0 && (
+            <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
+          )}
+          <div className="my-1 h-px bg-white/[0.06]" />
+          <SummaryRow label="Total escrowed" value={fmtUsd(total)} />
+        </div>
+      )}
       <ApprovalNote asset={asset} />
       <TxButton
         block
-        disabled={!asset || usd <= 0}
+        disabled={!asset || saleUsd <= 0}
         action={() =>
           dataService.bid({
             gemId: gem.gemId,
             paymentAsset: asset!.address,
-            amountUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,
+            saleAmountUsd: BigInt(Math.round(saleUsd * 1e6)) * 10n ** 12n,
           })
         }
         pendingLabel="Submitting bid…"
         onDone={onClose}
       >
-        Place bid · {usd > 0 ? fmtUsd(usd) : '—'}
+        Place bid · {saleUsd > 0 ? fmtUsd(total) : '—'}
       </TxButton>
     </Modal>
   );
@@ -183,6 +195,8 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
   const [amount, setAmount] = useState('');
   const usd = Number(amount) || 0;
+  const shortfall = reserveShortfallUsd(gem);
+  const total = usd + shortfall;
   return (
     <Modal
       open={open}
@@ -203,10 +217,20 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
         <PaymentAssetSelector value={asset?.address} onChange={setAsset} />
         {usd > 0 && (
           <p className="mt-1.5 font-mono text-[11.5px] text-ink-dim">
-            {assetAmountPreview(usd, asset)}
+            {assetAmountPreview(total, asset)}
           </p>
         )}
       </div>
+      {usd > 0 && (
+        <div className="rounded-[12px] border border-white/[0.08] bg-panel p-3">
+          <SummaryRow label="Offer to token owner" value={fmtUsd(usd)} />
+          {shortfall > 0 && (
+            <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
+          )}
+          <div className="my-1 h-px bg-white/[0.06]" />
+          <SummaryRow label="Total escrowed" value={fmtUsd(total)} />
+        </div>
+      )}
       <ApprovalNote asset={asset} />
       <TxButton
         block
@@ -215,13 +239,13 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
           dataService.createOffer({
             tokenId: gem.tokenId!,
             paymentAsset: asset!.address,
-            amountUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,
+            saleAmountUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,
           })
         }
         pendingLabel="Submitting offer…"
         onDone={onClose}
       >
-        Submit offer · {usd > 0 ? fmtUsd(usd) : '—'}
+        Submit offer · {usd > 0 ? fmtUsd(total) : '—'}
       </TxButton>
     </Modal>
   );
@@ -231,6 +255,7 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
 export function ListModal({ gem, open, onClose }: BaseModalProps) {
   const [price, setPrice] = useState(String(gem.value));
   const usd = Number(price) || 0;
+  const validPrice = usd >= gem.value;
   return (
     <Modal
       open={open}
@@ -247,11 +272,12 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
         onChange={(e) => setPrice(e.target.value)}
       />
       <p className="text-[11.5px] text-ink-dim">
-        Listing approves the token to the Marketplace contract, then records the price on-chain.
+        Listing approves the token to the Marketplace contract, then records the price on-chain. The
+        secondary price cannot be below the expert-approved primary value of {gem.valueFmt}.
       </p>
       <TxButton
         block
-        disabled={!gem.tokenId || usd <= 0}
+        disabled={!gem.tokenId || !validPrice}
         action={() =>
           dataService.list({
             tokenId: gem.tokenId!,
@@ -275,6 +301,7 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
   const [proposerPays, setProposerPays] = useState(true);
   const requested = gems.find((g) => g.gemId.toString() === requestedId);
+  const reservesReady = gem.funded && Boolean(requested?.funded);
   const usd = Number(delta) || 0;
   return (
     <Modal
@@ -304,7 +331,13 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
             ))}
         </select>
       </div>
+      <ReserveStatus gem={gem} />
       {requested && <ReserveStatus gem={requested} />}
+      {requested && !reservesReady && (
+        <p className="rounded-[10px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
+          Both NFTs must be fully reserve-funded before this swap can settle.
+        </p>
+      )}
       <Field
         label="Cash adjustment (USD, optional)"
         inputMode="decimal"
@@ -367,7 +400,7 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
       </p>
       <TxButton
         block
-        disabled={!gem.tokenId || !requested?.tokenId || (usd > 0 && !asset)}
+        disabled={!gem.tokenId || !requested?.tokenId || !reservesReady || (usd > 0 && !asset)}
         action={() =>
           dataService.createSwap({
             offeredTokenId: gem.tokenId!,

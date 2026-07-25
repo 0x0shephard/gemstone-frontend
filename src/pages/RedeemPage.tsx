@@ -129,51 +129,53 @@ export default function RedeemPage() {
           <Skeleton className="h-40" />
         ) : (
           <Card className="divide-y divide-white/[0.06] overflow-hidden">
-            {profile?.owned.map((gem) => {
-              const canRedeem = gem.funded && gem.redeem === 'Eligible';
-              return (
-                <div
-                  key={gem.gemId.toString()}
-                  className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
-                >
-                  <GemThumb
-                    gem={gem}
-                    height={44}
-                    rounded="rounded-[10px]"
-                    showTag={false}
-                    showCarat={false}
-                    className="w-11"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-semibold text-ink">{gem.name}</div>
-                    <div className="font-mono text-[11.5px] text-ink-dim">{gem.displayId}</div>
+            {profile?.owned
+              .filter((gem) => !gem.listingSeller)
+              .map((gem) => {
+                const canRedeem = gem.funded && gem.redeem === 'Eligible';
+                return (
+                  <div
+                    key={gem.gemId.toString()}
+                    className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
+                  >
+                    <GemThumb
+                      gem={gem}
+                      height={44}
+                      rounded="rounded-[10px]"
+                      showTag={false}
+                      showCarat={false}
+                      className="w-11"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[14px] font-semibold text-ink">{gem.name}</div>
+                      <div className="font-mono text-[11.5px] text-ink-dim">{gem.displayId}</div>
+                    </div>
+                    <div>
+                      {canRedeem ? (
+                        <StatusBadge tone="success" dot>
+                          Eligible
+                        </StatusBadge>
+                      ) : gem.redeem === 'KYC required' ? (
+                        <StatusBadge tone="danger">KYC required</StatusBadge>
+                      ) : (
+                        <StatusBadge tone="warning" dot>
+                          Reserve short
+                        </StatusBadge>
+                      )}
+                    </div>
+                    <div>
+                      <Button
+                        size="sm"
+                        variant={canRedeem ? 'primary' : 'ghost'}
+                        disabled={!canRedeem}
+                        onClick={() => modals.open('redeem', gem)}
+                      >
+                        Start redemption
+                      </Button>
+                    </div>
                   </div>
-                  <div>
-                    {canRedeem ? (
-                      <StatusBadge tone="success" dot>
-                        Eligible
-                      </StatusBadge>
-                    ) : gem.redeem === 'KYC required' ? (
-                      <StatusBadge tone="danger">KYC required</StatusBadge>
-                    ) : (
-                      <StatusBadge tone="warning" dot>
-                        Reserve short
-                      </StatusBadge>
-                    )}
-                  </div>
-                  <div>
-                    <Button
-                      size="sm"
-                      variant={canRedeem ? 'primary' : 'ghost'}
-                      disabled={!canRedeem}
-                      onClick={() => modals.open('redeem', gem)}
-                    >
-                      Start redemption
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </Card>
         )}
       </div>

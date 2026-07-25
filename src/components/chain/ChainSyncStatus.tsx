@@ -3,16 +3,21 @@ import { env } from '@/config/env';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 
 type SyncDetail = {
-  state: 'syncing' | 'synced' | 'stale';
+  state: 'syncing' | 'synced' | 'stale' | 'error';
   scannedThrough?: string;
   latestBlock?: string;
   cached?: boolean;
 };
 
+let latestSyncStatus: SyncDetail = { state: 'syncing' };
+
 export function ChainSyncStatus() {
-  const [status, setStatus] = useState<SyncDetail>({ state: 'syncing' });
+  const [status, setStatus] = useState<SyncDetail>(latestSyncStatus);
   useEffect(() => {
-    const listener = (event: Event) => setStatus((event as CustomEvent<SyncDetail>).detail);
+    const listener = (event: Event) => {
+      latestSyncStatus = (event as CustomEvent<SyncDetail>).detail;
+      setStatus(latestSyncStatus);
+    };
     window.addEventListener('dc:chain-sync', listener);
     return () => window.removeEventListener('dc:chain-sync', listener);
   }, []);
@@ -21,6 +26,13 @@ export function ChainSyncStatus() {
     return (
       <StatusBadge tone="warning" dot>
         Cached · RPC stale
+      </StatusBadge>
+    );
+  }
+  if (status.state === 'error') {
+    return (
+      <StatusBadge tone="danger" dot>
+        RPC unavailable
       </StatusBadge>
     );
   }

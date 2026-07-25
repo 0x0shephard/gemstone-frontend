@@ -14,6 +14,7 @@ import { useSignMessage } from 'wagmi';
 import { supabase } from './supabase';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
+import { functionErrorMessage } from '@/lib/supabaseFunctions';
 
 export interface AuthState {
   /** Whether Supabase env is present. When false, auth actions are disabled. */
@@ -175,7 +176,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         { body: { domain, uri, chainId: env.chainId } },
       );
       if (nonceError || !nonceData?.nonce) {
-        return { ok: false, message: nonceError?.message ?? 'Could not issue a SIWE nonce.' };
+        return {
+          ok: false,
+          message: await functionErrorMessage(
+            nonceError,
+            nonceData,
+            'Could not issue a SIWE nonce.',
+          ),
+        };
       }
       const issuedAt = new Date();
       const expirationTime = new Date(nonceData.expiresAt);
@@ -198,7 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (error || data?.error) {
           return {
             ok: false,
-            message: data?.error ?? error?.message ?? 'Wallet verification failed.',
+            message: await functionErrorMessage(error, data, 'Wallet verification failed.'),
             requiresConfirmation: Boolean(data?.requiresConfirmation),
           };
         }

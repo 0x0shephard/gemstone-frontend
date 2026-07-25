@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "network": "ethereum-sepolia",
+  "chainId": 11155111,
+  "seededAt": "2026-07-25T04:02:15.494Z",
+  "finalBlock": "11345218",
+  "operator": "0xCc624fFA5df1F3F4b30aa8abd30186a86254F406",
+  "demoWallets": {
+    "swapOwnerA": "0x18d4b6e6d220f6111b867c2b9a363d0b4d234f4f",
+    "swapOwnerBAndRedemptionApproved": "0xf0bd623c70fdf71c35b53706ce8895d00366e1b3"
+  },
+  "activeMarketplaceOfferId": "1",
+  "liveAuctionEndsAt": "2026-07-26T03:56:36.000Z",
+  "offerRefundAvailableAt": "2026-07-26T04:01:24.000Z",
+  "inventory": [
+    {
+      "group": "primary-buy-now",
+      "slug": "ruby-horizon",
+      "name": "Ruby Horizon",
+      "displayId": "DGE-SEPOLIA-RUBY-002",
+      "gemId": "2",
+      "tokenId": "0",
+      "action": "leave-listed",
+      "priceUsd": "450000000000000000000"
+    },
+    {
+      "group": "primary-buy-now",
+      "slug": "sapphire-meridian",
+      "name": "Sapphire Meridian",
+      "displayId": "DGE-SEPOLIA-SAPPHIRE-003",
+      "gemId": "3",
+      "tokenId": "0",
+      "action": "leave-listed",
+      "priceUsd": "620000000000000000000"
+    },
+    {
+      "group": "live-auction",
+      "slug": "emerald-aurora",
+      "name": "Emerald Aurora",
+      "displayId": "DGE-SEPOLIA-EMERALD-004",
+      "gemId": "4",
+      "tokenId": "0",
+      "action": "auction",
+      "priceUsd": "800000000000000000000"
+    },
+    {
+      "group": "swap-pair-and-offer",
+      "slug": "padparadscha-solstice",
+      "name": "Padparadscha Solstice",
+      "displayId": "DGE-SEPOLIA-PADPARADSCHA-005",
+      "gemId": "5",
+      "tokenId": "2",
+      "action": "mint-transfer-a",
+      "priceUsd": "1100000000000000000000"
+    },
+    {
+      "group": "swap-pair-and-redemption",
+      "slug": "alexandrite-equinox",
+      "name": "Alexandrite Equinox",
+      "displayId": "DGE-SEPOLIA-ALEXANDRITE-006",
+      "gemId": "6",
+      "tokenId": "3",
+      "action": "mint-transfer-b",
+      "priceUsd": "1350000000000000000000"
+    },
+    {
+      "group": "secondary-listing",
+      "slug": "spinel-atelier",
+      "name": "Spinel Atelier",
+      "displayId": "DGE-SEPOLIA-SPINEL-007",
+      "gemId": "7",
+      "tokenId": "4",
+      "action": "mint-list-secondary",
+      "priceUsd": "520000000000000000000"
+    }
+  ]
+}

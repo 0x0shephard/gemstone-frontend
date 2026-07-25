@@ -7,6 +7,7 @@ import { MobileDock } from './MobileDock';
 import { groupForPath } from './navigation';
 import { ColorSchemeToggle } from '@/components/theme/ColorSchemeToggle';
 import { AccountMenu } from '@/components/auth/AccountMenu';
+import { MusdcFaucetButton } from '@/components/wallet/MusdcFaucetButton';
 
 /** App layout: hidden navigation drawer + sticky content header + routed <Outlet/>. */
 export function AppShell() {
@@ -85,6 +86,7 @@ export function AppShell() {
             <div className="hidden xl:block">
               <ChainSyncStatus />
             </div>
+            <MusdcFaucetButton compact />
             <ColorSchemeToggle />
             <AccountMenu />
           </div>

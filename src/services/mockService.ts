@@ -1,5 +1,6 @@
 import type { IDataService, ProfileData, LandingData } from './IDataService';
 import type { DecoratedGem, Auction, Bid, Offer, SwapRequest, Redemption, TxResult } from './types';
+import { zeroAddress, type Address } from 'viem';
 import { decorate, reserveShortfallUsd } from '@/lib/gem';
 import {
   gems,
@@ -65,6 +66,9 @@ function buildOffers(): Offer[] {
   return offerSeeds.map(([offerId, gemId, amount, from, status, secondsLeft]) => ({
     offerId,
     gem: dgById(gemId),
+    bidder: from as Address,
+    tokenOwner: zeroAddress,
+    listingSeller: undefined,
     offerFmt: '$' + amount.toLocaleString('en-US'),
     from,
     status,
@@ -85,6 +89,8 @@ function buildSwaps(): SwapRequest[] {
     return {
       offerId,
       gem: requested,
+      proposer: zeroAddress,
+      requestedOwner: zeroAddress,
       offeredTokenId: give.tokenId!,
       requestedTokenId: requested.tokenId!,
       giveName: give.name,
@@ -101,6 +107,7 @@ function buildRedemptions(): Redemption[] {
     workflowId,
     tokenId: dgById(gemId).tokenId!,
     gem: dgById(gemId),
+    owner: zeroAddress,
     stage,
     progress,
     status,

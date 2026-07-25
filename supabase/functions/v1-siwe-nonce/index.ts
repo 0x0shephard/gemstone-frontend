@@ -1,5 +1,6 @@
 import { adminClient, requireUser, sha256 } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { resolveSiteOrigin } from '../_shared/origins.ts';
 
 Deno.serve(async (request) => {
   const early = preflight(request);
@@ -7,8 +8,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const { domain, uri, chainId } = await request.json();
-    const expectedOrigin = new URL(Deno.env.get('SITE_ORIGIN')!);
-    if (domain !== expectedOrigin.host || new URL(uri).origin !== expectedOrigin.origin) {
+    if (!resolveSiteOrigin(domain, uri)) {
       return json({ error: 'Domain or URI mismatch' }, 400);
     }
     if (Number(chainId) !== Number(Deno.env.get('CHAIN_ID') ?? 11155111)) {

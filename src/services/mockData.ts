@@ -8,11 +8,11 @@ import type {
   FeeTier,
   TreasurySplitItem,
   TrustSignal,
-  HowStep,
   PaymentAsset,
   ActivityItem,
 } from './types';
 import { NATIVE_ASSET } from '@/config/contracts';
+import { ownershipPathSteps } from '@/content/ownershipPath';
 
 export const gems: Gem[] = [
   {
@@ -235,28 +235,7 @@ export const trustSignals: TrustSignal[] = [
   { title: 'Redeemable asset', sub: 'Claim the physical stone', color: 'var(--dc-ruby)' },
 ];
 
-export const howSteps: HowStep[] = [
-  {
-    num: '01',
-    title: 'Certify & vault',
-    body: 'A gemologist grades the stone; it enters an insured custodian vault with a public attestation.',
-  },
-  {
-    num: '02',
-    title: 'Fund reserve',
-    body: 'A reserve is posted on-chain to back the asset. Mint is blocked until the reserve is fully funded.',
-  },
-  {
-    num: '03',
-    title: 'Mint & trade',
-    body: 'The gem is minted as an NFT. Buy directly, bid in auction, or acquire on the secondary market.',
-  },
-  {
-    num: '04',
-    title: 'Redeem or hold',
-    body: 'Hold the token, swap it, or redeem: the NFT locks and burns as the physical stone is released.',
-  },
-];
+export const howSteps = [...ownershipPathSteps];
 
 /** Accepted payment assets (from PaymentTokenRegistry, mocked). */
 export const paymentAssets: PaymentAsset[] = [
