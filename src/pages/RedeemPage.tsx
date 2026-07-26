@@ -43,7 +43,7 @@ export default function RedeemPage() {
   return (
     <div className="space-y-8">
       {/* Process */}
-      <section className="overflow-hidden rounded-[20px] border border-white/[0.075] bg-gradient-to-br from-card to-inset p-5 sm:p-6">
+      <section className="overflow-hidden rounded-[4px] border border-white/[0.075] bg-gradient-to-br from-card to-inset p-5 sm:p-6">
         <div className="mb-6 max-w-xl">
           <p className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier">
             Physical fulfillment
@@ -87,7 +87,7 @@ export default function RedeemPage() {
                 <GemThumb
                   gem={r.gem}
                   height={44}
-                  rounded="rounded-[10px]"
+                  rounded="rounded-[4px]"
                   showTag={false}
                   showCarat={false}
                   className="w-11"
@@ -141,7 +141,7 @@ export default function RedeemPage() {
                     <GemThumb
                       gem={gem}
                       height={44}
-                      rounded="rounded-[10px]"
+                      rounded="rounded-[4px]"
                       showTag={false}
                       showCarat={false}
                       className="w-11"

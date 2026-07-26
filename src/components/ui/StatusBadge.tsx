@@ -31,7 +31,7 @@ export function StatusBadge({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-[7px] px-[11px] py-[5px] text-[11.5px] font-semibold',
+        'inline-flex items-center gap-1.5 rounded-[4px] px-[11px] py-[5px] text-[11.5px] font-semibold',
         className,
       )}
       style={{

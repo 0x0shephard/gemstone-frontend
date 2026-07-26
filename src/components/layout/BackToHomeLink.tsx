@@ -13,7 +13,7 @@ export function BackToHomeLink({ compact = false, className }: BackToHomeLinkPro
       to="/"
       aria-label="Back to home"
       className={cn(
-        'group inline-flex h-10 items-center justify-center gap-2 rounded-[11px] border border-white/[0.1] bg-white/[0.025] text-[12px] font-semibold text-ink-muted transition-colors hover:border-white/[0.2] hover:bg-white/[0.055] hover:text-ink',
+        'group inline-flex h-10 items-center justify-center gap-2 rounded-[4px] border border-white/[0.1] bg-white/[0.025] text-[12px] font-semibold text-ink-muted transition-colors hover:border-white/[0.2] hover:bg-white/[0.055] hover:text-ink',
         compact ? 'w-10 px-0 lg:w-auto lg:px-3' : 'px-3.5',
         className,
       )}

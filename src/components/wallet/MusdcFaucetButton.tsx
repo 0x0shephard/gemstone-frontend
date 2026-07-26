@@ -53,7 +53,7 @@ export function MusdcFaucetButton({ compact, className }: MusdcFaucetButtonProps
         onClick={() => void claim()}
         disabled={state === 'pending'}
         className={cn(
-          'group dc-btn-anim flex h-10 items-center justify-center gap-2 rounded-[11px] border px-3 font-semibold',
+          'group dc-btn-anim flex h-10 items-center justify-center gap-2 rounded-[4px] border px-3 font-semibold',
           'border-atelier/30 bg-atelier/[0.075] text-[11.5px] text-ink hover:border-atelier/50 hover:bg-atelier/[0.12]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/65 disabled:pointer-events-none disabled:opacity-55',
           compact && 'w-10 px-0 sm:w-auto sm:px-3',
@@ -70,7 +70,7 @@ export function MusdcFaucetButton({ compact, className }: MusdcFaucetButtonProps
       {state !== 'idle' && state !== 'pending' && (
         <div
           className={cn(
-            'absolute right-0 top-[calc(100%+9px)] z-50 w-[min(290px,calc(100vw-24px))] animate-dcslideup rounded-[13px] border px-3.5 py-3 shadow-[0_18px_55px_rgba(0,0,0,.5)]',
+            'absolute right-0 top-[calc(100%+9px)] z-50 w-[min(290px,calc(100vw-24px))] animate-dcslideup rounded-[4px] border px-3.5 py-3 shadow-[0_18px_55px_rgba(0,0,0,.5)]',
             state === 'success'
               ? 'border-emerald/25 bg-elevated text-emerald'
               : 'border-ruby/25 bg-elevated text-ruby',

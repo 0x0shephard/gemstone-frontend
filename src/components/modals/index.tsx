@@ -64,7 +64,7 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
         )}
       </div>
       {saleUsd > 0 && (
-        <div className="rounded-[12px] border border-white/[0.08] bg-panel p-3">
+        <div className="rounded-[4px] border border-white/[0.08] bg-panel p-3">
           <SummaryRow label="Bid credited to auction" value={fmtUsd(saleUsd)} />
           {shortfall > 0 && (
             <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
@@ -152,7 +152,7 @@ export function BuyModal({
       subtitle="Reserve shortfall is included in your total."
     >
       <ModalGemHeader gem={gem} />
-      <div className="rounded-[12px] border border-white/[0.08] bg-panel p-3">
+      <div className="rounded-[4px] border border-white/[0.08] bg-panel p-3">
         <SummaryRow label="Listed price" value={gem.valueFmt} />
         {shortfall > 0 && (
           <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
@@ -222,7 +222,7 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
         )}
       </div>
       {usd > 0 && (
-        <div className="rounded-[12px] border border-white/[0.08] bg-panel p-3">
+        <div className="rounded-[4px] border border-white/[0.08] bg-panel p-3">
           <SummaryRow label="Offer to token owner" value={fmtUsd(usd)} />
           {shortfall > 0 && (
             <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
@@ -334,7 +334,7 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
       <ReserveStatus gem={gem} />
       {requested && <ReserveStatus gem={requested} />}
       {requested && !reservesReady && (
-        <p className="rounded-[10px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
+        <p className="rounded-[4px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
           Both NFTs must be fully reserve-funded before this swap can settle.
         </p>
       )}
@@ -369,7 +369,7 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
                 return (
                   <label
                     key={String(option.value)}
-                    className={`cursor-pointer rounded-[12px] border px-3.5 py-3 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
+                    className={`cursor-pointer rounded-[4px] border px-3.5 py-3 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
                       selected
                         ? 'border-atelier/40 bg-atelier/[0.08]'
                         : 'border-white/[0.09] bg-inset hover:border-white/[0.16]'
@@ -550,11 +550,11 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
           />
         </div>
       )}
-      <p className="rounded-[10px] border border-atelier/25 bg-atelier/5 px-3 py-2 text-[11.5px] text-ink-muted">
+      <p className="rounded-[4px] border border-atelier/25 bg-atelier/5 px-3 py-2 text-[11.5px] text-ink-muted">
         Your name and address remain private. The chain receives only a reproducible commitment hash
         tied to this workflow record.
       </p>
-      <div className="rounded-[10px] border border-ruby/30 bg-ruby/[0.07] px-3 py-2 text-[12px] text-ruby">
+      <div className="rounded-[4px] border border-ruby/30 bg-ruby/[0.07] px-3 py-2 text-[12px] text-ruby">
         Redemption is irreversible. On custodian confirmation, the NFT is burned and the physical
         gemstone is released from the vault.
       </div>

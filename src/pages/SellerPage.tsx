@@ -303,7 +303,7 @@ export default function SellerPage() {
                   return (
                     <label
                       key={option.value}
-                      className={`relative cursor-pointer rounded-[14px] border p-4 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
+                      className={`relative cursor-pointer rounded-[4px] border p-4 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
                         selected
                           ? 'border-atelier/45 bg-atelier/[0.08]'
                           : 'border-white/[0.09] bg-inset hover:border-white/[0.16]'
@@ -391,7 +391,7 @@ export default function SellerPage() {
 
         {result && (
           <p
-            className={`mt-3 rounded-[10px] border px-3 py-2 text-[12.5px] ${result.ok ? 'border-emerald/30 bg-emerald/10 text-emerald' : 'border-ruby/30 bg-ruby/10 text-ruby'}`}
+            className={`mt-3 rounded-[4px] border px-3 py-2 text-[12.5px] ${result.ok ? 'border-emerald/30 bg-emerald/10 text-emerald' : 'border-ruby/30 bg-ruby/10 text-ruby'}`}
           >
             {result.message}
           </p>
@@ -417,7 +417,7 @@ export default function SellerPage() {
                 return (
                   <div
                     key={submission.id}
-                    className="flex flex-wrap items-center gap-3 rounded-[12px] border border-white/[0.08] bg-inset px-3.5 py-3"
+                    className="flex flex-wrap items-center gap-3 rounded-[4px] border border-white/[0.08] bg-inset px-3.5 py-3"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-mono text-[11px] text-ink-soft">
@@ -519,7 +519,7 @@ function StepBadge({
 }) {
   const color = done ? 'var(--dc-emerald)' : pending ? 'var(--dc-amber)' : '#929BA8';
   return (
-    <div className="flex items-center gap-3 rounded-[14px] border border-white/[0.08] bg-panel p-3.5">
+    <div className="flex items-center gap-3 rounded-[4px] border border-white/[0.08] bg-panel p-3.5">
       <span
         className="flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-semibold"
         style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}

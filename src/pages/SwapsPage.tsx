@@ -85,7 +85,7 @@ export default function SwapsPage() {
                     <GemThumb
                       gem={s.gem}
                       height={52}
-                      rounded="rounded-[10px]"
+                      rounded="rounded-[4px]"
                       showTag={false}
                       showCarat={false}
                       className="w-[52px]"

@@ -2,7 +2,7 @@ import { forwardRef, type InputHTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 
 export const inputClass =
-  'h-11 w-full rounded-[11px] border border-white/[0.1] bg-inset px-3.5 text-[14px] text-ink ' +
+  'h-11 w-full rounded-[4px] border border-white/[0.1] bg-inset px-3.5 text-[14px] text-ink ' +
   'outline-none transition-[border-color,box-shadow] placeholder:text-ink-dim focus:border-atelier/50 focus:ring-2 focus:ring-atelier/10';
 
 interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {

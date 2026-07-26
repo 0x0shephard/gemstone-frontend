@@ -14,11 +14,11 @@ export function ProgressBar({ value, funded, className, height = 7 }: ProgressBa
   const width = Math.min(100, Math.max(0, value));
   return (
     <div
-      className={cn('w-full overflow-hidden rounded-[5px] bg-track', className)}
+      className={cn('w-full overflow-hidden rounded-full bg-track', className)}
       style={{ height }}
     >
       <div
-        className={cn('h-full rounded-[5px]', isFunded ? 'bg-bar-funded' : 'bg-bar-short')}
+        className={cn('h-full rounded-full', isFunded ? 'bg-bar-funded' : 'bg-bar-short')}
         style={{ width: `${width}%`, transition: 'width .5s cubic-bezier(.22,.61,.36,1)' }}
       />
     </div>

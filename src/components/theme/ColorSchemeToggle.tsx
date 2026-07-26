@@ -13,7 +13,7 @@ function applyScheme(scheme: ColorScheme) {
   document.documentElement.dataset.colorScheme = scheme;
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', scheme === 'atelier' ? '#181818' : '#07080B');
+    ?.setAttribute('content', scheme === 'atelier' ? '#0B0D10' : '#07080B');
   try {
     localStorage.setItem(STORAGE_KEY, scheme);
   } catch {
@@ -30,7 +30,7 @@ export function ColorSchemeToggle({ className }: { className?: string }) {
     <button
       type="button"
       className={cn(
-        'group relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-[11px] border border-white/[0.11] bg-white/[0.035] transition-colors hover:border-white/[0.22] hover:bg-white/[0.06]',
+        'group relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-[4px] border border-white/[0.11] bg-white/[0.035] transition-colors hover:border-white/[0.22] hover:bg-white/[0.06]',
         className,
       )}
       aria-label={`Switch to ${nextLabel} color scheme`}

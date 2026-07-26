@@ -52,7 +52,7 @@ export default function LoginPage() {
 
   return (
     <AuthShell>
-      <div className="dc-surface dc-facet-border w-full max-w-[400px] rounded-[22px] p-7 shadow-lift sm:p-8">
+      <div className="dc-surface dc-facet-border w-full max-w-[400px] rounded-[4px] p-7 shadow-lift sm:p-8">
         <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">
           Secure access
         </p>
@@ -62,7 +62,7 @@ export default function LoginPage() {
         </p>
 
         {!configured && (
-          <div className="mt-4 rounded-[10px] border border-white/[0.1] bg-white/[0.03] px-3 py-2 text-[12px] text-ink-dim">
+          <div className="mt-4 rounded-[4px] border border-white/[0.1] bg-white/[0.03] px-3 py-2 text-[12px] text-ink-dim">
             Auth is not configured. Set <span className="font-mono">VITE_SUPABASE_*</span> env vars
             to enable Google &amp; email sign-in. You can still explore the app.
           </div>
@@ -76,13 +76,13 @@ export default function LoginPage() {
             loading={busy === 'google'}
           />
           {configured && googleAuthAvailable === false && (
-            <p className="rounded-[10px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber">
+            <p className="rounded-[4px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber">
               Google sign-in is disabled in this Supabase project. Use an email link until the
               provider is enabled.
             </p>
           )}
           {!error && authError && (
-            <p className="rounded-[10px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
+            <p className="rounded-[4px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
               {authError}
             </p>
           )}
@@ -101,7 +101,7 @@ export default function LoginPage() {
             </Button>
           </form>
           {notice && (
-            <p className="rounded-[10px] border border-emerald/30 bg-emerald/10 px-3 py-2 text-[12.5px] text-emerald">
+            <p className="rounded-[4px] border border-emerald/30 bg-emerald/10 px-3 py-2 text-[12.5px] text-emerald">
               {notice}
             </p>
           )}

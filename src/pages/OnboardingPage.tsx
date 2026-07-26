@@ -18,7 +18,7 @@ export default function OnboardingPage() {
 
   return (
     <AuthShell>
-      <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[22px] p-7 text-center shadow-lift sm:p-8">
+      <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[4px] p-7 text-center shadow-lift sm:p-8">
         {loading || user ? (
           <>
             <span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-white/[0.12] border-t-atelier" />
@@ -41,7 +41,7 @@ export default function OnboardingPage() {
               Connect and verify your trading wallet later from the account menu in the header.
             </p>
             {authError && (
-              <p className="mt-4 rounded-[10px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
+              <p className="mt-4 rounded-[4px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
                 {authError}
               </p>
             )}

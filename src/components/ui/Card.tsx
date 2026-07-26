@@ -9,7 +9,7 @@ interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
 export function Card({ hoverLift, as: Tag = 'div', className, children, ...rest }: CardProps) {
   return (
     <Tag
-      className={cn('dc-surface rounded-[18px]', hoverLift && 'dc-hover-lift', className)}
+      className={cn('dc-surface rounded-[4px]', hoverLift && 'dc-hover-lift', className)}
       {...rest}
     >
       {children}

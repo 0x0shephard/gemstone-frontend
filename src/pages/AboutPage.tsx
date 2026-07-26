@@ -48,7 +48,7 @@ export default function AboutPage() {
       {/* Intro */}
       <section
         data-reveal
-        className="dc-facet-border dc-dot-grid overflow-hidden rounded-[24px] border border-white/[0.09] bg-card px-6 py-8 sm:px-9 sm:py-10"
+        className="dc-facet-border dc-dot-grid overflow-hidden rounded-[4px] border border-white/[0.09] bg-card px-6 py-8 sm:px-9 sm:py-10"
       >
         <StatusBadge tone="danger" dot className="mb-5">
           Protocol live · {data?.gemsInVault ?? 148} gemstones in vault
@@ -130,7 +130,7 @@ export default function AboutPage() {
           <div className="mt-5 space-y-2.5">
             {data?.treasurySplit.map((s) => (
               <div key={s.label} className="flex items-center gap-3 text-[13.5px]">
-                <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: s.color }} />
+                <span className="h-2.5 w-2.5 rounded-[4px]" style={{ background: s.color }} />
                 <span className="flex-1 text-ink-soft">{s.label}</span>
                 <span className="font-mono text-ink">{s.pct}</span>
               </div>
@@ -173,7 +173,7 @@ export default function AboutPage() {
       {/* CTA */}
       <section
         data-reveal
-        className="dc-facet-border flex flex-col items-start justify-between gap-5 overflow-hidden rounded-[20px] border border-white/[0.09] bg-elevated p-8 md:flex-row md:items-center"
+        className="dc-facet-border flex flex-col items-start justify-between gap-5 overflow-hidden rounded-[4px] border border-white/[0.09] bg-elevated p-8 md:flex-row md:items-center"
       >
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">

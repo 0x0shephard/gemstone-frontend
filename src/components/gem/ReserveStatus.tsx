@@ -30,7 +30,7 @@ export function ReserveStatus({ gem, showShortfall = true, className }: ReserveS
       <ProgressBar value={gem.reserve} funded={gem.funded} />
       {showShortfall && !gem.funded && (
         <div
-          className="rounded-[10px] px-3 py-2.5 text-[11.5px] leading-relaxed"
+          className="rounded-[4px] px-3 py-2.5 text-[11.5px] leading-relaxed"
           style={{
             background: 'rgba(233,173,91,.07)',
             border: '1px solid rgba(233,173,91,.24)',

@@ -4,11 +4,11 @@ import { GemThumb } from '@/components/gem/GemThumb';
 /** Compact gem header used inside action modals. */
 export function ModalGemHeader({ gem }: { gem: DecoratedGem }) {
   return (
-    <div className="flex items-center gap-3 rounded-[12px] border border-white/[0.08] bg-panel p-3">
+    <div className="flex items-center gap-3 rounded-[4px] border border-white/[0.08] bg-panel p-3">
       <GemThumb
         gem={gem}
         height={44}
-        rounded="rounded-[10px]"
+        rounded="rounded-[4px]"
         showTag={false}
         showCarat={false}
         className="w-11 shrink-0"

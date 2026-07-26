@@ -5,7 +5,7 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        'animate-pulse rounded-[16px] border border-white/[0.045] bg-gradient-to-br from-white/[0.05] to-white/[0.015]',
+        'animate-pulse rounded-[4px] border border-white/[0.045] bg-gradient-to-br from-white/[0.05] to-white/[0.015]',
         className,
       )}
     />
@@ -34,12 +34,12 @@ export function EmptyState({ title, hint, action, className }: EmptyStateProps) 
   return (
     <div
       className={cn(
-        'dc-dot-grid flex min-h-[260px] flex-col items-center justify-center rounded-[18px] border border-dashed border-white/[0.11] px-6 py-16 text-center',
+        'dc-dot-grid flex min-h-[260px] flex-col items-center justify-center rounded-[4px] border border-dashed border-white/[0.11] px-6 py-16 text-center',
         className,
       )}
     >
       <div
-        className="relative mb-4 h-10 w-10 rotate-45 rounded-[9px] border border-atelier/30 bg-atelier/[0.06]"
+        className="relative mb-4 h-10 w-10 rotate-45 rounded-[4px] border border-atelier/30 bg-atelier/[0.06]"
         aria-hidden
       >
         <span className="absolute inset-[9px] rounded-[4px] border border-white/[0.12]" />
@@ -53,7 +53,7 @@ export function EmptyState({ title, hint, action, className }: EmptyStateProps) 
 
 export function ErrorState({ message }: { message?: string }) {
   return (
-    <div className="rounded-[18px] border border-ruby/30 bg-ruby/[0.07] px-6 py-10 text-center text-[13px] text-ruby">
+    <div className="rounded-[4px] border border-ruby/30 bg-ruby/[0.07] px-6 py-10 text-center text-[13px] text-ruby">
       {message ?? 'Something went wrong loading this data.'}
     </div>
   );

@@ -17,6 +17,7 @@ import { CardGridSkeleton, EmptyState } from '@/components/ui/States';
 import { fmtUsd } from '@/lib/format';
 import type { Bid, Offer } from '@/services/types';
 import { AnalyticsConsent } from '@/components/privacy/AnalyticsConsent';
+import { PendingRefunds } from '@/components/wallet/PendingRefunds';
 import { TxButton } from '@/components/tx/TxButton';
 import { dataService } from '@/services';
 
@@ -48,7 +49,7 @@ export default function ProfilePage() {
       <Card className="dc-facet-border relative flex flex-wrap items-center justify-between gap-5 overflow-hidden p-5 sm:p-6">
         <div className="dc-dot-grid pointer-events-none absolute inset-y-0 right-0 w-1/3 opacity-40" />
         <div className="relative flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[15px] border border-white/[0.11] bg-white/[0.04] font-display text-[14px] font-medium text-ink">
+          <div className="flex h-12 w-12 items-center justify-center rounded-[4px] border border-white/[0.11] bg-white/[0.04] font-display text-[14px] font-medium text-ink">
             {name.slice(0, 2).toUpperCase()}
           </div>
           <div>
@@ -67,6 +68,8 @@ export default function ProfilePage() {
           <KycStatus status={kyc} />
         </div>
       </Card>
+
+      <PendingRefunds />
 
       {address && pendingProceeds && (
         <Card className="dc-facet-border flex flex-wrap items-center justify-between gap-4 p-5">
@@ -145,7 +148,7 @@ export default function ProfilePage() {
                     <GemThumb
                       gem={s.gem}
                       height={44}
-                      rounded="rounded-[10px]"
+                      rounded="rounded-[4px]"
                       showTag={false}
                       showCarat={false}
                       className="w-11"
@@ -174,7 +177,7 @@ export default function ProfilePage() {
                     <GemThumb
                       gem={r.gem}
                       height={44}
-                      rounded="rounded-[10px]"
+                      rounded="rounded-[4px]"
                       showTag={false}
                       showCarat={false}
                       className="w-11"

@@ -56,7 +56,7 @@ export default function SignupPage() {
 
   return (
     <AuthShell>
-      <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[22px] p-7 shadow-lift sm:p-8">
+      <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[4px] p-7 shadow-lift sm:p-8">
         <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">
           Join the vault
         </p>
@@ -68,7 +68,7 @@ export default function SignupPage() {
         </p>
 
         {!configured && (
-          <div className="mt-4 rounded-[10px] border border-white/[0.1] bg-white/[0.03] px-3 py-2 text-[12px] text-ink-dim">
+          <div className="mt-4 rounded-[4px] border border-white/[0.1] bg-white/[0.03] px-3 py-2 text-[12px] text-ink-dim">
             Auth is not configured. Set <span className="font-mono">VITE_SUPABASE_*</span> env vars
             to enable sign-up.
           </div>
@@ -82,13 +82,13 @@ export default function SignupPage() {
             loading={busy === 'google'}
           />
           {configured && googleAuthAvailable === false && (
-            <p className="rounded-[10px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber">
+            <p className="rounded-[4px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] leading-relaxed text-amber">
               Google sign-up is disabled in this Supabase project. Use an email link until the
               provider is enabled.
             </p>
           )}
           {(errors.google || authError) && (
-            <p className="rounded-[10px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
+            <p className="rounded-[4px] border border-ruby/25 bg-ruby/[0.07] px-3 py-2 text-[12px] leading-relaxed text-ruby">
               {errors.google ?? authError}
             </p>
           )}
@@ -110,7 +110,7 @@ export default function SignupPage() {
               error={errors.email}
             />
 
-            <div className="flex items-start gap-2 rounded-[12px] border border-emerald/25 bg-emerald/[0.06] px-3 py-2.5 text-[12.5px] text-emerald">
+            <div className="flex items-start gap-2 rounded-[4px] border border-emerald/25 bg-emerald/[0.06] px-3 py-2.5 text-[12.5px] text-emerald">
               <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-emerald" />
               <span>
                 Open access for buyers. <strong className="text-ink">Selling</strong> uses the
@@ -123,7 +123,7 @@ export default function SignupPage() {
             </Button>
           </form>
           {notice && (
-            <p className="rounded-[10px] border border-emerald/30 bg-emerald/10 px-3 py-2 text-[12.5px] text-emerald">
+            <p className="rounded-[4px] border border-emerald/30 bg-emerald/10 px-3 py-2 text-[12.5px] text-emerald">
               {notice}
             </p>
           )}

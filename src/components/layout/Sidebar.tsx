@@ -70,7 +70,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             to="/"
             onClick={onClose}
             aria-label="Digital Carat home"
-            className="inline-flex rounded-[8px] focus-visible:outline-offset-4"
+            className="inline-flex rounded-[4px] focus-visible:outline-offset-4"
           >
             <BrandMark size={19} />
           </Link>
@@ -79,7 +79,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
             type="button"
             onClick={onClose}
             aria-label="Close navigation"
-            className="grid h-9 w-9 place-items-center rounded-[10px] border border-white/[0.08] bg-white/[0.025] text-ink-muted transition-colors hover:border-atelier/30 hover:bg-atelier/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/70"
+            className="grid h-9 w-9 place-items-center rounded-[4px] border border-white/[0.08] bg-white/[0.025] text-ink-muted transition-colors hover:border-atelier/30 hover:bg-atelier/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/70"
           >
             <span className="relative block h-4 w-4" aria-hidden="true">
               <span className="absolute left-0 top-1/2 h-px w-4 -translate-y-1/2 rotate-45 bg-current" />
@@ -102,7 +102,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     onClick={onClose}
                     className={({ isActive }) =>
                       cn(
-                        'group flex h-10 items-center gap-3 rounded-[11px] border px-3 text-[13.5px] transition-all',
+                        'group flex h-10 items-center gap-3 rounded-[4px] border px-3 text-[13.5px] transition-all',
                         isActive
                           ? 'border-white/[0.09] bg-atelier/[0.09] font-semibold text-ink shadow-[inset_3px_0_0_var(--dc-accent)]'
                           : 'border-transparent font-medium text-ink-muted hover:border-white/[0.05] hover:bg-white/[0.025] hover:text-ink',
@@ -121,7 +121,7 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         </nav>
 
         <div className="border-t border-white/[0.07] p-4">
-          <div className="rounded-[14px] border border-white/[0.07] bg-white/[0.025] p-3.5">
+          <div className="rounded-[4px] border border-white/[0.07] bg-white/[0.025] p-3.5">
             <div className="flex items-center gap-3">
               <span
                 className="h-2 w-2 rounded-full bg-emerald"

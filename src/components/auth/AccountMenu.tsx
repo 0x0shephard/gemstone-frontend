@@ -80,7 +80,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
     return (
       <span
         className={cn(
-          'h-10 w-10 animate-pulse rounded-[13px] border border-white/[0.08] bg-white/[0.035]',
+          'h-10 w-10 animate-pulse rounded-[4px] border border-white/[0.08] bg-white/[0.035]',
           className,
         )}
         aria-label="Loading account"
@@ -93,7 +93,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
       <Link
         to="/login"
         className={cn(
-          'dc-btn-anim inline-flex h-10 items-center rounded-[11px] border border-white/[0.12] bg-white/[0.035] px-3.5 text-[12.5px] font-semibold text-ink hover:bg-white/[0.065]',
+          'dc-btn-anim inline-flex h-10 items-center rounded-[4px] border border-white/[0.12] bg-white/[0.035] px-3.5 text-[12.5px] font-semibold text-ink hover:bg-white/[0.065]',
           className,
         )}
       >
@@ -107,12 +107,12 @@ export function AccountMenu({ className }: AccountMenuProps) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="group flex h-10 items-center gap-2 rounded-[13px] border border-atelier/25 bg-atelier/[0.07] p-1.5 pr-2.5 text-left transition-all hover:border-atelier/45 hover:bg-atelier/[0.11] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/55"
+        className="group flex h-10 items-center gap-2 rounded-[4px] border border-atelier/25 bg-atelier/[0.07] p-1.5 pr-2.5 text-left transition-all hover:border-atelier/45 hover:bg-atelier/[0.11] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/55"
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="Open account menu"
       >
-        <span className="flex h-7 w-7 rotate-45 items-center justify-center rounded-[8px] border border-atelier/35 bg-atelier/[0.12]">
+        <span className="flex h-7 w-7 rotate-45 items-center justify-center rounded-[4px] border border-atelier/35 bg-atelier/[0.12]">
           <span className="-rotate-45 font-mono text-[9.5px] font-semibold text-ink">
             {initials || 'DC'}
           </span>
@@ -145,11 +145,11 @@ export function AccountMenu({ className }: AccountMenuProps) {
         <section
           role="dialog"
           aria-label="Account and wallet"
-          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(340px,calc(100vw-24px))] animate-dcslideup overflow-hidden rounded-[20px] border border-white/[0.12] bg-elevated shadow-[0_24px_80px_rgba(0,0,0,.65)]"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(340px,calc(100vw-24px))] animate-dcslideup overflow-hidden rounded-[4px] border border-white/[0.12] bg-elevated shadow-[0_24px_80px_rgba(0,0,0,.65)]"
         >
           <div className="dc-facet-border border-b border-white/[0.07] p-4">
             <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 rotate-45 items-center justify-center rounded-[11px] border border-atelier/30 bg-atelier/[0.09]">
+              <span className="flex h-10 w-10 rotate-45 items-center justify-center rounded-[4px] border border-atelier/30 bg-atelier/[0.09]">
                 <span className="-rotate-45 font-mono text-[11px] font-semibold text-ink">
                   {initials || 'DC'}
                 </span>
@@ -166,7 +166,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
           </div>
 
           <div className="p-3">
-            <div className="rounded-[14px] border border-white/[0.08] bg-white/[0.025] p-3.5">
+            <div className="rounded-[4px] border border-white/[0.08] bg-white/[0.025] p-3.5">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-dim">
@@ -197,7 +197,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
                       <button
                         type="button"
                         onClick={openConnectModal}
-                        className="dc-btn-anim flex h-10 w-full items-center justify-center rounded-[10px] bg-atelier px-3 text-[12.5px] font-semibold text-vault"
+                        className="dc-btn-anim flex h-10 w-full items-center justify-center rounded-[4px] bg-atelier px-3 text-[12.5px] font-semibold text-vault"
                       >
                         Connect wallet
                       </button>
@@ -206,7 +206,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
                         <button
                           type="button"
                           onClick={wrongNetwork ? openChainModal : openAccountModal}
-                          className="flex w-full items-center justify-between rounded-[10px] border border-white/[0.09] bg-black/10 px-3 py-2.5 text-left hover:border-white/[0.16]"
+                          className="flex w-full items-center justify-between rounded-[4px] border border-white/[0.09] bg-black/10 px-3 py-2.5 text-left hover:border-white/[0.16]"
                         >
                           <span>
                             <span className="block font-mono text-[12px] text-ink">
@@ -225,7 +225,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
                             type="button"
                             disabled={verifying}
                             onClick={() => void verifyWallet(address)}
-                            className="dc-btn-anim mt-2 flex h-9 w-full items-center justify-center rounded-[9px] border border-atelier/35 bg-atelier/[0.08] px-3 text-[11.5px] font-semibold text-ink disabled:opacity-50"
+                            className="dc-btn-anim mt-2 flex h-9 w-full items-center justify-center rounded-[4px] border border-atelier/35 bg-atelier/[0.08] px-3 text-[11.5px] font-semibold text-ink disabled:opacity-50"
                           >
                             {verifying ? 'Waiting for signature…' : 'Verify wallet with SIWE'}
                           </button>
@@ -251,7 +251,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
             <Link
               to="/profile"
               onClick={() => setOpen(false)}
-              className="mt-2 flex h-10 items-center justify-between rounded-[10px] px-3 text-[12.5px] font-medium text-ink-muted hover:bg-white/[0.035] hover:text-ink"
+              className="mt-2 flex h-10 items-center justify-between rounded-[4px] px-3 text-[12.5px] font-medium text-ink-muted hover:bg-white/[0.035] hover:text-ink"
             >
               Portfolio and activity <span aria-hidden>→</span>
             </Link>
@@ -259,7 +259,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
               type="button"
               onClick={() => void handleSignOut()}
               disabled={signingOut}
-              className="flex h-10 w-full items-center justify-between rounded-[10px] px-3 text-left text-[12.5px] font-medium text-ruby hover:bg-ruby/[0.07] disabled:opacity-50"
+              className="flex h-10 w-full items-center justify-between rounded-[4px] px-3 text-left text-[12.5px] font-medium text-ruby hover:bg-ruby/[0.07] disabled:opacity-50"
             >
               {signingOut ? 'Signing out…' : 'Sign out'} <span aria-hidden>↗</span>
             </button>

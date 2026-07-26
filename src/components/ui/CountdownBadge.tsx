@@ -19,7 +19,7 @@ export function CountdownBadge({ seconds, variant = 'inline', className }: Count
     return (
       <span
         className={cn(
-          'inline-flex items-center gap-1 rounded-[6px] bg-black/50 px-2 py-1 font-mono text-[11px] backdrop-blur',
+          'inline-flex items-center gap-1 rounded-[4px] bg-black/50 px-2 py-1 font-mono text-[11px] backdrop-blur',
           ended ? 'text-ink-dim' : 'text-amber',
           className,
         )}

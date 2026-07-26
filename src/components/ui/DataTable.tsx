@@ -20,7 +20,7 @@ interface DataTableProps<T> {
 export function DataTable<T>({ columns, rows, rowKey, empty, className }: DataTableProps<T>) {
   return (
     <div
-      className={cn('overflow-x-auto rounded-[18px] border border-white/[0.08] bg-card', className)}
+      className={cn('overflow-x-auto rounded-[4px] border border-white/[0.08] bg-card', className)}
     >
       <table className="w-full min-w-[560px] border-collapse text-left">
         <thead>

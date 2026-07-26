@@ -61,7 +61,7 @@ export function AppShell() {
               aria-controls="app-navigation-drawer"
               aria-expanded={sidebarOpen}
               onClick={() => setSidebarOpen(true)}
-              className="group grid h-10 w-10 shrink-0 place-items-center rounded-[11px] border border-white/[0.08] bg-white/[0.025] text-ink-muted transition-colors hover:border-atelier/30 hover:bg-atelier/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/70"
+              className="group grid h-10 w-10 shrink-0 place-items-center rounded-[4px] border border-white/[0.08] bg-white/[0.025] text-ink-muted transition-colors hover:border-atelier/30 hover:bg-atelier/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/70"
             >
               <span className="flex w-[17px] flex-col gap-[4px]" aria-hidden="true">
                 <span className="h-px w-full bg-current transition-transform group-hover:translate-x-0.5" />

@@ -16,7 +16,7 @@ interface GemThumbProps {
 export function GemThumb({
   gem,
   height = 176,
-  rounded = 'rounded-[12px]',
+  rounded = 'rounded-[4px]',
   showTag = true,
   showCarat = true,
   children,
@@ -37,7 +37,7 @@ export function GemThumb({
       />
       {showTag && (
         <span
-          className="absolute left-3 top-3 rounded-[6px] px-2 py-1 text-[11px] font-semibold"
+          className="absolute left-3 top-3 rounded-[4px] px-2 py-1 text-[11px] font-semibold"
           style={{
             color: gem.color,
             background: `${gem.color}1f`,
@@ -48,7 +48,7 @@ export function GemThumb({
         </span>
       )}
       {showCarat && (
-        <span className="absolute right-3 top-3 rounded-[6px] bg-black/40 px-2 py-1 font-mono text-[11px] text-ink-soft backdrop-blur">
+        <span className="absolute right-3 top-3 rounded-[4px] bg-black/40 px-2 py-1 font-mono text-[11px] text-ink-soft backdrop-blur">
           {gem.caratsFmt}
         </span>
       )}

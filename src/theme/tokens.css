@@ -15,17 +15,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Instrument scheme (default).
+ *
+ * The chrome is deliberately achromatic: cold near-black ground, platinum text,
+ * platinum-filled primary button. Saturated colour is reserved for the gemstones
+ * themselves and for semantic state (funded / short / locked), so the stones are
+ * the only real colour in the interface.
+ *
+ * Gem hues below are unchanged on purpose: they are per-gem semantics, not
+ * decoration. `garnet` remains the warm alternate behind ColorSchemeToggle.
+ */
 :root {
   color-scheme: dark;
-  --dc-vault: #181818;
-  --dc-sidebar: #1a1d20;
-  --dc-card: #20262d;
-  --dc-panel: #252c33;
-  --dc-elevated: #2b323a;
+  --dc-vault: #0b0d10;
+  --dc-sidebar: #101319;
+  --dc-card: #16191f;
+  --dc-panel: #1d212a;
+  --dc-elevated: #232833;
   --dc-frost: #ffffff;
-  --dc-accent: #83c3ff;
-  --dc-accent-rgb: 131 195 255;
-  --dc-accent-2: #f59a56;
+  --dc-accent: #e8ebf0;
+  --dc-accent-rgb: 232 235 240;
+  --dc-accent-2: #8891a0;
   --dc-ruby: #df6874;
   --dc-ruby-rgb: 223 104 116;
   --dc-sapphire: #83c3ff;
@@ -34,14 +45,14 @@
   --dc-emerald-rgb: 116 213 139;
   --dc-amber: #f59a56;
   --dc-amber-rgb: 245 154 86;
-  --dc-border: rgba(255, 255, 255, 0.082);
-  --dc-border-strong: rgba(255, 255, 255, 0.18);
-  --dc-ring: rgba(131, 195, 255, 0.76);
-  --dc-header: rgba(24, 24, 24, 0.84);
-  --dc-selection: rgba(131, 195, 255, 0.32);
-  --dc-button-top: #b8ddff;
-  --dc-button-bottom: #83c3ff;
-  --dc-button-ink: #111820;
+  --dc-border: rgba(232, 235, 240, 0.09);
+  --dc-border-strong: rgba(232, 235, 240, 0.19);
+  --dc-ring: rgba(232, 235, 240, 0.8);
+  --dc-header: rgba(11, 13, 16, 0.86);
+  --dc-selection: rgba(232, 235, 240, 0.24);
+  --dc-button-top: #f4f6f9;
+  --dc-button-bottom: #e8ebf0;
+  --dc-button-ink: #0b0d10;
 }
 
 :root[data-color-scheme='garnet'] {
@@ -87,7 +98,7 @@ body {
   background:
     radial-gradient(
       circle at 74% 4%,
-      color-mix(in srgb, var(--dc-accent) 13%, transparent),
+      color-mix(in srgb, var(--dc-accent) 6%, transparent),
       transparent 31rem
     ),
     var(--dc-vault);

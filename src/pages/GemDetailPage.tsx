@@ -9,8 +9,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Skeleton, ErrorState } from '@/components/ui/States';
 import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
-import { fmtUsd } from '@/lib/format';
-import { reserveShortfallUsd } from '@/lib/gem';
+import { PriceBreakdown } from '@/components/gem/PriceBreakdown';
+import { ProvenanceChain } from '@/components/gem/ProvenanceChain';
 import { TxButton } from '@/components/tx/TxButton';
 import { dataService } from '@/services';
 
@@ -34,8 +34,6 @@ export default function GemDetailPage() {
   }
   if (isError || !gem) return <ErrorState message="Gem not found." />;
 
-  const shortfall = reserveShortfallUsd(gem);
-
   const specs: [string, React.ReactNode][] = [
     ['Gem ID', <span className="font-mono">{gem.displayId}</span>],
     ['Type', gem.typeLabel],
@@ -57,8 +55,8 @@ export default function GemDetailPage() {
       <div className="grid gap-6 xl:grid-cols-[1.05fr_.95fr]">
         {/* Left: visual + stats */}
         <div className="space-y-4">
-          <div className="dc-facet-border overflow-hidden rounded-[24px] border border-white/[0.09] bg-card">
-            <GemThumb gem={gem} height={440} rounded="rounded-[24px]" showTag showCarat />
+          <div className="dc-facet-border overflow-hidden rounded-[4px] border border-white/[0.09] bg-card">
+            <GemThumb gem={gem} height={440} rounded="rounded-[4px]" showTag showCarat />
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatTile label="Carat" value={gem.carats.toFixed(2)} />
@@ -97,28 +95,9 @@ export default function GemDetailPage() {
           </div>
 
           <Card className="dc-facet-border p-5 sm:p-6">
-            <div className="flex items-end justify-between">
-              <div>
-                <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
-                  Expert-approved value
-                </div>
-                <div className="mt-1 font-mono text-[28px] font-semibold tracking-[-0.04em] text-ink sm:text-[32px]">
-                  {gem.valueFmt}
-                </div>
-              </div>
-              {shortfall > 0 && (
-                <div className="text-right">
-                  <div className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-dim">
-                    Buyer reserve charge
-                  </div>
-                  <div className="font-mono text-[16px] font-semibold text-amber">
-                    {fmtUsd(shortfall)}
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="mt-4">
-              <ReserveStatus gem={gem} />
+            <PriceBreakdown gem={gem} />
+            <div className="mt-5 border-t border-white/[0.06] pt-5">
+              <ReserveStatus gem={gem} showShortfall={false} />
             </div>
 
             <div className="mt-5 border-t border-white/[0.06] pt-5">
@@ -198,6 +177,20 @@ export default function GemDetailPage() {
                 </div>
               )}
             </div>
+          </Card>
+
+          <Card className="p-5 sm:p-6">
+            <div className="mb-1 flex items-center justify-between">
+              <h3 className="font-display text-[15px] font-medium text-ink">Provenance</h3>
+              <span className="font-mono text-[9.5px] uppercase tracking-[0.13em] text-ink-dim">
+                On chain
+              </span>
+            </div>
+            <p className="mb-2 text-[11.5px] leading-relaxed text-ink-dim">
+              Each gate is enforced by a separate role, so no single party can move a gem from
+              intake to sale on its own.
+            </p>
+            <ProvenanceChain gem={gem} />
           </Card>
 
           <Card className="p-5 sm:p-6">

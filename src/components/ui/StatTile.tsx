@@ -12,7 +12,7 @@ interface StatTileProps {
 /** KPI / stat tile: muted label + large mono-ish value. */
 export function StatTile({ label, value, hint, valueColor, dot, className }: StatTileProps) {
   return (
-    <div className={cn('dc-surface rounded-[16px] p-[18px]', className)}>
+    <div className={cn('dc-surface rounded-[4px] p-[18px]', className)}>
       <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
         {label}
       </div>

@@ -3,10 +3,7 @@ import { Link } from 'react-router-dom';
 import { TopNav } from '@/components/layout/TopNav';
 import { Footer } from '@/components/layout/Footer';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { GemCard } from '@/components/gem/GemCard';
-import { ProgressBar } from '@/components/ui/ProgressBar';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { ownershipPathSteps } from '@/content/ownershipPath';
 import { useLanding } from '@/hooks/useData';
@@ -15,6 +12,17 @@ import { useScrollReveal } from '@/hooks/useScrollReveal';
 const GemScene = lazy(() =>
   import('@/components/three/GemScene').then((m) => ({ default: m.GemScene })),
 );
+
+/** Which role enforces each step. Presentation only; the copy itself is shared. */
+const STEP_ACTORS = ['Verifier · Custodian', 'Buyer', 'Primary sale', 'Holder'];
+
+const REDEMPTION_STEPS: [string, string, boolean?][] = [
+  ['Reserve checked', 'The stone must be fully reserved before delivery can open.'],
+  ['Compliance checked', 'Your address must be cleared to redeem.'],
+  ['Token locked', 'Transfers stop. The token cannot be sold while delivery is open.'],
+  ['Custodian confirms', 'The vault hands the stone over and confirms it on-chain.'],
+  ['Token burned', 'The claim is destroyed permanently. You keep the stone.', true],
+];
 
 export default function LandingPage() {
   const { data } = useLanding();
@@ -25,10 +33,10 @@ export default function LandingPage() {
       <TopNav />
 
       {/* Hero */}
-      <section className="relative mx-auto grid max-w-content items-center gap-8 overflow-hidden px-5 py-10 sm:px-6 md:min-h-[88vh] md:grid-cols-[1.05fr_.95fr] md:px-10 md:py-14">
+      <section className="relative mx-auto grid max-w-content items-center gap-8 overflow-hidden px-5 py-10 sm:px-6 md:min-h-[86vh] md:grid-cols-[1.05fr_.95fr] md:px-10 md:py-14">
         <div className="dc-dot-grid pointer-events-none absolute inset-y-0 left-0 w-[52%] opacity-35" />
         <div className="relative order-2 md:order-1">
-          <div className="mb-7 inline-flex items-center gap-2 border-l-2 border-atelier pl-3 text-[10px] font-semibold uppercase tracking-[0.15em] text-ink-muted">
+          <div className="mb-7 inline-flex items-center gap-2 border-l-2 border-ink-muted pl-3 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-muted">
             Vault open
             <span className="h-1 w-1 rounded-full bg-emerald" />
             {data?.gemsInVault ?? 148} stones under custody
@@ -65,55 +73,118 @@ export default function LandingPage() {
           </div>
         </div>
 
-        <div className="dc-facet-border relative order-1 h-[320px] overflow-hidden rounded-[28px] border border-white/[0.08] bg-gradient-to-br from-card/40 to-transparent md:order-2 md:h-[72vh]">
-          <div className="absolute left-5 top-5 z-10 font-mono text-[9px] uppercase tracking-[0.15em] text-ink-dim">
-            Featured custody record
-          </div>
+        {/*
+         * The stone floats rather than sitting in a panel: concentric rings and
+         * a halo tinted by the stone's own hue, nothing else competing with it.
+         */}
+        <div className="relative order-1 mx-auto aspect-square w-full max-w-[520px] md:order-2">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-[8%] rounded-full"
+            style={{
+              background:
+                'radial-gradient(circle, rgb(var(--dc-ruby-rgb) / 0.17), transparent 66%)',
+            }}
+          />
+          <svg
+            aria-hidden
+            viewBox="0 0 100 100"
+            className="pointer-events-none absolute inset-0 h-full w-full text-white/[0.07]"
+          >
+            {[46, 37, 28].map((r) => (
+              <circle
+                key={r}
+                cx="50"
+                cy="50"
+                r={r}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="0.35"
+              />
+            ))}
+          </svg>
           <Suspense fallback={<div className="h-full w-full" />}>
             <GemScene />
           </Suspense>
-          <span className="absolute bottom-5 left-5 right-5 rounded-[11px] border border-white/[0.09] bg-black/35 px-3 py-2.5 font-mono text-[10px] text-ink-muted backdrop-blur">
-            {data?.featuredCaption ?? 'GEM-RB-0417 · Burmese Ruby · 3.12ct'}
-          </span>
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="mx-auto max-w-content px-6 py-20 md:px-10">
+      {/* Gates. Each step is enforced by a different role. */}
+      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-10">
-          <p className="text-[12px] font-semibold uppercase tracking-eyebrow text-ink-muted">
-            Ownership path
-          </p>
-          <h2 className="mt-2 text-[30px] font-bold tracking-tight text-ink md:text-[34px]">
+          <h2 className="max-w-[20ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
             From expert review to physical redemption
           </h2>
+          <p className="mt-3 max-w-[56ch] text-[14px] leading-relaxed text-ink-muted">
+            Minting is blocked until every gate passes. Each one is a separate role, so no single
+            address can walk a stone from intake to sale on its own.
+          </p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div
+          data-reveal
+          className="grid overflow-hidden rounded-[4px] border border-white/[0.08] sm:grid-cols-2 lg:grid-cols-4"
+        >
           {ownershipPathSteps.map((step, i) => (
-            <Card key={step.num} hoverLift data-reveal data-reveal-delay={i * 90} className="p-6">
-              <div className="font-mono text-[13px] text-ink-dim">{step.num}</div>
-              <h3 className="mt-3 text-[17px] font-semibold text-ink">{step.title}</h3>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-ink-muted">{step.body}</p>
-            </Card>
+            <div
+              key={step.num}
+              className="flex flex-col gap-2.5 border-b border-r border-white/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
+            >
+              <div className="font-mono text-[10px] tracking-[0.1em] text-ink-dim">{step.num}</div>
+              <h3 className="font-display text-[15px] font-medium tracking-[-0.015em] text-ink">
+                {step.title}
+              </h3>
+              <p className="text-[12.5px] leading-relaxed text-ink-muted">{step.body}</p>
+              <div className="mt-auto pt-3 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-dim">
+                {STEP_ACTORS[i]}
+              </div>
+            </div>
           ))}
         </div>
       </section>
 
-      {/* Featured gems */}
-      <section className="mx-auto max-w-content px-6 py-10 md:px-10">
-        <div data-reveal className="mb-8 flex items-end justify-between">
+      {/* Reserve model */}
+      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+        <div data-reveal className="mb-9">
+          <h2 className="max-w-[22ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
+            Custody costs money, so it is funded up front
+          </h2>
+          <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
+            Every stone carries a reserve that pays for vaulting, insurance and the cost of shipping
+            it to you. Whoever buys next covers whatever is missing, in the same transaction, so the
+            protocol never absorbs unpaid custody cost.
+          </p>
+        </div>
+        <div
+          data-reveal
+          className="grid overflow-hidden rounded-[4px] border border-white/[0.08] sm:grid-cols-2 lg:grid-cols-4"
+        >
+          {[
+            ['10%', 'Reserve on stones valued under $1,000'],
+            ['4%', 'Reserve on stones valued $1,000 and above'],
+            [data?.treasurySplit?.[0]?.pct ?? '80%', 'Of every primary sale goes to the seller'],
+            ['2%', 'Secondary fee, taken from the sale price'],
+          ].map(([value, label]) => (
+            <div
+              key={label}
+              className="border-b border-r border-white/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
+            >
+              <div className="font-mono text-[30px] tracking-[-0.04em] text-ink">{value}</div>
+              <div className="mt-2 text-[12.5px] leading-relaxed text-ink-muted">{label}</div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Featured */}
+      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+        <div data-reveal className="mb-8 flex items-end justify-between gap-4">
           <div>
-            <p className="text-[12px] font-semibold uppercase tracking-eyebrow text-ink-muted">
-              Current inventory
-            </p>
-            <h2 className="mt-2 text-[30px] font-bold tracking-tight text-ink md:text-[34px]">
-              Stones available now
+            <h2 className="font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
+              Available now
             </h2>
+            <p className="mt-2 text-[14px] text-ink-muted">Listed at their verified valuation.</p>
           </div>
-          <Link
-            to="/marketplace"
-            className="text-[13px] font-semibold text-ink-soft hover:text-ink"
-          >
+          <Link to="/marketplace" className="text-[13px] font-medium text-ink-soft hover:text-ink">
             View all →
           </Link>
         </div>
@@ -124,85 +195,98 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Auctions + reserve mechanics */}
-      <section className="mx-auto max-w-content px-6 py-20 md:px-10">
-        <div className="grid gap-5 lg:grid-cols-[1.3fr_1fr]">
-          <Card data-reveal className="p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-[18px] font-semibold text-ink">Live auction activity</h3>
-              <StatusBadge tone="success" dot>
-                Live
-              </StatusBadge>
-            </div>
-            <div className="divide-y divide-white/[0.06]">
-              {data?.auctions.map((a) => (
-                <div key={a.gem.gemId.toString()} className="flex items-center gap-3 py-3">
-                  <span
-                    className="h-11 w-11 shrink-0 rounded-[10px]"
-                    style={{ background: a.gem.thumb }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-ink">{a.gem.name}</div>
-                    <div className="font-mono text-[11.5px] text-ink-dim">{a.gem.displayId}</div>
+      {/* Redemption burns the claim */}
+      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+        <div className="grid items-center gap-11 lg:grid-cols-2">
+          <div data-reveal>
+            <h2 className="max-w-[22ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
+              Ask for the stone and the token stops existing
+            </h2>
+            <p className="mt-3 max-w-[56ch] text-[14px] leading-relaxed text-ink-muted">
+              A Digital Carat token is a claim, not a souvenir. When you want the physical gemstone
+              the token locks, the custodian ships, and the claim is burned. There is no version of
+              this where you keep both.
+            </p>
+            <Link to="/redeem" className="mt-6 inline-block">
+              <Button variant="secondary">How redemption works</Button>
+            </Link>
+          </div>
+          <div
+            data-reveal
+            className="overflow-hidden rounded-[4px] border border-white/[0.08] bg-card"
+          >
+            {REDEMPTION_STEPS.map(([title, body, terminal], i) => (
+              <div
+                key={title}
+                className={`flex items-start gap-3.5 border-b border-white/[0.06] px-5 py-4 last:border-b-0 ${
+                  terminal ? 'bg-panel' : ''
+                }`}
+              >
+                <span className="mt-0.5 font-mono text-[10px] text-ink-dim">
+                  {String(i + 1).padStart(2, '0')}
+                </span>
+                <div>
+                  <div
+                    className={`text-[13.5px] font-medium ${terminal ? 'text-ruby' : 'text-ink'}`}
+                  >
+                    {title}
                   </div>
-                  <div className="text-right">
-                    <div className="font-mono text-[14px] font-semibold text-ink">
-                      {a.highestBidFmt}
-                    </div>
-                    <CountdownBadge seconds={a.secondsLeft} />
-                  </div>
+                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-muted">{body}</p>
                 </div>
-              ))}
-            </div>
-            <Link
-              to="/auctions"
-              className="mt-4 inline-block text-[13px] font-semibold text-ink-soft hover:text-ink"
-            >
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Live auctions */}
+      {data?.auctions && data.auctions.length > 0 && (
+        <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+          <div data-reveal className="mb-8 flex items-end justify-between gap-4">
+            <h2 className="font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
+              Live auctions
+            </h2>
+            <Link to="/auctions" className="text-[13px] font-medium text-ink-soft hover:text-ink">
               Go to auctions →
             </Link>
-          </Card>
-
-          <Card data-reveal className="p-6">
-            <h3 className="text-[18px] font-semibold text-ink">Reserve mechanics</h3>
-            <p className="mt-2 text-[13.5px] leading-relaxed text-ink-muted">
-              Each gem carries an on-chain reserve. Minting and redemption are blocked until the
-              reserve is fully funded — no exceptions.
-            </p>
-
-            <div className="mt-5 space-y-2">
-              <div className="flex items-center justify-between text-[12px]">
-                <span className="text-ink-muted">Example reserve</span>
-                <span className="font-semibold text-amber">Short 82%</span>
-              </div>
-              <ProgressBar value={82} />
+          </div>
+          <div
+            data-reveal
+            className="overflow-hidden rounded-[4px] border border-white/[0.08] bg-card"
+          >
+            {data.auctions.map((a) => (
               <div
-                className="rounded-[8px] px-3 py-2 text-[12px]"
-                style={{
-                  background: 'rgba(229,162,60,.08)',
-                  border: '1px solid rgba(229,162,60,.28)',
-                  color: '#E5C99A',
-                }}
+                key={a.gem.gemId.toString()}
+                className="flex items-center gap-3.5 border-b border-white/[0.06] px-5 py-3.5 last:border-b-0"
               >
-                Top-up required before this gem can be minted or redeemed.
-              </div>
-            </div>
-
-            <div className="mt-6">
-              <p className="mb-3 text-[12px] font-semibold uppercase tracking-[0.12em] text-ink-muted">
-                Treasury sale split
-              </p>
-              <div className="space-y-2">
-                {data?.treasurySplit.map((s) => (
-                  <div key={s.label} className="flex items-center gap-3 text-[13px]">
-                    <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: s.color }} />
-                    <span className="flex-1 text-ink-soft">{s.label}</span>
-                    <span className="font-mono text-ink">{s.pct}</span>
+                <span
+                  className="h-10 w-10 shrink-0 rounded-[4px]"
+                  style={{ background: a.gem.thumb }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13.5px] font-medium text-ink">{a.gem.name}</div>
+                  <div className="font-mono text-[11px] text-ink-dim">{a.gem.displayId}</div>
+                </div>
+                <div className="text-right">
+                  <div className="font-mono text-[14px] font-semibold text-ink">
+                    {a.highestBidFmt}
                   </div>
-                ))}
+                  <CountdownBadge seconds={a.secondsLeft} />
+                </div>
               </div>
-            </div>
-          </Card>
-        </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Closing */}
+      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-24 text-center md:px-10">
+        <h2 className="mx-auto max-w-[22ch] font-display text-[32px] font-medium tracking-[-0.04em] text-ink md:text-[42px]">
+          Start with one stone
+        </h2>
+        <Link to="/marketplace" className="mt-7 inline-block">
+          <Button size="lg">Enter marketplace</Button>
+        </Link>
       </section>
 
       <Footer />

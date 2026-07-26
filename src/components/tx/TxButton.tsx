@@ -80,7 +80,7 @@ export function TxButton({
 
       <div aria-live="polite">
         {state === 'pending' && (
-          <div className="flex items-start gap-2.5 rounded-[10px] border border-atelier/20 bg-atelier/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
+          <div className="flex items-start gap-2.5 rounded-[4px] border border-atelier/20 bg-atelier/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-atelier" />
             Follow the wallet prompts. The app will simulate the action, request any approval and
             wait for confirmation.
@@ -91,7 +91,7 @@ export function TxButton({
             href={explorerTxUrl(hash)}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center justify-between gap-3 rounded-[10px] border border-emerald/20 bg-emerald/[0.055] px-3 py-2.5 text-[11.5px] text-emerald"
+            className="flex items-center justify-between gap-3 rounded-[4px] border border-emerald/20 bg-emerald/[0.055] px-3 py-2.5 text-[11.5px] text-emerald"
           >
             <span className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
@@ -104,7 +104,7 @@ export function TxButton({
       {state === 'error' && (
         <p
           role="alert"
-          className="rounded-[10px] border border-ruby/20 bg-ruby/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ruby"
+          className="rounded-[4px] border border-ruby/20 bg-ruby/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ruby"
         >
           {error ?? 'Transaction rejected.'}
         </p>
