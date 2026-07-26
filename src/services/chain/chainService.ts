@@ -52,7 +52,7 @@ import type {
   ListRequest,
   ActivityItem,
 } from '../types';
-import { discoveredIds, syncProjection, type ProjectionSnapshot } from './projection';
+import { syncProjection, type ProjectionSnapshot } from './projection';
 import { runContractTransaction, type Approval } from './transactionPipeline';
 import {
   describePaymentAsset,
@@ -86,9 +86,12 @@ type Metadata = {
 const manifest: DeploymentManifest = requireDeploymentManifest();
 const client = getPublicClient(wagmiConfig) as PublicClient;
 let projectionPromise: Promise<ProjectionSnapshot> | undefined;
+let settledSnapshot: ProjectionSnapshot | undefined;
+let gemIdsPromise: Promise<bigint[]> | undefined;
 let secondaryFeePctPromise: Promise<number> | undefined;
 window.addEventListener('dc:transaction-confirmed', () => {
   projectionPromise = undefined;
+  gemIdsPromise = undefined;
 });
 
 function contract(moduleName: keyof DeploymentManifest['addresses']) {
@@ -100,12 +103,64 @@ function contract(moduleName: keyof DeploymentManifest['addresses']) {
 
 function projection(force = false): Promise<ProjectionSnapshot> {
   if (force || !projectionPromise) {
-    projectionPromise = syncProjection(client).catch((error) => {
-      projectionPromise = undefined;
-      throw error;
-    });
+    projectionPromise = syncProjection(client)
+      .then((snapshot) => {
+        settledSnapshot = snapshot;
+        return snapshot;
+      })
+      .catch((error) => {
+        projectionPromise = undefined;
+        throw error;
+      });
   }
   return projectionPromise;
+}
+
+/**
+ * Event history for views that must not wait on it. Starts the sync if it is not
+ * already running and returns whatever has settled, so first paint renders from
+ * contract state while the log replay continues behind it. Consumers refetch when
+ * `dc:chain-sync` reports the sync finished.
+ */
+function settledEvents(): ProjectionSnapshot['events'] {
+  void projection().catch(() => undefined);
+  return settledSnapshot?.events ?? [];
+}
+
+const GEM_PROBE_WINDOW = 25;
+const GEM_PROBE_LIMIT = 5_000;
+
+/**
+ * `GemRegistry` exposes no enumeration and keeps `_nextGemId` private, but ids are
+ * sequential from 1 and registered gems are never removed, so the live set can be
+ * probed directly. `getGem` reverts `InvalidGem` past the last id, which ends the
+ * walk. This keeps gem discovery off the event projection entirely.
+ */
+async function discoverGemIds(): Promise<bigint[]> {
+  const ids: bigint[] = [];
+  for (let start = 1; start <= GEM_PROBE_LIMIT; start += GEM_PROBE_WINDOW) {
+    const window = Array.from({ length: GEM_PROBE_WINDOW }, (_, index) => BigInt(start + index));
+    const results = await client.multicall({
+      contracts: window.map((gemId) => ({
+        ...contract('GemRegistry'),
+        functionName: 'getGem',
+        args: [gemId],
+      })),
+      allowFailure: true,
+    });
+    const lastIndex = results.findIndex((result) => result.status !== 'success');
+    ids.push(...window.slice(0, lastIndex === -1 ? results.length : lastIndex));
+    if (lastIndex !== -1) break;
+  }
+  return ids;
+}
+
+function gemIds(): Promise<bigint[]> {
+  gemIdsPromise ??= discoverGemIds().catch((error) => {
+    gemIdsPromise = undefined;
+    throw error;
+  });
+  return gemIdsPromise;
 }
 
 function ipfsUrl(uri: string): string {
@@ -204,8 +259,7 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
 }
 
 async function allGems(): Promise<DecoratedGem[]> {
-  const snapshot = await projection();
-  const ids = discoveredIds(snapshot, 'GemRegistered', 'gemId');
+  const ids = await gemIds();
   return (await Promise.all(ids.map((gemId) => readGem(gemId)))).filter(
     (gem): gem is DecoratedGem => Boolean(gem),
   );
@@ -297,39 +351,48 @@ async function treasurySplit(): Promise<TreasurySplitItem[]> {
   );
 }
 
+type AuctionState = readonly [
+  boolean,
+  boolean,
+  bigint,
+  bigint,
+  bigint,
+  Address,
+  Address,
+  bigint,
+  bigint,
+  bigint,
+];
+
 async function getAuctions(): Promise<Auction[]> {
-  const snapshot = await projection();
-  const gemIds = discoveredIds(snapshot, 'AuctionCreated', 'gemId');
+  const ids = await gemIds();
   const now = BigInt(Math.floor(Date.now() / 1_000));
+  // Auction records are read straight from contract state, so a gem with a live
+  // auction appears without waiting for its `AuctionCreated` log to be replayed.
+  const states = (await Promise.all(
+    ids.map((gemId) =>
+      client.readContract({
+        ...contract('PrimarySaleAuction'),
+        functionName: 'auctions',
+        args: [gemId],
+      }),
+    ),
+  )) as AuctionState[];
+  const live = ids
+    .map((gemId, index) => ({ gemId, state: states[index] }))
+    .filter(({ state }) => state[0] && !state[1]);
+  // Bid counts are historical and have no contract-state equivalent, so they fill
+  // in once the projection settles rather than gating the auction list.
+  const events = settledEvents();
   const auctions = await Promise.all(
-    gemIds.map(async (gemId) => {
-      const [state, gem] = await Promise.all([
-        client.readContract({
-          ...contract('PrimarySaleAuction'),
-          functionName: 'auctions',
-          args: [gemId],
-        }) as Promise<
-          readonly [
-            boolean,
-            boolean,
-            bigint,
-            bigint,
-            bigint,
-            Address,
-            Address,
-            bigint,
-            bigint,
-            bigint,
-          ]
-        >,
-        readGem(gemId),
-      ]);
-      if (!gem || !state[0] || state[1]) return;
+    live.map(async ({ gemId, state }) => {
+      const gem = await readGem(gemId);
+      if (!gem) return;
       return {
         gem,
         highestBidFmt: `$${Number(formatUnits(state[8], 18)).toLocaleString()}`,
         highestBidder: state[5] === zeroAddress ? undefined : state[5],
-        bids: snapshot.events.filter(
+        bids: events.filter(
           (event) =>
             event.module === 'PrimarySaleAuction' &&
             event.eventName === 'BidPlaced' &&
@@ -344,25 +407,30 @@ async function getAuctions(): Promise<Auction[]> {
 }
 
 async function getListings(): Promise<DecoratedGem[]> {
-  const snapshot = await projection();
-  const primaryGemIds = discoveredIds(snapshot, 'GemListed', 'gemId');
+  const ids = await gemIds();
+  const registryGems = await Promise.all(
+    ids.map(async (gemId) => [gemId, await readRegistryGem(gemId)] as const),
+  );
+
   const primaryResults = await Promise.all(
-    primaryGemIds.map(async (gemId) => {
-      const [registryGem, mode] = await Promise.all([
-        readRegistryGem(gemId),
-        client.readContract({
-          ...contract('GemRegistry'),
-          functionName: 'primarySaleMode',
-          args: [gemId],
-        }) as Promise<number>,
-      ]);
-      if (Number(registryGem.status) !== 4 || Number(mode) !== 1) return;
+    registryGems.map(async ([gemId, registryGem]) => {
+      if (Number(registryGem.status) !== 4) return;
+      const mode = (await client.readContract({
+        ...contract('GemRegistry'),
+        functionName: 'primarySaleMode',
+        args: [gemId],
+      })) as number;
+      if (Number(mode) !== 1) return;
       const gem = await readGem(gemId);
       return gem ? { ...gem, market: 'primary' as const } : undefined;
     }),
   );
 
-  const tokenIds = discoveredIds(snapshot, 'Listed', 'tokenId');
+  // Minted gems carry their token id in the registry record, so escrowed secondary
+  // listings resolve from contract state instead of replayed `Listed` logs.
+  const tokenIds = registryGems
+    .map(([, registryGem]) => registryGem.tokenId)
+    .filter((tokenId) => tokenId !== 0n);
   const secondaryResults = await Promise.all(
     tokenIds.map(async (tokenId) => {
       const listing = (await client.readContract({

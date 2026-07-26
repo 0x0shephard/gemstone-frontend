@@ -11,7 +11,12 @@ import { contracts } from '@/contracts';
 const DATABASE_VERSION = 1;
 const FINALITY_CONFIRMATIONS = 12n;
 const RECENT_RESCAN_BLOCKS = 64n;
-const INITIAL_RANGE = 5_000n;
+/**
+ * Public RPC providers cap `eth_getLogs` block spans, commonly at 1,000. Starting
+ * above the cap costs a rejected request per halving before the first useful read,
+ * so the opening span stays at the widest value providers accept.
+ */
+const INITIAL_RANGE = 1_000n;
 const MIN_RANGE = 64n;
 
 export interface ProjectedEvent {
@@ -180,9 +185,17 @@ async function recoverCorruptedCache(): Promise<void> {
   });
 }
 
-const addressToModule = new Map(
-  contractModules.map((moduleName) => [contractAddresses[moduleName]!.toLowerCase(), moduleName]),
-);
+let addressToModule: Map<string, ContractModule> | undefined;
+
+/** Resolved lazily so importing this module never requires a configured deployment. */
+function moduleForAddress(address: Address): ContractModule | undefined {
+  addressToModule ??= new Map(
+    contractModules
+      .map((moduleName) => [contractAddresses[moduleName]?.toLowerCase(), moduleName] as const)
+      .filter((entry): entry is [string, ContractModule] => Boolean(entry[0])),
+  );
+  return addressToModule.get(address.toLowerCase());
+}
 
 function decodeLog(
   log: {
@@ -195,7 +208,7 @@ function decodeLog(
   },
   finalizedThrough: bigint,
 ): ProjectedEvent | undefined {
-  const moduleName = addressToModule.get(log.address.toLowerCase());
+  const moduleName = moduleForAddress(log.address);
   if (!moduleName || log.blockNumber === null || !log.transactionHash || log.logIndex === null)
     return;
   try {
@@ -220,7 +233,7 @@ function decodeLog(
   }
 }
 
-async function scanLogs(
+export async function scanLogs(
   client: PublicClient,
   fromBlock: bigint,
   latestBlock: bigint,
@@ -230,6 +243,12 @@ async function scanLogs(
   const events: ProjectedEvent[] = [];
   let cursor = fromBlock;
   let range = INITIAL_RANGE;
+  /**
+   * Largest span this provider has accepted so far. A rejected span is never
+   * retried within a scan: growing back into a known-rejected width made every
+   * successful chunk cost a second, failing request plus a backoff sleep.
+   */
+  let ceiling = INITIAL_RANGE;
   const addresses = contractModules.map((moduleName) => contractAddresses[moduleName]!);
 
   while (cursor <= latestBlock) {
@@ -243,10 +262,11 @@ async function scanLogs(
       }
       cursor = toBlock + 1n;
       options.onProgress?.(toBlock, latestBlock);
-      if (logs.length < 1_000 && range < INITIAL_RANGE) range *= 2n;
+      if (logs.length < 1_000 && range < ceiling) range *= 2n;
     } catch (error) {
       if (range <= MIN_RANGE) throw error;
-      range = range / 2n < MIN_RANGE ? MIN_RANGE : range / 2n;
+      ceiling = range / 2n < MIN_RANGE ? MIN_RANGE : range / 2n;
+      range = ceiling;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
   }
@@ -326,16 +346,4 @@ export async function syncProjection(
       },
     };
   }
-}
-
-export function discoveredIds(
-  snapshot: ProjectionSnapshot,
-  eventName: string,
-  arg: string,
-): bigint[] {
-  const values = snapshot.events
-    .filter((event) => event.eventName === eventName)
-    .map((event) => event.args[arg])
-    .filter((value): value is bigint => typeof value === 'bigint');
-  return [...new Set(values.map(String))].map(BigInt);
 }

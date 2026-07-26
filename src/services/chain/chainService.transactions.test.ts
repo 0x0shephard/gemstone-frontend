@@ -16,7 +16,6 @@ vi.mock('./transactionPipeline', () => ({
   runContractTransaction: mocks.runContractTransaction,
 }));
 vi.mock('./projection', () => ({
-  discoveredIds: () => [],
   syncProjection: mocks.syncProjection,
 }));
 
