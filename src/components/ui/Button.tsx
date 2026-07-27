@@ -21,9 +21,9 @@ const base =
 const variants: Record<ButtonVariant, string> = {
   primary: 'bg-btn-primary text-[var(--dc-button-ink)] border border-transparent',
   secondary:
-    'bg-white/[0.035] text-ink border border-white/[0.12] hover:border-white/[0.22] hover:bg-white/[0.055]',
+    'bg-line/[0.035] text-ink border border-line/[0.12] hover:border-line/[0.22] hover:bg-line/[0.055]',
   ghost:
-    'bg-transparent text-ink-faint border border-white/[0.08] hover:border-white/[0.16] hover:text-ink',
+    'bg-transparent text-ink-faint border border-line/[0.08] hover:border-line/[0.16] hover:text-ink',
   danger: 'bg-btn-danger text-white border border-transparent',
 };
 

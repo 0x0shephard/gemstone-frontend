@@ -25,7 +25,7 @@ export function ConfigurationGate({ children }: { children: ReactNode }) {
           Digital Carat will not substitute demo data while chain mode is selected. Configure every
           field below, then rebuild the deployment.
         </p>
-        <ul className="mt-5 space-y-2 rounded-[4px] border border-white/[0.08] bg-canvas p-4 font-mono text-[12px] text-ink-soft">
+        <ul className="mt-5 space-y-2 rounded-[4px] border border-line/[0.08] bg-canvas p-4 font-mono text-[12px] text-ink-soft">
           {errors.map((error) => (
             <li key={error}>• {error}</li>
           ))}

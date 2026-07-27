@@ -55,7 +55,7 @@ export default function GemDetailPage() {
       <div className="grid gap-6 xl:grid-cols-[1.05fr_.95fr]">
         {/* Left: visual + stats */}
         <div className="space-y-4">
-          <div className="dc-facet-border overflow-hidden rounded-[4px] border border-white/[0.09] bg-card">
+          <div className="dc-facet-border overflow-hidden rounded-[4px] border border-line/[0.09] bg-card">
             <GemThumb gem={gem} height={440} rounded="rounded-[4px]" showTag showCarat />
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -96,11 +96,11 @@ export default function GemDetailPage() {
 
           <Card className="dc-facet-border p-5 sm:p-6">
             <PriceBreakdown gem={gem} />
-            <div className="mt-5 border-t border-white/[0.06] pt-5">
+            <div className="mt-5 border-t border-line/[0.06] pt-5">
               <ReserveStatus gem={gem} showShortfall={false} />
             </div>
 
-            <div className="mt-5 border-t border-white/[0.06] pt-5">
+            <div className="mt-5 border-t border-line/[0.06] pt-5">
               <div className="mb-3 text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
                 {isManageView ? 'Ownership actions' : 'Available actions'}
               </div>
@@ -200,7 +200,7 @@ export default function GemDetailPage() {
                 Public fields only
               </span>
             </div>
-            <dl className="divide-y divide-white/[0.06]">
+            <dl className="divide-y divide-line/[0.06]">
               {specs.map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between py-2.5 text-[13.5px]">
                   <dt className="text-ink-muted">{label}</dt>

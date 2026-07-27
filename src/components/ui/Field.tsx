@@ -2,7 +2,7 @@ import { forwardRef, type InputHTMLAttributes } from 'react';
 import { cn } from '@/lib/cn';
 
 export const inputClass =
-  'h-11 w-full rounded-[4px] border border-white/[0.1] bg-inset px-3.5 text-[14px] text-ink ' +
+  'h-11 w-full rounded-[4px] border border-line/[0.1] bg-inset px-3.5 text-[14px] text-ink ' +
   'outline-none transition-[border-color,box-shadow] placeholder:text-ink-dim focus:border-atelier/50 focus:ring-2 focus:ring-atelier/10';
 
 interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
@@ -34,9 +34,9 @@ Field.displayName = 'Field';
 export function OrDivider() {
   return (
     <div className="flex items-center gap-3 py-1">
-      <span className="h-px flex-1 bg-white/[0.08]" />
+      <span className="h-px flex-1 bg-line/[0.08]" />
       <span className="text-[11px] uppercase tracking-[0.14em] text-ink-dim">or</span>
-      <span className="h-px flex-1 bg-white/[0.08]" />
+      <span className="h-px flex-1 bg-line/[0.08]" />
     </div>
   );
 }

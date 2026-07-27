@@ -24,6 +24,8 @@ export interface Gem {
   custodyCountry: string;
   redeem: RedeemStatus;
   metadataUri?: string;
+  /** Gateway-resolved `image` from the token metadata, when it declares one. */
+  image?: string;
 }
 
 export interface DecoratedGem extends Gem {

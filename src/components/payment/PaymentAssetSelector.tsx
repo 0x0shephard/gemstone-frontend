@@ -16,7 +16,7 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
   const { data: assets = [], isLoading } = usePaymentAssets();
 
   if (isLoading) {
-    return <div className="h-[58px] animate-pulse rounded-[4px] bg-white/[0.04]" />;
+    return <div className="h-[58px] animate-pulse rounded-[4px] bg-line/[0.04]" />;
   }
 
   return (
@@ -33,7 +33,7 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
               'flex min-h-[58px] items-center justify-between rounded-[4px] border px-3.5 py-2.5 text-left transition-colors',
               active
                 ? 'border-atelier/40 bg-atelier/[0.08] text-ink shadow-[inset_0_0_0_1px_rgb(var(--dc-accent-rgb)/.08)]'
-                : 'border-white/[0.09] bg-inset text-ink-faint hover:border-white/[0.16]',
+                : 'border-line/[0.09] bg-inset text-ink-faint hover:border-line/[0.16]',
             )}
           >
             <span>
@@ -48,7 +48,7 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
                 'flex h-5 w-5 items-center justify-center rounded-full border text-[10px]',
                 active
                   ? 'border-atelier bg-atelier text-[var(--dc-button-ink)]'
-                  : 'border-white/[0.13] text-transparent',
+                  : 'border-line/[0.13] text-transparent',
               )}
             >
               ✓

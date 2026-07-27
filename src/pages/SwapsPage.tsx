@@ -99,7 +99,7 @@ export default function SwapsPage() {
                     </div>
                   </div>
                   <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
-                  <div className="min-w-0 border-l border-white/[0.07] pl-4 sm:border-0 sm:pl-0">
+                  <div className="min-w-0 border-l border-line/[0.07] pl-4 sm:border-0 sm:pl-0">
                     <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
                       You give
                     </div>
@@ -107,7 +107,7 @@ export default function SwapsPage() {
                     <div className="font-mono text-[11.5px] text-ink-dim">{s.giveDisplayId}</div>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-col gap-3 border-t border-white/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mt-4 flex flex-col gap-3 border-t border-line/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-3">
                     <StatusBadge color={s.statusColor} dot>
                       {s.status}

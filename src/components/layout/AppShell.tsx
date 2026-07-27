@@ -50,7 +50,7 @@ export function AppShell() {
       <Sidebar open={sidebarOpen} onClose={closeSidebar} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header
-          className="sticky top-0 z-30 flex min-h-[76px] items-center justify-between gap-4 border-b border-white/[0.065] px-4 py-3.5 sm:px-6 md:px-8"
+          className="sticky top-0 z-30 flex min-h-[76px] items-center justify-between gap-4 border-b border-line/[0.065] px-4 py-3.5 sm:px-6 md:px-8"
           style={{ background: 'var(--dc-header)', backdropFilter: 'blur(18px)' }}
         >
           <div className="flex min-w-0 items-center gap-3">
@@ -61,7 +61,7 @@ export function AppShell() {
               aria-controls="app-navigation-drawer"
               aria-expanded={sidebarOpen}
               onClick={() => setSidebarOpen(true)}
-              className="group grid h-10 w-10 shrink-0 place-items-center rounded-[4px] border border-white/[0.08] bg-white/[0.025] text-ink-muted transition-colors hover:border-atelier/30 hover:bg-atelier/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/70"
+              className="group grid h-10 w-10 shrink-0 place-items-center rounded-[4px] border border-line/[0.08] bg-line/[0.025] text-ink-muted transition-colors hover:border-atelier/30 hover:bg-atelier/[0.08] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-atelier/70"
             >
               <span className="flex w-[17px] flex-col gap-[4px]" aria-hidden="true">
                 <span className="h-px w-full bg-current transition-transform group-hover:translate-x-0.5" />
@@ -69,7 +69,7 @@ export function AppShell() {
                 <span className="h-px w-full bg-current transition-transform group-hover:-translate-x-0.5" />
               </span>
             </button>
-            <div className="hidden h-8 w-px bg-white/[0.08] sm:block" aria-hidden="true" />
+            <div className="hidden h-8 w-px bg-line/[0.08] sm:block" aria-hidden="true" />
             <div className="min-w-0">
               <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier">
                 {group}

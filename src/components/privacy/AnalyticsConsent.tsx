@@ -9,7 +9,7 @@ function subscribe(callback: () => void) {
 export function AnalyticsConsent() {
   const enabled = useSyncExternalStore(subscribe, hasAnalyticsConsent, () => false);
   return (
-    <label className="flex items-start gap-3 rounded-[4px] border border-white/[0.08] bg-panel p-4">
+    <label className="flex items-start gap-3 rounded-[4px] border border-line/[0.08] bg-panel p-4">
       <input
         type="checkbox"
         checked={enabled}

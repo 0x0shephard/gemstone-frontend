@@ -68,7 +68,7 @@ export default function SignupPage() {
         </p>
 
         {!configured && (
-          <div className="mt-4 rounded-[4px] border border-white/[0.1] bg-white/[0.03] px-3 py-2 text-[12px] text-ink-dim">
+          <div className="mt-4 rounded-[4px] border border-line/[0.1] bg-line/[0.03] px-3 py-2 text-[12px] text-ink-dim">
             Auth is not configured. Set <span className="font-mono">VITE_SUPABASE_*</span> env vars
             to enable sign-up.
           </div>

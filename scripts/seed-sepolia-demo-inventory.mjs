@@ -59,27 +59,32 @@ function abi(name) {
   );
 }
 
+/** Matches the ERC-721 shape emitted by the seller workflow, so demo inventory and
+ *  real submissions decode through the same path. */
 function metadataUri(spec) {
+  const traits = [
+    ['Gem Type', spec.gemstoneType],
+    ['Carat Weight', spec.caratWeight],
+    ['Origin', spec.origin],
+    ['Color', spec.color],
+    ['Clarity', spec.clarity],
+    ['Cut', spec.cut],
+    ['Treatment', spec.treatment],
+    ['Certification Lab', 'Digital Carat Sepolia Lab'],
+    ['Certificate Number', `SEP-${spec.slug.toUpperCase()}-V1`],
+    ['Display ID', spec.displayId],
+    ['Custodian', 'Digital Carat Test Custody'],
+    ['Custody Country', 'Pakistan'],
+    ['Network', 'ethereum-sepolia'],
+    ['Redeemable', spec.redeemable ? 'Yes' : 'No'],
+    ['Testnet', 'Yes'],
+  ];
   const metadata = {
     name: spec.name,
-    displayId: spec.displayId,
     description: spec.description,
-    gemstoneType: spec.gemstoneType,
-    caratWeight: spec.caratWeight,
-    origin: spec.origin,
-    color: spec.color,
-    clarity: spec.clarity,
-    cut: spec.cut,
-    treatment: spec.treatment,
-    gradingLab: 'Digital Carat Sepolia Lab',
-    certificateNumber: `SEP-${spec.slug.toUpperCase()}-V1`,
-    custodian: {
-      provider: 'Digital Carat Test Custody',
-      country: 'Pakistan',
-    },
-    redeemable: spec.redeemable,
-    testnet: true,
-    network: 'ethereum-sepolia',
+    attributes: traits
+      .filter(([, value]) => value !== '' && value !== undefined && value !== null)
+      .map(([trait_type, value]) => ({ trait_type, value })),
   };
   return `data:application/json;base64,${Buffer.from(JSON.stringify(metadata)).toString('base64')}`;
 }

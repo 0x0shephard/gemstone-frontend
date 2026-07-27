@@ -64,12 +64,12 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
         )}
       </div>
       {saleUsd > 0 && (
-        <div className="rounded-[4px] border border-white/[0.08] bg-panel p-3">
+        <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3">
           <SummaryRow label="Bid credited to auction" value={fmtUsd(saleUsd)} />
           {shortfall > 0 && (
             <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
           )}
-          <div className="my-1 h-px bg-white/[0.06]" />
+          <div className="my-1 h-px bg-line/[0.06]" />
           <SummaryRow label="Total escrowed" value={fmtUsd(total)} />
         </div>
       )}
@@ -152,12 +152,12 @@ export function BuyModal({
       subtitle="Reserve shortfall is included in your total."
     >
       <ModalGemHeader gem={gem} />
-      <div className="rounded-[4px] border border-white/[0.08] bg-panel p-3">
+      <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3">
         <SummaryRow label="Listed price" value={gem.valueFmt} />
         {shortfall > 0 && (
           <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
         )}
-        <div className="my-1 h-px bg-white/[0.06]" />
+        <div className="my-1 h-px bg-line/[0.06]" />
         <SummaryRow label="Total required" value={fmtUsd(total)} />
       </div>
       <p className="text-[11.5px] leading-relaxed text-ink-dim">
@@ -222,12 +222,12 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
         )}
       </div>
       {usd > 0 && (
-        <div className="rounded-[4px] border border-white/[0.08] bg-panel p-3">
+        <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3">
           <SummaryRow label="Offer to token owner" value={fmtUsd(usd)} />
           {shortfall > 0 && (
             <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
           )}
-          <div className="my-1 h-px bg-white/[0.06]" />
+          <div className="my-1 h-px bg-line/[0.06]" />
           <SummaryRow label="Total escrowed" value={fmtUsd(total)} />
         </div>
       )}
@@ -372,7 +372,7 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
                     className={`cursor-pointer rounded-[4px] border px-3.5 py-3 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
                       selected
                         ? 'border-atelier/40 bg-atelier/[0.08]'
-                        : 'border-white/[0.09] bg-inset hover:border-white/[0.16]'
+                        : 'border-line/[0.09] bg-inset hover:border-line/[0.16]'
                     }`}
                   >
                     <input

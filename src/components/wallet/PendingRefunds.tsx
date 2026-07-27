@@ -37,7 +37,7 @@ export function PendingRefunds() {
         </div>
       </div>
 
-      <div className="mt-4 divide-y divide-white/[0.06] border-t border-white/[0.06]">
+      <div className="mt-4 divide-y divide-line/[0.06] border-t border-line/[0.06]">
         {refunds.map((refund) => (
           <div
             key={refund.paymentAsset}

@@ -28,7 +28,7 @@ export function PriceBreakdown({ gem, label = 'Expert-approved value' }: PriceBr
         {gem.valueFmt}
       </div>
 
-      <dl className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
+      <dl className="mt-4 space-y-2 border-t border-line/[0.06] pt-4">
         <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
           <dt className="text-ink-muted">Gemstone</dt>
           <dd className="font-mono text-ink-soft">{fmtUsd(gem.value)}</dd>
@@ -39,7 +39,7 @@ export function PriceBreakdown({ gem, label = 'Expert-approved value' }: PriceBr
             {shortfall > 0 ? `+ ${fmtUsd(shortfall)}` : 'None due'}
           </dd>
         </div>
-        <div className="flex items-baseline justify-between gap-3 border-t border-white/[0.06] pt-2.5 text-[14px] font-semibold">
+        <div className="flex items-baseline justify-between gap-3 border-t border-line/[0.06] pt-2.5 text-[14px] font-semibold">
           <dt className="text-ink">You pay</dt>
           <dd className="font-mono tracking-[-0.02em] text-ink">{fmtUsd(total)}</dd>
         </div>

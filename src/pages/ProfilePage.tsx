@@ -35,7 +35,7 @@ export default function ProfilePage() {
   const name = (user?.user_metadata?.full_name as string) || user?.email || 'Guest';
 
   const tabs: TabDef<Tab>[] = [
-    { key: 'owned', label: 'Owned gems', count: profile?.owned.length ?? 0 },
+    { key: 'owned', label: 'Owned NFTs', count: profile?.owned.length ?? 0 },
     { key: 'bids', label: 'Active bids', count: profile?.bids.length ?? 0 },
     { key: 'offers', label: 'Offers', count: profile?.offers.length ?? 0 },
     { key: 'swaps', label: 'Swap requests', count: profile?.swaps.length ?? 0 },
@@ -49,7 +49,7 @@ export default function ProfilePage() {
       <Card className="dc-facet-border relative flex flex-wrap items-center justify-between gap-5 overflow-hidden p-5 sm:p-6">
         <div className="dc-dot-grid pointer-events-none absolute inset-y-0 right-0 w-1/3 opacity-40" />
         <div className="relative flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-[4px] border border-white/[0.11] bg-white/[0.04] font-display text-[14px] font-medium text-ink">
+          <div className="flex h-12 w-12 items-center justify-center rounded-[4px] border border-line/[0.11] bg-line/[0.04] font-display text-[14px] font-medium text-ink">
             {name.slice(0, 2).toUpperCase()}
           </div>
           <div>
@@ -101,7 +101,7 @@ export default function ProfilePage() {
       {/* KPIs */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Portfolio value" value={fmtUsd(profile?.stats.portfolioValueUsd ?? 0)} />
-        <StatTile label="Owned gems" value={profile?.stats.ownedCount ?? 0} />
+        <StatTile label="Owned NFTs" value={profile?.stats.ownedCount ?? 0} />
         <StatTile label="Active bids" value={profile?.stats.activeBids ?? 0} />
         <StatTile
           label="Reserve shortfall"

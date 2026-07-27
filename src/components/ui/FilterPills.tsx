@@ -8,7 +8,7 @@ interface FilterPillsProps<T extends string> {
 
 export function FilterPills<T extends string>({ options, value, onChange }: FilterPillsProps<T>) {
   return (
-    <div className="flex flex-wrap gap-1.5 rounded-[4px] border border-white/[0.07] bg-white/[0.02] p-1">
+    <div className="flex flex-wrap gap-1.5 rounded-[4px] border border-line/[0.07] bg-line/[0.02] p-1">
       {options.map((opt) => {
         const active = opt.value === value;
         return (
@@ -19,8 +19,8 @@ export function FilterPills<T extends string>({ options, value, onChange }: Filt
             className={cn(
               'rounded-[4px] border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors',
               active
-                ? 'border-white/[0.09] bg-white/[0.08] text-ink shadow-[inset_0_1px_0_rgba(255,255,255,.05)]'
-                : 'border-transparent bg-transparent text-ink-muted hover:bg-white/[0.03] hover:text-ink',
+                ? 'border-line/[0.09] bg-line/[0.08] text-ink shadow-[inset_0_1px_0_rgba(255,255,255,.05)]'
+                : 'border-transparent bg-transparent text-ink-muted hover:bg-line/[0.03] hover:text-ink',
             )}
           >
             {opt.label}

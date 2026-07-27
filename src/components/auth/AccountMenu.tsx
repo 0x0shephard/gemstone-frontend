@@ -80,7 +80,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
     return (
       <span
         className={cn(
-          'h-10 w-10 animate-pulse rounded-[4px] border border-white/[0.08] bg-white/[0.035]',
+          'h-10 w-10 animate-pulse rounded-[4px] border border-line/[0.08] bg-line/[0.035]',
           className,
         )}
         aria-label="Loading account"
@@ -93,7 +93,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
       <Link
         to="/login"
         className={cn(
-          'dc-btn-anim inline-flex h-10 items-center rounded-[4px] border border-white/[0.12] bg-white/[0.035] px-3.5 text-[12.5px] font-semibold text-ink hover:bg-white/[0.065]',
+          'dc-btn-anim inline-flex h-10 items-center rounded-[4px] border border-line/[0.12] bg-line/[0.035] px-3.5 text-[12.5px] font-semibold text-ink hover:bg-line/[0.065]',
           className,
         )}
       >
@@ -145,9 +145,9 @@ export function AccountMenu({ className }: AccountMenuProps) {
         <section
           role="dialog"
           aria-label="Account and wallet"
-          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(340px,calc(100vw-24px))] animate-dcslideup overflow-hidden rounded-[4px] border border-white/[0.12] bg-elevated shadow-[0_24px_80px_rgba(0,0,0,.65)]"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(340px,calc(100vw-24px))] animate-dcslideup overflow-hidden rounded-[4px] border border-line/[0.12] bg-elevated shadow-[0_24px_80px_rgba(0,0,0,.65)]"
         >
-          <div className="dc-facet-border border-b border-white/[0.07] p-4">
+          <div className="dc-facet-border border-b border-line/[0.07] p-4">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 rotate-45 items-center justify-center rounded-[4px] border border-atelier/30 bg-atelier/[0.09]">
                 <span className="-rotate-45 font-mono text-[11px] font-semibold text-ink">
@@ -166,7 +166,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
           </div>
 
           <div className="p-3">
-            <div className="rounded-[4px] border border-white/[0.08] bg-white/[0.025] p-3.5">
+            <div className="rounded-[4px] border border-line/[0.08] bg-line/[0.025] p-3.5">
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-dim">
@@ -206,7 +206,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
                         <button
                           type="button"
                           onClick={wrongNetwork ? openChainModal : openAccountModal}
-                          className="flex w-full items-center justify-between rounded-[4px] border border-white/[0.09] bg-black/10 px-3 py-2.5 text-left hover:border-white/[0.16]"
+                          className="flex w-full items-center justify-between rounded-[4px] border border-line/[0.09] bg-black/10 px-3 py-2.5 text-left hover:border-line/[0.16]"
                         >
                           <span>
                             <span className="block font-mono text-[12px] text-ink">
@@ -251,7 +251,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
             <Link
               to="/profile"
               onClick={() => setOpen(false)}
-              className="mt-2 flex h-10 items-center justify-between rounded-[4px] px-3 text-[12.5px] font-medium text-ink-muted hover:bg-white/[0.035] hover:text-ink"
+              className="mt-2 flex h-10 items-center justify-between rounded-[4px] px-3 text-[12.5px] font-medium text-ink-muted hover:bg-line/[0.035] hover:text-ink"
             >
               Portfolio and activity <span aria-hidden>→</span>
             </Link>

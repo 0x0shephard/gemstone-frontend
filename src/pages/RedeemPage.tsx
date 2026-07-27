@@ -43,7 +43,7 @@ export default function RedeemPage() {
   return (
     <div className="space-y-8">
       {/* Process */}
-      <section className="overflow-hidden rounded-[4px] border border-white/[0.075] bg-gradient-to-br from-card to-inset p-5 sm:p-6">
+      <section className="overflow-hidden rounded-[4px] border border-line/[0.075] bg-gradient-to-br from-card to-inset p-5 sm:p-6">
         <div className="mb-6 max-w-xl">
           <p className="text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier">
             Physical fulfillment
@@ -128,7 +128,7 @@ export default function RedeemPage() {
         {isLoading ? (
           <Skeleton className="h-40" />
         ) : (
-          <Card className="divide-y divide-white/[0.06] overflow-hidden">
+          <Card className="divide-y divide-line/[0.06] overflow-hidden">
             {profile?.owned
               .filter((gem) => !gem.listingSeller)
               .map((gem) => {

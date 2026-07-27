@@ -59,20 +59,37 @@ function parseAttributes(value: unknown): SellerAttributes {
   return { ...parsed, caratWeight };
 }
 
+/**
+ * ERC-721 metadata as specified in the contracts repo's off-chain data
+ * architecture. The shape matters permanently: `metadataURI` is written once in
+ * `registerGem`, copied into `tokenURI` at mint, and has no setter in either
+ * contract, so external marketplaces read whatever is published here forever.
+ *
+ * No `image` yet: seller media lands in private Supabase buckets and there is no
+ * public media pipeline to reference. No `certificate_hash` either, because the
+ * hash is derived after submission and this runs at insert time.
+ *
+ * Never add seller identity, vault location, or appraisal notes here.
+ */
 function publicMetadata(attributes: SellerAttributes): string {
+  const traits: Array<[string, string | number]> = [
+    ['Gem Type', attributes.gemstoneType],
+    ['Carat Weight', attributes.caratWeight],
+    ['Origin', attributes.origin],
+    ['Dimensions', attributes.dimensions],
+    ['Color', attributes.color],
+    ['Clarity', attributes.clarity],
+    ['Cut', attributes.cut],
+    ['Treatment', attributes.treatment],
+    ['Certification Lab', attributes.gradingLab],
+  ];
   const metadata = {
     name: attributes.name,
     description:
       'Digital Carat Sepolia MVP gemstone submission with test-only automated valuation and custody activation.',
-    gemstoneType: attributes.gemstoneType,
-    caratWeight: attributes.caratWeight,
-    origin: attributes.origin,
-    dimensions: attributes.dimensions,
-    color: attributes.color,
-    clarity: attributes.clarity,
-    cut: attributes.cut,
-    treatment: attributes.treatment,
-    gradingLab: attributes.gradingLab,
+    attributes: traits
+      .filter(([, value]) => value !== '' && value !== undefined && value !== null)
+      .map(([trait_type, value]) => ({ trait_type, value })),
   };
   return `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(metadata))}`;
 }

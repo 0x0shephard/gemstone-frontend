@@ -66,7 +66,7 @@ export function ProvenanceChain({ gem, className }: ProvenanceChainProps) {
   const nextIndex = gates.findIndex((g) => !g.done);
 
   return (
-    <div className={cn('divide-y divide-white/[0.06]', className)}>
+    <div className={cn('divide-y divide-line/[0.06]', className)}>
       {gates.map((gate, i) => (
         <div key={gate.title} className="grid grid-cols-[22px_1fr_auto] items-start gap-3 py-3">
           <span
@@ -77,7 +77,7 @@ export function ProvenanceChain({ gem, className }: ProvenanceChainProps) {
                 ? 'border-emerald bg-emerald text-black'
                 : i === nextIndex
                   ? 'border-amber text-amber'
-                  : 'border-white/[0.1] text-ink-dim',
+                  : 'border-line/[0.1] text-ink-dim',
             )}
           >
             {gate.done ? '✓' : ''}

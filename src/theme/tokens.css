@@ -1,6 +1,3 @@
-@import '@fontsource/geologica/400.css';
-@import '@fontsource/geologica/500.css';
-@import '@fontsource/geologica/600.css';
 @import '@fontsource/manrope/300.css';
 @import '@fontsource/manrope/400.css';
 @import '@fontsource/manrope/500.css';
@@ -16,71 +13,116 @@
 @tailwind utilities;
 
 /*
- * Instrument scheme (default).
+ * Brand palette.
  *
- * The chrome is deliberately achromatic: cold near-black ground, platinum text,
- * platinum-filled primary button. Saturated colour is reserved for the gemstones
- * themselves and for semantic state (funded / short / locked), so the stones are
- * the only real colour in the interface.
+ *   Primary    Deep Emerald Green  #0B5D4B
+ *   Secondary  Warm Gold           #C9A227
+ *   Background Ivory Cream         #F8F5F0
+ *   Accent     Deep Navy           #112240
+ *   Text       Charcoal Black      #1A1A1A
+ *   Highlight  Burgundy Wine       #6D213C
  *
- * Gem hues below are unchanged on purpose: they are per-gem semantics, not
- * decoration. `garnet` remains the warm alternate behind ColorSchemeToggle.
+ * The scheme is light-ground: ivory paper, charcoal text, saturated brand hues
+ * reserved for state and for the stones. Every hue here is a deep, low-chroma
+ * tone; nothing bright, electric or fluorescent enters the interface.
+ *
+ * Semantic mapping is deliberate and consistent:
+ *   emerald = funded / confirmed      gold     = shortfall / pending
+ *   burgundy = destructive / burned   navy     = informational
+ *
+ * `--dc-line-rgb` is the hairline colour. Components express dividers as
+ * `border-line/[0.08]`, so this single variable re-tones every rule and inset
+ * surface when the scheme flips.
  */
 :root {
-  color-scheme: dark;
-  --dc-vault: #0b0d10;
-  --dc-sidebar: #101319;
-  --dc-card: #16191f;
-  --dc-panel: #1d212a;
-  --dc-elevated: #232833;
-  --dc-frost: #ffffff;
-  --dc-accent: #e8ebf0;
-  --dc-accent-rgb: 232 235 240;
-  --dc-accent-2: #8891a0;
-  --dc-ruby: #df6874;
-  --dc-ruby-rgb: 223 104 116;
-  --dc-sapphire: #83c3ff;
-  --dc-sapphire-rgb: 131 195 255;
-  --dc-emerald: #74d58b;
-  --dc-emerald-rgb: 116 213 139;
-  --dc-amber: #f59a56;
-  --dc-amber-rgb: 245 154 86;
-  --dc-border: rgba(232, 235, 240, 0.09);
-  --dc-border-strong: rgba(232, 235, 240, 0.19);
-  --dc-ring: rgba(232, 235, 240, 0.8);
-  --dc-header: rgba(11, 13, 16, 0.86);
-  --dc-selection: rgba(232, 235, 240, 0.24);
-  --dc-button-top: #f4f6f9;
-  --dc-button-bottom: #e8ebf0;
-  --dc-button-ink: #0b0d10;
+  color-scheme: light;
+  --dc-vault: #f8f5f0;
+  --dc-sidebar: #f1ece3;
+  --dc-card: #ffffff;
+  --dc-panel: #f1ece3;
+  --dc-elevated: #eae3d7;
+  --dc-frost: #112240;
+  --dc-accent: #0b5d4b;
+  --dc-accent-rgb: 11 93 75;
+  --dc-accent-2: #c9a227;
+  --dc-ruby: #6d213c;
+  --dc-ruby-rgb: 109 33 60;
+  --dc-sapphire: #112240;
+  --dc-sapphire-rgb: 17 34 64;
+  --dc-emerald: #0b5d4b;
+  --dc-emerald-rgb: 11 93 75;
+  --dc-amber: #c9a227;
+  --dc-amber-rgb: 201 162 39;
+
+  --dc-ink: #1a1a1a;
+  --dc-ink-soft: #2e3439;
+  --dc-ink-softer: #434a51;
+  --dc-ink-muted: #565e66;
+  /* `dim` carries 9.5–11px mono labels, so it is held at AA against the ivory
+     ground rather than tuned purely by eye. */
+  --dc-ink-dim: #666e76;
+  --dc-ink-faint: #5c646c;
+
+  --dc-line-rgb: 26 26 26;
+  --dc-border: rgba(26, 26, 26, 0.12);
+  --dc-border-strong: rgba(26, 26, 26, 0.24);
+  --dc-ring: rgba(11, 93, 75, 0.8);
+  --dc-header: rgba(248, 245, 240, 0.86);
+  --dc-selection: rgba(201, 162, 39, 0.32);
+  --dc-track: #e4dcce;
+  --dc-button-top: #0f6e58;
+  --dc-button-bottom: #0b5d4b;
+  --dc-button-ink: #f8f5f0;
+  --dc-lift-shadow: 0 18px 40px rgba(17, 34, 64, 0.13);
+  --dc-lift-shadow-strong: 0 22px 55px rgba(17, 34, 64, 0.16);
 }
 
+/*
+ * Brand dark. The exact brand hexes are ground colours and cannot carry text on
+ * a dark field, so emerald and burgundy are lifted here purely for contrast. The
+ * navy accent becomes the ground and gold takes the accent role.
+ */
 :root[data-color-scheme='garnet'] {
-  --dc-vault: #07080b;
-  --dc-sidebar: #090b0f;
-  --dc-card: #0d1015;
-  --dc-panel: #11151c;
-  --dc-elevated: #151a22;
-  --dc-frost: #f2f4f7;
-  --dc-accent: #d85661;
-  --dc-accent-rgb: 216 86 97;
-  --dc-accent-2: #7798ff;
-  --dc-ruby: #d85661;
-  --dc-ruby-rgb: 216 86 97;
-  --dc-sapphire: #7798ff;
-  --dc-sapphire-rgb: 119 152 255;
-  --dc-emerald: #4cc99a;
-  --dc-emerald-rgb: 76 201 154;
-  --dc-amber: #e9ad5b;
-  --dc-amber-rgb: 233 173 91;
-  --dc-border: rgba(227, 233, 242, 0.08);
-  --dc-border-strong: rgba(227, 233, 242, 0.17);
-  --dc-ring: rgba(119, 152, 255, 0.75);
-  --dc-header: rgba(7, 8, 11, 0.8);
-  --dc-selection: rgba(216, 86, 97, 0.34);
-  --dc-button-top: #f4f6f8;
-  --dc-button-bottom: #c8cfd8;
-  --dc-button-ink: #090b0f;
+  color-scheme: dark;
+  --dc-vault: #0a1524;
+  --dc-sidebar: #0d1a2c;
+  --dc-card: #112240;
+  --dc-panel: #16293f;
+  --dc-elevated: #1c3350;
+  --dc-frost: #f8f5f0;
+  --dc-accent: #c9a227;
+  --dc-accent-rgb: 201 162 39;
+  --dc-accent-2: #2e8f76;
+  --dc-ruby: #b06079;
+  --dc-ruby-rgb: 176 96 121;
+  --dc-sapphire: #8fb0d9;
+  --dc-sapphire-rgb: 143 176 217;
+  --dc-emerald: #3d9b82;
+  --dc-emerald-rgb: 61 155 130;
+  --dc-amber: #d4b04a;
+  --dc-amber-rgb: 212 176 74;
+
+  --dc-ink: #f8f5f0;
+  --dc-ink-soft: #e2ddd4;
+  --dc-ink-softer: #cbc6bd;
+  --dc-ink-muted: #a3a9b3;
+  /* Held at AA against the navy card surface, which is lighter than the ground
+     and therefore the harder of the two backgrounds. */
+  --dc-ink-dim: #8a929e;
+  --dc-ink-faint: #9aa1ac;
+
+  --dc-line-rgb: 248 245 240;
+  --dc-border: rgba(248, 245, 240, 0.1);
+  --dc-border-strong: rgba(248, 245, 240, 0.2);
+  --dc-ring: rgba(201, 162, 39, 0.78);
+  --dc-header: rgba(10, 21, 36, 0.86);
+  --dc-selection: rgba(201, 162, 39, 0.3);
+  --dc-track: #1c3350;
+  --dc-button-top: #2e8f76;
+  --dc-button-bottom: #0b5d4b;
+  --dc-button-ink: #f8f5f0;
+  --dc-lift-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+  --dc-lift-shadow-strong: 0 22px 55px rgba(0, 0, 0, 0.34);
 }
 
 * {
@@ -98,11 +140,11 @@ body {
   background:
     radial-gradient(
       circle at 74% 4%,
-      color-mix(in srgb, var(--dc-accent) 6%, transparent),
+      color-mix(in srgb, var(--dc-accent) 7%, transparent),
       transparent 31rem
     ),
     var(--dc-vault);
-  color: #f3f3f6;
+  color: var(--dc-ink);
   font-family: 'Manrope', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -112,8 +154,7 @@ h1,
 h2,
 h3,
 h4 {
-  font-family: 'Geologica', 'Manrope', system-ui, sans-serif;
-  font-variation-settings: 'CRSV' 0;
+  font-family: 'Manrope', system-ui, sans-serif;
 }
 
 ::selection {
@@ -121,12 +162,12 @@ h4 {
 }
 
 a {
-  color: #dce1e8;
+  color: var(--dc-ink-soft);
   text-decoration: none;
   transition: color 160ms ease;
 }
 a:hover {
-  color: #fff;
+  color: var(--dc-accent);
 }
 
 input,
@@ -151,7 +192,7 @@ textarea {
 
 input::placeholder,
 textarea::placeholder {
-  color: #626a76;
+  color: var(--dc-ink-dim);
 }
 
 ::-webkit-scrollbar {
@@ -159,12 +200,12 @@ textarea::placeholder {
   height: 9px;
 }
 ::-webkit-scrollbar-track {
-  background: #090b0f;
+  background: var(--dc-sidebar);
 }
 ::-webkit-scrollbar-thumb {
-  background: #2b3039;
+  background: rgb(var(--dc-line-rgb) / 0.26);
   border-radius: 999px;
-  border: 2px solid #090b0f;
+  border: 2px solid var(--dc-sidebar);
 }
 
 /* Scroll-reveal (progressive-enhancement; visible by default if JS/observer absent) */
@@ -188,8 +229,8 @@ textarea::placeholder {
 }
 .dc-hover-lift:hover {
   transform: translateY(-3px);
-  border-color: rgba(227, 233, 242, 0.2) !important;
-  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.34);
+  border-color: var(--dc-border-strong) !important;
+  box-shadow: var(--dc-lift-shadow-strong);
 }
 
 .dc-btn-anim {
@@ -207,7 +248,7 @@ textarea::placeholder {
 }
 
 .dc-surface {
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.018), transparent 42%), var(--dc-card);
+  background: var(--dc-card);
   border: 1px solid var(--dc-border);
 }
 
@@ -223,10 +264,10 @@ textarea::placeholder {
   border-radius: inherit;
   background: linear-gradient(
     135deg,
-    rgba(242, 244, 247, 0.18),
-    color-mix(in srgb, var(--dc-accent) 7%, transparent) 32%,
+    color-mix(in srgb, var(--dc-accent) 22%, transparent),
+    color-mix(in srgb, var(--dc-accent) 9%, transparent) 32%,
     transparent 58%,
-    color-mix(in srgb, var(--dc-accent-2) 9%, transparent)
+    color-mix(in srgb, var(--dc-accent-2) 16%, transparent)
   );
 }
 
@@ -240,7 +281,12 @@ textarea::placeholder {
   z-index: 2;
   pointer-events: none;
   content: '';
-  background: linear-gradient(112deg, transparent 32%, rgba(255, 255, 255, 0.075), transparent 58%);
+  background: linear-gradient(
+    112deg,
+    transparent 32%,
+    rgb(var(--dc-line-rgb) / 0.05),
+    transparent 58%
+  );
   transform: translateX(-110%);
   transition: transform 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
@@ -250,7 +296,7 @@ textarea::placeholder {
 }
 
 .dc-dot-grid {
-  background-image: radial-gradient(rgba(227, 233, 242, 0.1) 0.75px, transparent 0.75px);
+  background-image: radial-gradient(rgb(var(--dc-line-rgb) / 0.13) 0.75px, transparent 0.75px);
   background-size: 18px 18px;
   mask-image: linear-gradient(to bottom, black, transparent 82%);
 }

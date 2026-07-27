@@ -24,19 +24,19 @@ export function TopNav() {
 
   return (
     <header
-      className="sticky top-0 z-40 border-b border-white/[0.065]"
+      className="sticky top-0 z-40 border-b border-line/[0.065]"
       style={{ background: 'var(--dc-header)', backdropFilter: 'blur(18px)' }}
     >
       <nav className="mx-auto flex min-h-[72px] max-w-content items-center justify-between px-4 sm:px-6 md:px-10">
         <Link to="/" aria-label="Digital Carat home">
           <BrandMark size={19} />
         </Link>
-        <div className="hidden items-center gap-1 rounded-[4px] border border-white/[0.065] bg-white/[0.02] p-1 md:flex">
+        <div className="hidden items-center gap-1 rounded-[4px] border border-line/[0.065] bg-line/[0.02] p-1 md:flex">
           {LINKS.map((l) => (
             <Link
               key={l.to}
               to={l.to}
-              className="rounded-[4px] px-3 py-2 text-[12.5px] font-medium text-ink-muted transition-colors hover:bg-white/[0.035] hover:text-ink"
+              className="rounded-[4px] px-3 py-2 text-[12.5px] font-medium text-ink-muted transition-colors hover:bg-line/[0.035] hover:text-ink"
             >
               {l.label}
             </Link>
@@ -62,7 +62,7 @@ export function TopNav() {
           <button
             type="button"
             onClick={() => setOpen((value) => !value)}
-            className="flex h-10 w-10 items-center justify-center rounded-[4px] border border-white/[0.1] text-ink md:hidden"
+            className="flex h-10 w-10 items-center justify-center rounded-[4px] border border-line/[0.1] text-ink md:hidden"
             aria-label="Open navigation"
             aria-expanded={open}
           >
@@ -84,13 +84,13 @@ export function TopNav() {
         </div>
       </nav>
       {open && (
-        <div className="animate-dcfade border-t border-white/[0.065] bg-sidebar px-4 py-3 md:hidden">
+        <div className="animate-dcfade border-t border-line/[0.065] bg-sidebar px-4 py-3 md:hidden">
           <nav className="grid grid-cols-2 gap-2">
             {LINKS.map((link) => (
               <Link
                 key={link.to}
                 to={link.to}
-                className="rounded-[4px] border border-white/[0.07] bg-white/[0.025] px-4 py-3 text-[13px] font-medium text-ink-soft"
+                className="rounded-[4px] border border-line/[0.07] bg-line/[0.025] px-4 py-3 text-[13px] font-medium text-ink-soft"
               >
                 {link.label}
               </Link>

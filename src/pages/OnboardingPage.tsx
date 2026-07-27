@@ -21,7 +21,7 @@ export default function OnboardingPage() {
       <div className="dc-surface dc-facet-border w-full max-w-[440px] rounded-[4px] p-7 text-center shadow-lift sm:p-8">
         {loading || user ? (
           <>
-            <span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-white/[0.12] border-t-atelier" />
+            <span className="mx-auto block h-9 w-9 animate-spin rounded-full border-2 border-line/[0.12] border-t-atelier" />
             <h1 className="mt-5 text-[22px] font-semibold tracking-tight text-ink">
               Finishing sign-in
             </h1>

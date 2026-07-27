@@ -53,6 +53,8 @@ import type {
   ActivityItem,
 } from '../types';
 import { syncProjection, type ProjectionSnapshot } from './projection';
+import { readMetadata, trait } from './metadata';
+import { gatewayUrl, resolveIpfsGateways } from '@/config/ipfs';
 import { runContractTransaction, type Approval } from './transactionPipeline';
 import {
   describePaymentAsset,
@@ -69,18 +71,6 @@ type RegistryGem = readonly [Address, Address, string, Hash, bigint, bigint, Has
   tokenId: bigint;
   redemptionRequestHash: Hash;
   status: number;
-};
-
-type Metadata = {
-  name?: string;
-  type?: string;
-  gemstoneType?: string;
-  carats?: number;
-  caratWeight?: number;
-  displayId?: string;
-  custodian?: { provider?: string; country?: string };
-  custodyProvider?: string;
-  custodyCountry?: string;
 };
 
 const manifest: DeploymentManifest = requireDeploymentManifest();
@@ -163,20 +153,15 @@ function gemIds(): Promise<bigint[]> {
   return gemIdsPromise;
 }
 
-function ipfsUrl(uri: string): string {
-  if (!uri.startsWith('ipfs://')) return uri;
-  return `${env.ipfsGateway.replace(/\/$/, '')}/${uri.slice('ipfs://'.length).replace(/^ipfs\//, '')}`;
-}
+const preferredGateway = resolveIpfsGateways(env.ipfsGateway)[0];
 
-async function metadata(uri: string): Promise<Metadata> {
-  if (!uri) return {};
-  try {
-    const response = await fetch(ipfsUrl(uri), { signal: AbortSignal.timeout(8_000) });
-    if (!response.ok) return {};
-    return (await response.json()) as Metadata;
-  } catch {
-    return {};
-  }
+/**
+ * Images render through the preferred gateway only. Unlike the metadata document
+ * an `<img>` cannot be retried across gateways in-band, so `GemThumb` falls back
+ * to the generated swatch if the fetch fails.
+ */
+function imageUrl(image?: string): string | undefined {
+  return image ? gatewayUrl(preferredGateway, image) : undefined;
 }
 
 async function readRegistryGem(gemId: bigint): Promise<RegistryGem> {
@@ -218,7 +203,7 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
             }) as Promise<boolean>
           ).catch(() => false)
         : Promise.resolve(false),
-      metadata(registryGem.metadataURI),
+      readMetadata(registryGem.metadataURI),
       (secondaryFeePctPromise ??= (
         client.readContract({
           ...contract('Marketplace'),
@@ -227,8 +212,14 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
       ).then((basisPoints) => Number(basisPoints) / 100)),
     ]);
 
-  const gemType = String(details.gemstoneType ?? details.type ?? 'gemstone').toLowerCase();
-  const carats = Number(details.caratWeight ?? details.carats ?? 0);
+  // Standard `attributes` first, then the flat keys used by gems registered before
+  // the standard shape. Their metadata URIs are immutable, so both paths persist.
+  const gemType = String(
+    trait(details, 'Gem Type') ?? details.gemstoneType ?? details.type ?? 'gemstone',
+  ).toLowerCase();
+  const carats = Number(
+    trait(details, 'Carat Weight') ?? details.caratWeight ?? details.carats ?? 0,
+  );
   const reserve =
     requiredReserveUsd === 0n
       ? 100
@@ -237,7 +228,7 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   const gem: Gem = {
     gemId,
     tokenId: registryGem.tokenId > 0n ? registryGem.tokenId : undefined,
-    displayId: details.displayId ?? `DGE-${gemId}`,
+    displayId: trait(details, 'Display ID') ?? details.displayId ?? `DGE-${gemId}`,
     name:
       details.name ?? `${gemType.replace(/^\w/, (character) => character.toUpperCase())} #${gemId}`,
     type: gemType,
@@ -250,10 +241,19 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
     reserveShortfallUsd,
     feeTier: 'Secondary marketplace',
     feePct,
-    custodyProvider: details.custodian?.provider ?? details.custodyProvider ?? 'Verified custodian',
-    custodyCountry: details.custodian?.country ?? details.custodyCountry ?? 'Undisclosed',
+    custodyProvider:
+      trait(details, 'Custodian') ??
+      details.custodian?.provider ??
+      details.custodyProvider ??
+      'Verified custodian',
+    custodyCountry:
+      trait(details, 'Custody Country') ??
+      details.custodian?.country ??
+      details.custodyCountry ??
+      'Undisclosed',
     redeem: canRedeem ? 'Eligible' : 'KYC required',
     metadataUri: registryGem.metadataURI,
+    image: imageUrl(details.image),
   };
   return decorate(gem);
 }

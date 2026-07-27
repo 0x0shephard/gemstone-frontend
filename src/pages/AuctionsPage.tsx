@@ -25,7 +25,7 @@ interface RowProps {
 function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
   const mine = Boolean(address && a.highestBidder?.toLowerCase() === address.toLowerCase());
   return (
-    <tr className="border-b border-white/[0.06] transition-colors last:border-b-0 hover:bg-white/[0.02]">
+    <tr className="border-b border-line/[0.06] transition-colors last:border-b-0 hover:bg-line/[0.02]">
       <td className="px-4 py-3">
         <div className="flex items-center gap-3">
           <GemThumb
@@ -106,14 +106,14 @@ function AuctionTable({
     '',
   ];
   return (
-    <div className="overflow-x-auto rounded-[4px] border border-white/[0.08] bg-card">
+    <div className="overflow-x-auto rounded-[4px] border border-line/[0.08] bg-card">
       <table className="w-full min-w-[720px] border-collapse">
         <thead>
           <tr>
             {headers.map((h, i) => (
               <th
                 key={h + i}
-                className={`whitespace-nowrap border-b border-white/[0.06] px-4 py-2.5 font-mono text-[9.5px] font-normal uppercase tracking-[0.12em] text-ink-dim ${
+                className={`whitespace-nowrap border-b border-line/[0.06] px-4 py-2.5 font-mono text-[9.5px] font-normal uppercase tracking-[0.12em] text-ink-dim ${
                   i === 0 || i === 4 ? 'text-left' : 'text-right'
                 }`}
               >
@@ -149,7 +149,7 @@ export default function AuctionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-5 border-b border-white/[0.06] pb-5">
+      <div className="flex flex-wrap items-end justify-between gap-5 border-b border-line/[0.06] pb-5">
         <div className="max-w-2xl">
           <h2 className="font-display text-[26px] font-medium tracking-[-0.035em] text-ink">
             Auctions
@@ -207,7 +207,7 @@ export default function AuctionsPage() {
           {ended.length > 0 && (
             <section className="space-y-3">
               <h3 className="font-display text-[15px] font-medium text-ink">Ready to settle</h3>
-              <div className="rounded-[4px] border border-white/[0.08] border-l-2 border-l-amber bg-panel px-4 py-3">
+              <div className="rounded-[4px] border border-line/[0.08] border-l-2 border-l-amber bg-panel px-4 py-3">
                 <div className="text-[13px] font-medium text-ink">Settlement is permissionless</div>
                 <p className="mt-1 max-w-[70ch] text-[12px] leading-relaxed text-ink-muted">
                   Anyone can settle an ended auction. The contract re-checks the reserve at the

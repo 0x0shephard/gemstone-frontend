@@ -13,8 +13,13 @@ const GemScene = lazy(() =>
   import('@/components/three/GemScene').then((m) => ({ default: m.GemScene })),
 );
 
-/** Which role enforces each step. Presentation only; the copy itself is shared. */
-const STEP_ACTORS = ['Verifier · Custodian', 'Buyer', 'Primary sale', 'Holder'];
+/** Who acts at each stage of the lifecycle. Presentation only; the copy is shared. */
+const STEP_ACTORS = [
+  'Seller · Gemologist · Custodian',
+  'Primary sale',
+  'Marketplace',
+  'Holder · Custodian',
+];
 
 const REDEMPTION_STEPS: [string, string, boolean?][] = [
   ['Reserve checked', 'The stone must be fully reserved before delivery can open.'],
@@ -41,29 +46,30 @@ export default function LandingPage() {
             <span className="h-1 w-1 rounded-full bg-emerald" />
             {data?.gemsInVault ?? 148} stones under custody
           </div>
-          <h1 className="max-w-[10ch] font-display text-[43px] font-medium leading-[0.98] tracking-[-0.055em] text-ink sm:text-[54px] md:text-[66px]">
-            Own the stone. Trade the claim.
+          <h1 className="max-w-[14ch] font-display text-[43px] font-medium leading-[0.98] tracking-[-0.055em] text-ink sm:text-[54px] md:text-[66px]">
+            Trade gemstones. Secure your claim.
           </h1>
           <p className="mt-6 max-w-xl text-[15px] leading-[1.75] text-ink-muted sm:text-[16px]">
-            One token represents one expert-approved gemstone in professional custody. Inspect its
-            reserve, acquire it on-chain, trade it, or redeem the physical asset.
+            Each Token represent the ownership of a unique gemstone stored in a safe deposit vault
+            at our partner bank in Turkey. This enables you to trade the ownership of your gemstones
+            or redeem it while having a third party securing your physical asset.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link to="/marketplace">
-              <Button size="lg">Enter marketplace</Button>
+              <Button size="lg">Are you an investor? Discover our Marketplace</Button>
             </Link>
             <Link to="/seller">
               <Button variant="ghost" size="lg">
-                Submit a gemstone
+                Are you a gemstone seller? Discover our KYC Protocol
               </Button>
             </Link>
           </div>
 
-          <div className="mt-12 grid grid-cols-2 border-y border-white/[0.075] sm:grid-cols-4">
+          <div className="mt-12 grid grid-cols-2 border-y border-line/[0.075] sm:grid-cols-4">
             {data?.trustSignals.map((t) => (
               <div
                 key={t.title}
-                className="border-white/[0.065] px-0 py-3.5 pr-3 sm:border-r sm:px-3 sm:first:pl-0 sm:last:border-r-0"
+                className="border-line/[0.065] px-0 py-3.5 pr-3 sm:border-r sm:px-3 sm:first:pl-0 sm:last:border-r-0"
               >
                 <span className="mb-2 block h-1 w-5 rounded-full" style={{ background: t.color }} />
                 <div className="text-[11.5px] font-semibold text-ink-soft">{t.title}</div>
@@ -89,7 +95,7 @@ export default function LandingPage() {
           <svg
             aria-hidden
             viewBox="0 0 100 100"
-            className="pointer-events-none absolute inset-0 h-full w-full text-white/[0.07]"
+            className="pointer-events-none absolute inset-0 h-full w-full text-line/[0.07]"
           >
             {[46, 37, 28].map((r) => (
               <circle
@@ -110,24 +116,26 @@ export default function LandingPage() {
       </section>
 
       {/* Gates. Each step is enforced by a different role. */}
-      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+      <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-10">
           <h2 className="max-w-[20ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            From expert review to physical redemption
+            Lifecycle of the NFT
           </h2>
-          <p className="mt-3 max-w-[56ch] text-[14px] leading-relaxed text-ink-muted">
-            Minting is blocked until every gate passes. Each one is a separate role, so no single
-            address can walk a stone from intake to sale on its own.
+          <p className="mt-3 max-w-[72ch] text-[14px] leading-relaxed text-ink-muted">
+            Before becoming an NFT, a gemstone goes through our KYC of sellers and a professional
+            gemological review before being listed for minting. Once minted, part of the minted
+            value is escrowed to be used as monthly vault fees. Once redeemed, the escrowed amount
+            is credited back to the Digital Wallet of the owner.
           </p>
         </div>
         <div
           data-reveal
-          className="grid overflow-hidden rounded-[4px] border border-white/[0.08] sm:grid-cols-2 lg:grid-cols-4"
+          className="grid overflow-hidden rounded-[4px] border border-line/[0.08] sm:grid-cols-2 lg:grid-cols-4"
         >
           {ownershipPathSteps.map((step, i) => (
             <div
               key={step.num}
-              className="flex flex-col gap-2.5 border-b border-r border-white/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
+              className="flex flex-col gap-2.5 border-b border-r border-line/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
             >
               <div className="font-mono text-[10px] tracking-[0.1em] text-ink-dim">{step.num}</div>
               <h3 className="font-display text-[15px] font-medium tracking-[-0.015em] text-ink">
@@ -143,20 +151,19 @@ export default function LandingPage() {
       </section>
 
       {/* Reserve model */}
-      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+      <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-9">
-          <h2 className="max-w-[22ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            Custody costs money, so it is funded up front
+          <h2 className="max-w-[26ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
+            How the escrow at minting works and what it covers
           </h2>
           <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
-            Every stone carries a reserve that pays for vaulting, insurance and the cost of shipping
-            it to you. Whoever buys next covers whatever is missing, in the same transaction, so the
-            protocol never absorbs unpaid custody cost.
+            Every NFT escrows at minting a reserve that covers vault, insurance and logistics fees.
+            This reserve is taken proportionally to the stone Value.
           </p>
         </div>
         <div
           data-reveal
-          className="grid overflow-hidden rounded-[4px] border border-white/[0.08] sm:grid-cols-2 lg:grid-cols-4"
+          className="grid overflow-hidden rounded-[4px] border border-line/[0.08] sm:grid-cols-2 lg:grid-cols-4"
         >
           {[
             ['10%', 'Reserve on stones valued under $1,000'],
@@ -166,7 +173,7 @@ export default function LandingPage() {
           ].map(([value, label]) => (
             <div
               key={label}
-              className="border-b border-r border-white/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
+              className="border-b border-r border-line/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
             >
               <div className="font-mono text-[30px] tracking-[-0.04em] text-ink">{value}</div>
               <div className="mt-2 text-[12.5px] leading-relaxed text-ink-muted">{label}</div>
@@ -176,7 +183,7 @@ export default function LandingPage() {
       </section>
 
       {/* Featured */}
-      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+      <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-8 flex items-end justify-between gap-4">
           <div>
             <h2 className="font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
@@ -196,7 +203,7 @@ export default function LandingPage() {
       </section>
 
       {/* Redemption burns the claim */}
-      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+      <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div className="grid items-center gap-11 lg:grid-cols-2">
           <div data-reveal>
             <h2 className="max-w-[22ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
@@ -213,12 +220,12 @@ export default function LandingPage() {
           </div>
           <div
             data-reveal
-            className="overflow-hidden rounded-[4px] border border-white/[0.08] bg-card"
+            className="overflow-hidden rounded-[4px] border border-line/[0.08] bg-card"
           >
             {REDEMPTION_STEPS.map(([title, body, terminal], i) => (
               <div
                 key={title}
-                className={`flex items-start gap-3.5 border-b border-white/[0.06] px-5 py-4 last:border-b-0 ${
+                className={`flex items-start gap-3.5 border-b border-line/[0.06] px-5 py-4 last:border-b-0 ${
                   terminal ? 'bg-panel' : ''
                 }`}
               >
@@ -241,7 +248,7 @@ export default function LandingPage() {
 
       {/* Live auctions */}
       {data?.auctions && data.auctions.length > 0 && (
-        <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-20 md:px-10">
+        <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
           <div data-reveal className="mb-8 flex items-end justify-between gap-4">
             <h2 className="font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
               Live auctions
@@ -252,12 +259,12 @@ export default function LandingPage() {
           </div>
           <div
             data-reveal
-            className="overflow-hidden rounded-[4px] border border-white/[0.08] bg-card"
+            className="overflow-hidden rounded-[4px] border border-line/[0.08] bg-card"
           >
             {data.auctions.map((a) => (
               <div
                 key={a.gem.gemId.toString()}
-                className="flex items-center gap-3.5 border-b border-white/[0.06] px-5 py-3.5 last:border-b-0"
+                className="flex items-center gap-3.5 border-b border-line/[0.06] px-5 py-3.5 last:border-b-0"
               >
                 <span
                   className="h-10 w-10 shrink-0 rounded-[4px]"
@@ -280,7 +287,7 @@ export default function LandingPage() {
       )}
 
       {/* Closing */}
-      <section className="mx-auto max-w-content border-t border-white/[0.06] px-6 py-24 text-center md:px-10">
+      <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-24 text-center md:px-10">
         <h2 className="mx-auto max-w-[22ch] font-display text-[32px] font-medium tracking-[-0.04em] text-ink md:text-[42px]">
           Start with one stone
         </h2>

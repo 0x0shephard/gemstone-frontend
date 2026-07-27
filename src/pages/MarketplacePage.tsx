@@ -46,7 +46,7 @@ export default function MarketplacePage() {
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-[4px] border border-white/[0.08] bg-gradient-to-br from-card to-inset px-5 py-6 sm:px-7 sm:py-8">
+      <section className="relative overflow-hidden rounded-[4px] border border-line/[0.08] bg-gradient-to-br from-card to-inset px-5 py-6 sm:px-7 sm:py-8">
         <div className="dc-dot-grid pointer-events-none absolute inset-y-0 right-0 w-1/2 opacity-45" />
         <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
           <div>
@@ -54,11 +54,10 @@ export default function MarketplacePage() {
               Vault inventory
             </p>
             <h2 className="mt-2 max-w-xl font-display text-[25px] font-medium leading-tight tracking-[-0.035em] text-ink sm:text-[31px]">
-              Find a physical gemstone you can verify, trade and redeem.
+              Find the gemstones you want to invest into.
             </h2>
             <p className="mt-3 max-w-xl text-[13.5px] leading-relaxed text-ink-muted">
-              Compare expert-approved value, reserve health and public custody details before
-              opening a position.
+              Compare gemstone values with a gemological valuation matrix.
             </p>
           </div>
           <div className="shrink-0 text-left lg:text-right">
@@ -72,7 +71,7 @@ export default function MarketplacePage() {
         </div>
       </section>
 
-      <div className="rounded-[4px] border border-white/[0.07] bg-white/[0.018] p-3">
+      <div className="rounded-[4px] border border-line/[0.07] bg-line/[0.018] p-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
           <label className="relative min-w-0 flex-1">
             <span className="sr-only">Search marketplace</span>
@@ -92,7 +91,7 @@ export default function MarketplacePage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search name, gemstone type, origin or ID"
-              className="h-11 w-full rounded-[4px] border border-white/[0.09] bg-inset pl-10 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-dim focus:border-atelier/45"
+              className="h-11 w-full rounded-[4px] border border-line/[0.09] bg-inset pl-10 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-dim focus:border-atelier/45"
             />
           </label>
           <FilterPills options={filters} value={filter} onChange={setFilter} />
@@ -100,7 +99,7 @@ export default function MarketplacePage() {
             aria-label="Sort marketplace listings"
             value={sort}
             onChange={(e) => setSort(e.target.value as Sort)}
-            className="h-11 rounded-[4px] border border-white/[0.09] bg-inset px-3 text-[12.5px] text-ink-soft outline-none focus:border-atelier/45"
+            className="h-11 rounded-[4px] border border-line/[0.09] bg-inset px-3 text-[12.5px] text-ink-soft outline-none focus:border-atelier/45"
           >
             <option value="value-desc">Value · high to low</option>
             <option value="value-asc">Value · low to high</option>

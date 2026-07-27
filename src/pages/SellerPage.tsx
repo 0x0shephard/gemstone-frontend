@@ -306,7 +306,7 @@ export default function SellerPage() {
                       className={`relative cursor-pointer rounded-[4px] border p-4 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
                         selected
                           ? 'border-atelier/45 bg-atelier/[0.08]'
-                          : 'border-white/[0.09] bg-inset hover:border-white/[0.16]'
+                          : 'border-line/[0.09] bg-inset hover:border-line/[0.16]'
                       }`}
                     >
                       <input
@@ -331,7 +331,7 @@ export default function SellerPage() {
                         className={`absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ${
                           selected
                             ? 'border-atelier bg-atelier text-[var(--dc-button-ink)]'
-                            : 'border-white/[0.14] text-transparent'
+                            : 'border-line/[0.14] text-transparent'
                         }`}
                       >
                         ✓
@@ -398,7 +398,7 @@ export default function SellerPage() {
         )}
 
         {submissions.length > 0 && (
-          <div className="mt-7 border-t border-white/[0.08] pt-5">
+          <div className="mt-7 border-t border-line/[0.08] pt-5">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-[14px] font-semibold text-ink">Activation queue</h3>
@@ -417,7 +417,7 @@ export default function SellerPage() {
                 return (
                   <div
                     key={submission.id}
-                    className="flex flex-wrap items-center gap-3 rounded-[4px] border border-white/[0.08] bg-inset px-3.5 py-3"
+                    className="flex flex-wrap items-center gap-3 rounded-[4px] border border-line/[0.08] bg-inset px-3.5 py-3"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-mono text-[11px] text-ink-soft">
@@ -519,7 +519,7 @@ function StepBadge({
 }) {
   const color = done ? 'var(--dc-emerald)' : pending ? 'var(--dc-amber)' : '#929BA8';
   return (
-    <div className="flex items-center gap-3 rounded-[4px] border border-white/[0.08] bg-panel p-3.5">
+    <div className="flex items-center gap-3 rounded-[4px] border border-line/[0.08] bg-panel p-3.5">
       <span
         className="flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-semibold"
         style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}

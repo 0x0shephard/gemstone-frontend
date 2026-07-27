@@ -9,22 +9,22 @@ function useEnvTexture(): THREE.Texture {
     c.width = 1024;
     c.height = 512;
     const x = c.getContext('2d')!;
-    // Cold near-blacks matching --dc-vault / --dc-card so the stone sits in the
-    // same room as the rest of the interface.
+    // A lit room in brand colours: deep navy overhead falling to ivory, matching
+    // --dc-accent and --dc-vault. The stone needs a bright-to-dark gradient to
+    // strike its facets, which is what carries the sparkle on a light page.
     const g = x.createLinearGradient(0, 0, 0, 512);
-    g.addColorStop(0, '#16191f');
-    g.addColorStop(0.5, '#050609');
-    g.addColorStop(1, '#0b0d10');
+    g.addColorStop(0, '#112240');
+    g.addColorStop(0.52, '#f8f5f0');
+    g.addColorStop(1, '#eae3d7');
     x.fillStyle = g;
     x.fillRect(0, 0, 1024, 512);
 
-    // Reflection bars are platinum and mercury rather than pink and blue: the
-    // surroundings stay achromatic so the stone's own body colour is the only
-    // saturated thing in the frame.
+    // Reflection bars stay ivory and warm gold. Nothing saturated competes with
+    // the stone's own body colour.
     const bars: Array<[number, string, number]> = [
-      [180, '#f4f6f9', 60],
-      [520, '#e8ebf0', 40],
-      [760, '#8891a0', 46],
+      [180, '#ffffff', 60],
+      [520, '#f8f5f0', 40],
+      [760, '#c9a227', 46],
       [900, '#ffffff', 30],
     ];
     bars.forEach(([px, col, w]) => {
@@ -66,9 +66,9 @@ function Gem() {
   const material = useMemo(
     () =>
       new THREE.MeshPhysicalMaterial({
-        // Transmission stays low on purpose: against the near-black ground a
-        // higher value renders the stone effectively invisible.
-        color: 0xd12433,
+        // Burgundy Wine, the brand highlight, rather than a vivid red. Against
+        // the ivory ground the darker body keeps the stone reading as a stone.
+        color: 0x6d213c,
         metalness: 0.45,
         roughness: 0.04,
         clearcoat: 1,
@@ -131,14 +131,14 @@ export function GemScene() {
       }}
     >
       {/*
-       * Neutral studio lighting. Colour comes from the stone, not the lamps, so
-       * the lamps are driven harder than the old tinted rig to keep the ruby
-       * bright without reintroducing a pink or blue cast.
+       * Warm studio lighting for the ivory ground. Colour comes from the stone,
+       * not the lamps: the fill is a warm neutral rather than the cold grey the
+       * dark rig used, so the burgundy body reads warm instead of purple.
        */}
-      <ambientLight color={0x3a4049} intensity={0.95} />
+      <ambientLight color={0x8f8a80} intensity={0.9} />
       <pointLight color={0xffffff} intensity={1.7} distance={30} position={[4, 6, 6]} />
-      <pointLight color={0xe8ebf0} intensity={1.7} distance={30} position={[-5, -2, 3]} />
-      <pointLight color={0xa8b0bc} intensity={1.15} distance={30} position={[2, -4, -4]} />
+      <pointLight color={0xf8f5f0} intensity={1.7} distance={30} position={[-5, -2, 3]} />
+      <pointLight color={0xbdb6aa} intensity={1.15} distance={30} position={[2, -4, -4]} />
       <Suspense fallback={null}>
         <Gem />
       </Suspense>

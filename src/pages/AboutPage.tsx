@@ -48,7 +48,7 @@ export default function AboutPage() {
       {/* Intro */}
       <section
         data-reveal
-        className="dc-facet-border dc-dot-grid overflow-hidden rounded-[4px] border border-white/[0.09] bg-card px-6 py-8 sm:px-9 sm:py-10"
+        className="dc-facet-border dc-dot-grid overflow-hidden rounded-[4px] border border-line/[0.09] bg-card px-6 py-8 sm:px-9 sm:py-10"
       >
         <StatusBadge tone="danger" dot className="mb-5">
           Protocol live · {data?.gemsInVault ?? 148} gemstones in vault
@@ -173,7 +173,7 @@ export default function AboutPage() {
       {/* CTA */}
       <section
         data-reveal
-        className="dc-facet-border flex flex-col items-start justify-between gap-5 overflow-hidden rounded-[4px] border border-white/[0.09] bg-elevated p-8 md:flex-row md:items-center"
+        className="dc-facet-border flex flex-col items-start justify-between gap-5 overflow-hidden rounded-[4px] border border-line/[0.09] bg-elevated p-8 md:flex-row md:items-center"
       >
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-atelier">

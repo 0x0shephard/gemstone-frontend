@@ -116,7 +116,9 @@ export function TxButton({
 function Spinner() {
   return (
     <span
-      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[2px] border-black/25 border-t-black/80"
+      // Drawn in currentColor so it stays legible on every button variant and in
+      // both colour schemes; the transparent head gives the arc its rotation.
+      className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-[2px] border-current border-t-transparent opacity-70"
       aria-hidden
     />
   );

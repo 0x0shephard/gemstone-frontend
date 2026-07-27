@@ -3,7 +3,7 @@ import { BrandMark } from '@/components/ui/BrandMark';
 /** Landing footer with custody / insurance attestations. */
 export function Footer() {
   return (
-    <footer className="border-t border-white/[0.065] bg-sidebar">
+    <footer className="border-t border-line/[0.065] bg-sidebar">
       <div className="mx-auto grid max-w-content gap-8 px-6 py-10 md:grid-cols-[1fr_auto] md:items-end md:px-10">
         <div>
           <BrandMark size={18} />

@@ -11,10 +11,13 @@ test('public marketplace has no critical accessibility violations', async ({ pag
 test('landing page keeps the complete ownership path in chain mode', async ({ page }) => {
   await page.goto('/');
 
-  await expect(
-    page.getByRole('heading', { name: 'From expert review to physical redemption' }),
-  ).toBeVisible();
-  for (const heading of ['Certify & vault', 'Fund reserve', 'Mint & trade', 'Redeem or hold']) {
+  await expect(page.getByRole('heading', { name: 'Lifecycle of the NFT' })).toBeVisible();
+  for (const heading of [
+    'KYC, Gemological Review and Custody',
+    'Minting NFTs',
+    'Trading NFTs',
+    'Redemption Process',
+  ]) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   }
 });
@@ -60,18 +63,16 @@ test('mobile navigation keeps primary destinations and secondary routes reachabl
   expect(results.violations.filter((violation) => violation.impact === 'critical')).toEqual([]);
 });
 
-test('color scheme switch persists the alternate Obsidian palette', async ({ page }) => {
+test('color scheme switch persists the alternate midnight palette', async ({ page }) => {
   await page.goto('/marketplace');
   await expect(page.locator('html')).toHaveAttribute('data-color-scheme', 'atelier');
 
-  await page.getByRole('button', { name: 'Switch to Garnet vault color scheme' }).click();
+  await page.getByRole('button', { name: 'Switch to Midnight navy color scheme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-color-scheme', 'garnet');
 
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-color-scheme', 'garnet');
-  await expect(
-    page.getByRole('button', { name: 'Switch to Atelier blue color scheme' }),
-  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Switch to Ivory color scheme' })).toBeVisible();
 });
 
 test('account pages provide a direct route back to the landing page', async ({ page }) => {

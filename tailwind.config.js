@@ -12,25 +12,34 @@ export default {
         nested: 'color-mix(in srgb, var(--dc-card) 72%, var(--dc-vault))',
         sidebar: 'var(--dc-sidebar)',
         elevated: 'var(--dc-elevated)',
-        track: '#20252D',
+        track: 'var(--dc-track)',
         // text
         ink: {
-          DEFAULT: '#F2F4F7',
-          soft: '#DCE1E8',
-          softer: '#C7CED8',
-          muted: '#929BA8',
-          dim: '#626A76',
-          faint: '#B4BCC7',
+          DEFAULT: 'var(--dc-ink)',
+          soft: 'var(--dc-ink-soft)',
+          softer: 'var(--dc-ink-softer)',
+          muted: 'var(--dc-ink-muted)',
+          dim: 'var(--dc-ink-dim)',
+          faint: 'var(--dc-ink-faint)',
         },
-        // gem accents
+        /*
+         * Hairlines, dividers and inset washes. Written as `border-line/[0.08]`
+         * so the contrast direction flips with the scheme: charcoal-on-ivory in
+         * the light theme, ivory-on-navy in the dark one.
+         */
+        line: 'rgb(var(--dc-line-rgb) / <alpha-value>)',
+        // brand + gem accents
         atelier: 'rgb(var(--dc-accent-rgb) / <alpha-value>)',
         ruby: 'rgb(var(--dc-ruby-rgb) / <alpha-value>)',
         sapphire: 'rgb(var(--dc-sapphire-rgb) / <alpha-value>)',
         emerald: 'rgb(var(--dc-emerald-rgb) / <alpha-value>)',
         amber: 'rgb(var(--dc-amber-rgb) / <alpha-value>)',
       },
+      // Manrope carries both display and body: hierarchy comes from its weight
+      // range (300–800) rather than a second face. Mono stays JetBrains for
+      // addresses, hashes and figures, which need tabular monospace.
       fontFamily: {
-        display: ['Geologica', 'Manrope', 'system-ui', 'sans-serif'],
+        display: ['Manrope', 'system-ui', 'sans-serif'],
         sans: ['Manrope', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
@@ -44,9 +53,9 @@ export default {
       backgroundImage: {
         'btn-primary': 'linear-gradient(180deg,var(--dc-button-top),var(--dc-button-bottom))',
         'btn-primary-tab': 'linear-gradient(180deg,var(--dc-button-top),var(--dc-button-bottom))',
-        'btn-danger': 'linear-gradient(180deg,#D85661,#A93C46)',
-        'bar-funded': 'linear-gradient(90deg,#37A97F,#4CC99A)',
-        'bar-short': 'linear-gradient(90deg,#D69442,#E9AD5B)',
+        'btn-danger': 'linear-gradient(180deg,#8A2B4C,#6D213C)',
+        'bar-funded': 'linear-gradient(90deg,#0B5D4B,#12836A)',
+        'bar-short': 'linear-gradient(90deg,#C9A227,#DDB944)',
       },
       keyframes: {
         dcfade: {
@@ -88,7 +97,7 @@ export default {
         dcdrawer: 'dcdrawer .28s cubic-bezier(.22,.61,.36,1)',
       },
       boxShadow: {
-        lift: '0 18px 40px rgba(0,0,0,.4)',
+        lift: 'var(--dc-lift-shadow)',
       },
     },
   },

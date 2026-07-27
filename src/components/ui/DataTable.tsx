@@ -20,11 +20,11 @@ interface DataTableProps<T> {
 export function DataTable<T>({ columns, rows, rowKey, empty, className }: DataTableProps<T>) {
   return (
     <div
-      className={cn('overflow-x-auto rounded-[4px] border border-white/[0.08] bg-card', className)}
+      className={cn('overflow-x-auto rounded-[4px] border border-line/[0.08] bg-card', className)}
     >
       <table className="w-full min-w-[560px] border-collapse text-left">
         <thead>
-          <tr className="bg-white/[0.025]">
+          <tr className="bg-line/[0.025]">
             {columns.map((c) => (
               <th
                 key={c.key}
@@ -52,7 +52,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty, className }: DataTa
             rows.map((row, i) => (
               <tr
                 key={rowKey(row, i)}
-                className="border-t border-white/[0.055] bg-card transition-colors hover:bg-white/[0.018]"
+                className="border-t border-line/[0.055] bg-card transition-colors hover:bg-line/[0.018]"
               >
                 {columns.map((c) => (
                   <td

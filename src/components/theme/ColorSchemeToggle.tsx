@@ -13,7 +13,7 @@ function applyScheme(scheme: ColorScheme) {
   document.documentElement.dataset.colorScheme = scheme;
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute('content', scheme === 'atelier' ? '#0B0D10' : '#07080B');
+    ?.setAttribute('content', scheme === 'atelier' ? '#F8F5F0' : '#0A1524');
   try {
     localStorage.setItem(STORAGE_KEY, scheme);
   } catch {
@@ -24,13 +24,13 @@ function applyScheme(scheme: ColorScheme) {
 export function ColorSchemeToggle({ className }: { className?: string }) {
   const [scheme, setScheme] = useState<ColorScheme>(currentScheme);
   const next = scheme === 'atelier' ? 'garnet' : 'atelier';
-  const nextLabel = next === 'atelier' ? 'Atelier blue' : 'Garnet vault';
+  const nextLabel = next === 'atelier' ? 'Ivory' : 'Midnight navy';
 
   return (
     <button
       type="button"
       className={cn(
-        'group relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-[4px] border border-white/[0.11] bg-white/[0.035] transition-colors hover:border-white/[0.22] hover:bg-white/[0.06]',
+        'group relative flex h-10 w-10 items-center justify-center overflow-hidden rounded-[4px] border border-line/[0.11] bg-line/[0.035] transition-colors hover:border-line/[0.22] hover:bg-line/[0.06]',
         className,
       )}
       aria-label={`Switch to ${nextLabel} color scheme`}
@@ -41,7 +41,7 @@ export function ColorSchemeToggle({ className }: { className?: string }) {
     >
       <span
         aria-hidden="true"
-        className="h-[17px] w-[17px] rotate-45 rounded-[4px] border border-white/35 bg-atelier shadow-[0_0_14px_rgb(var(--dc-accent-rgb)/.28)] transition-transform duration-300 group-hover:rotate-[135deg]"
+        className="h-[17px] w-[17px] rotate-45 rounded-[4px] border border-line/35 bg-atelier shadow-[0_0_14px_rgb(var(--dc-accent-rgb)/.28)] transition-transform duration-300 group-hover:rotate-[135deg]"
       />
       <span
         aria-hidden="true"

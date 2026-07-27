@@ -27,6 +27,19 @@ export function GemThumb({
       className={cn('relative overflow-hidden', rounded, className)}
       style={{ height, background: gem.thumb }}
     >
+      {gem.image && (
+        <img
+          src={gem.image}
+          alt=""
+          loading="lazy"
+          className="absolute inset-0 h-full w-full object-cover"
+          // The faceted gradient stays underneath, so an unreachable gateway or a
+          // gem with no published image degrades to the generated swatch.
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+          }}
+        />
+      )}
       <div
         aria-hidden
         className="absolute inset-0 opacity-60"

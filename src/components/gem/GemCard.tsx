@@ -47,7 +47,7 @@ export function GemCard({
               {gem.displayId}
             </span>
           </div>
-          <span className="mt-0.5 shrink-0 rounded-full border border-white/[0.08] bg-white/[0.025] px-2 py-1 text-[9.5px] uppercase tracking-[0.08em] text-ink-muted">
+          <span className="mt-0.5 shrink-0 rounded-full border border-line/[0.08] bg-line/[0.025] px-2 py-1 text-[9.5px] uppercase tracking-[0.08em] text-ink-muted">
             {gem.typeLabel}
           </span>
         </div>
@@ -60,7 +60,7 @@ export function GemCard({
           <ProgressBar value={gem.reserve} funded={gem.funded} height={6} />
         </div>
 
-        <div className="flex items-end justify-between border-t border-white/[0.06] pt-3">
+        <div className="flex items-end justify-between border-t border-line/[0.06] pt-3">
           <div>
             <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
               Approved value
