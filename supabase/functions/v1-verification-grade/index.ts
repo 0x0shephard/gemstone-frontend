@@ -19,10 +19,16 @@ import {
  * sees the exact figure that will be committed, derived by the same code path.
  * A separate preview implementation could drift from the committing one.
  *
- * Committing fires the chain work immediately, per the single-approval decision.
+ * Committing fires the chain work immediately, per the single-approval decision:
+ * `registerGem`, `confirmCustody`, `verifyGem` at the graded figure, `listGem`,
+ * and an auction where the seller chose one. None of that has run before this
+ * point, so a rejection leaves nothing on-chain to unwind.
  */
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Statuses a grader may still act on. */
+const GRADABLE_STATUSES = ['awaiting_grading'];
 
 const GRADE_FIELDS = ['variety', 'clarity', 'treatment', 'shape', 'color', 'colorGrade'] as const;
 
@@ -63,7 +69,7 @@ Deno.serve(async (request) => {
       return json({ error: 'Submission ID must be a UUID' }, 400);
     }
     const preview = body.preview === true;
-    const graded = parseGrades(body);
+    const reject = body.action === 'reject';
 
     const { data: submission, error: submissionError } = await admin
       .from('seller_submissions')
@@ -74,6 +80,75 @@ Deno.serve(async (request) => {
     if (!submission) return json({ error: 'Submission not found' }, 404);
     if (!preview && submission.graded_at) {
       return json({ error: 'This submission has already been graded' }, 409);
+    }
+    if (!preview && !GRADABLE_STATUSES.includes(submission.status)) {
+      return json({ error: `A submission at "${submission.status}" cannot be graded` }, 409);
+    }
+
+    /*
+     * Rejection is the counterpart to approval and deliberately writes nothing
+     * on-chain and pins nothing. It is available only because grading now
+     * precedes registration; once a gem exists on-chain there is no undo.
+     */
+    if (reject) {
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+      if (reason.length < 10 || reason.length > 2_000) {
+        return json({ error: 'A rejection reason of 10 to 2000 characters is required' }, 400);
+      }
+      const { data: rejected, error: rejectError } = await admin
+        .from('seller_submissions')
+        .update({
+          status: 'rejected',
+          verification_provider: membership.organizationName,
+          rejection_reason: reason,
+          rejected_by_organization: membership.organizationId,
+          rejected_by_profile: membership.profileId,
+          rejected_at: new Date().toISOString(),
+        })
+        .eq('id', submissionId)
+        .in('status', GRADABLE_STATUSES)
+        .select('id,status')
+        .maybeSingle();
+      if (rejectError) throw rejectError;
+      if (!rejected) return json({ error: 'Submission changed while it was being rejected' }, 409);
+
+      await audit(
+        membership.profileId,
+        'verification.rejected',
+        'seller_submission',
+        submissionId,
+        {
+          organization: membership.organizationName,
+          reason,
+        },
+      );
+      return json({ submissionId, status: 'rejected' });
+    }
+
+    const graded = parseGrades(body);
+
+    /*
+     * The image the grader promoted to the permanent NFT `image`. Validated
+     * against this submission's own gemstone media: an id belonging to another
+     * submission, or a certificate, must not become public.
+     */
+    let primaryImageId: string | undefined;
+    if (body.primaryImageId !== undefined && body.primaryImageId !== null) {
+      primaryImageId = String(body.primaryImageId);
+      if (!uuidPattern.test(primaryImageId)) {
+        return json({ error: 'Primary image ID must be a UUID' }, 400);
+      }
+      const { data: media, error: mediaError } = await admin
+        .from('evidence_files')
+        .select('id')
+        .eq('id', primaryImageId)
+        .eq('submission_id', submissionId)
+        .eq('category', 'gem_media')
+        .maybeSingle();
+      if (mediaError) throw mediaError;
+      if (!media) {
+        return json({ error: 'The selected image is not gemstone media for this submission' }, 400);
+      }
     }
 
     // The snapshot is captured into the commitment, not re-read later: bid counts
@@ -106,13 +181,23 @@ Deno.serve(async (request) => {
 
     await assertWithinDailyLimit(admin, membership);
 
-    const { error: updateError } = await admin
+    /*
+     * `approved` is what `prepareSellerSubmission` requires, and the status guard
+     * makes this the point of no return: a concurrent second grader finds the row
+     * no longer in `awaiting_grading` and is refused rather than writing a second
+     * valuation over the first.
+     */
+    const { data: claimed, error: updateError } = await admin
       .from('seller_submissions')
       .update({
+        status: 'approved',
+        approved_at: new Date().toISOString(),
+        verification_provider: membership.organizationName,
         graded_attributes: graded,
         graded_by_organization: membership.organizationId,
         graded_by_profile: membership.profileId,
         graded_at: new Date().toISOString(),
+        ...(primaryImageId ? { primary_image_evidence_id: primaryImageId } : {}),
         valuation_method: valuation.method,
         approved_valuation_usd: valuation.approvedValuationUsd.toString(),
         valuation_hash: valuation.valuationHash,
@@ -120,8 +205,13 @@ Deno.serve(async (request) => {
         valuation_canonical_payload: valuation.canonicalPayload,
         valuation_nonce: valuation.nonce,
       })
-      .eq('id', submissionId);
+      .eq('id', submissionId)
+      .in('status', GRADABLE_STATUSES)
+      .is('graded_at', null)
+      .select('id')
+      .maybeSingle();
     if (updateError) throw updateError;
+    if (!claimed) return json({ error: 'This submission was graded by someone else' }, 409);
 
     const { data: record, error: recordError } = await admin
       .from('valuations')
@@ -147,13 +237,38 @@ Deno.serve(async (request) => {
       organization: membership.organizationName,
       matrixVersion: valuation.matrixVersion,
       approvedValuationUsd: valuation.approvedValuationUsd.toString(),
+      primaryImageId: primaryImageId ?? null,
       graded,
     });
 
-    // Activation consumes the valuation just written rather than computing its
-    // own, and is resumable, so a partial run can be retried without registering
-    // a second gem.
-    const activation = await activateSellerSubmission(admin, submissionId);
+    /*
+     * Activation consumes the valuation just written rather than computing its
+     * own — `allowAutomaticValuation` stays off so a bug that lost the graded
+     * figure fails here instead of silently committing the test-only $500/ct
+     * fallback to a field with no setter.
+     *
+     * It is resumable, so a chain failure is recoverable: the valuation row is
+     * already durable and a retry picks up from the last completed step rather
+     * than registering a second gem.
+     */
+    let activation;
+    try {
+      activation = await activateSellerSubmission(admin, submissionId, {
+        allowAutomaticValuation: false,
+      });
+    } catch (error) {
+      return json(
+        {
+          submissionId,
+          matrixVersion: valuation.matrixVersion,
+          approvedValuationUsd: valuation.approvedValuationUsd.toString(),
+          breakdown: valuation.breakdown,
+          activationState: 'failed',
+          activationError: safeErrorMessage(error, 'On-chain activation failed'),
+        },
+        202,
+      );
+    }
 
     // The step-level hash rather than activation's latest, so the audit row points
     // at the transaction that actually recorded this valuation.

@@ -8,6 +8,7 @@ import { GemCard } from '@/components/gem/GemCard';
 import { useGems } from '@/hooks/useData';
 import { useAuth } from '@/providers/AuthProvider';
 import { env } from '@/config/env';
+import { fmtUsdBaseUnits } from '@/lib/format';
 import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
 import {
@@ -88,7 +89,7 @@ export default function SellerPage() {
     setSubmitting(true);
     setResult(undefined);
     try {
-      const submissionId = await submitSellerGem({
+      const { submissionId, status } = await submitSellerGem({
         sellerWallet: address,
         attributes,
         saleMode,
@@ -99,7 +100,13 @@ export default function SellerPage() {
       });
       setResult({
         ok: true,
-        message: `Submission ${submissionId} passed MVP auto-verification and entered automatic Sepolia activation.`,
+        // Which path the submission took is the operator's setting, not the
+        // seller's, so the confirmation has to follow the status rather than
+        // assert one of them.
+        message:
+          status === 'awaiting_grading'
+            ? `Submission ${submissionId} is queued for gemological review. A grading lab will price it before it is listed.`
+            : `Submission ${submissionId} passed automatic verification and entered Sepolia activation.`,
       });
       setAttributes(EMPTY_ATTRIBUTES);
       setSaleMode('');
@@ -151,18 +158,18 @@ export default function SellerPage() {
               Bring a gemstone on-chain
             </h2>
             <p className="mt-1 max-w-2xl text-[13px] text-ink-muted">
-              Evidence stays private. During the Sepolia MVP, complete submissions are automatically
-              verified, valued with the test-only flat-carat rule, committed and activated on-chain
-              without publishing certificates or vault references.
+              Evidence stays private. A gemological review sets the valuation, and only then is the
+              stone committed and activated on-chain. Certificates and vault references are never
+              published; one of your photographs becomes the public token image.
             </p>
           </div>
-          <StatusBadge tone="info">MVP auto-verification</StatusBadge>
+          <StatusBadge tone="info">Reviewed before listing</StatusBadge>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
-          <StepBadge n="1" label="MVP auto-verification" done />
+          <StepBadge n="1" label="Evidence submitted" done />
           <StepBadge n="2" label="SIWE wallet verified" done={walletVerified} />
-          <StepBadge n="3" label="Automatic protocol activation" done={onChainApproved} pending />
+          <StepBadge n="3" label="Graded and activated" done={onChainApproved} pending />
         </div>
 
         {!walletVerified && (
@@ -178,8 +185,8 @@ export default function SellerPage() {
           <div>
             <h3 className="text-[16px] font-semibold text-ink">Gemstone evidence package</h3>
             <p className="mt-1 text-[12.5px] text-ink-muted">
-              The Sepolia MVP uses $500 per carat, rounded up and capped at $100–$25,000. It is
-              recorded as mvp-flat-carat-v1 and will be replaced by the custom pricing engine.
+              A grading lab records the authoritative attributes and the valuation engine prices
+              them. Your entries below are treated as claims, not as the basis for the price.
             </p>
           </div>
           {!intakeEnabled && <StatusBadge tone="warning">Sign-in + SIWE required</StatusBadge>}
@@ -381,10 +388,11 @@ export default function SellerPage() {
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={!intakeEnabled || submitting || !saleMode}>
-              {submitting ? 'Verifying & uploading…' : 'Submit and auto-verify'}
+              {submitting ? 'Uploading & submitting…' : 'Submit for verification'}
             </Button>
             <span className="text-[12px] text-ink-dim">
-              Exact files remain in private Supabase Storage with row-level access controls.
+              Exact files remain in private Supabase Storage with row-level access controls. One
+              photograph becomes the token image once a grading lab approves the stone.
             </span>
           </div>
         </form>
@@ -403,7 +411,8 @@ export default function SellerPage() {
               <div>
                 <h3 className="text-[14px] font-semibold text-ink">Activation queue</h3>
                 <p className="mt-0.5 text-[11.5px] text-ink-muted">
-                  Approved evidence is committed, valued and listed automatically on Sepolia.
+                  A grading lab prices the stone, then it is registered, valued and listed on
+                  Sepolia in one step.
                 </p>
               </div>
               <span className="font-mono text-[10.5px] text-ink-dim">
@@ -414,6 +423,14 @@ export default function SellerPage() {
               {submissions.map((submission) => {
                 const approved = submission.status === 'approved';
                 const activated = Boolean(submission.onchainGemId);
+                /*
+                 * A stone that has been approved or graded but has no gem id yet
+                 * is stalled somewhere in activation, and every one of those
+                 * states is resumable. Keying this off `certificateHash` instead
+                 * hid the button exactly when preparation was what failed, since
+                 * the hash is only written once preparation succeeds.
+                 */
+                const resumable = !activated && (approved || submission.status === 'graded');
                 return (
                   <div
                     key={submission.id}
@@ -430,7 +447,7 @@ export default function SellerPage() {
                           ? ' · MVP auto-verified'
                           : ''}
                         {submission.approvedValuationUsd
-                          ? ` · $${Number(BigInt(submission.approvedValuationUsd) / 10n ** 18n).toLocaleString()}`
+                          ? ` · ${fmtUsdBaseUnits(submission.approvedValuationUsd)}`
                           : ''}
                       </p>
                     </div>
@@ -447,33 +464,38 @@ export default function SellerPage() {
                     >
                       {activated
                         ? `Gem #${submission.onchainGemId}`
-                        : submission.status.replace('_', ' ')}
+                        : submission.status === 'awaiting_grading'
+                          ? 'Awaiting lab review'
+                          : submission.status.replaceAll('_', ' ')}
                     </StatusBadge>
-                    {!activated &&
-                      (submission.activationState === 'failed' ||
-                        (approved && submission.certificateHash)) && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          disabled={activationId === submission.id}
-                          onClick={() => void retryActivation(submission.id)}
-                        >
-                          {activationId === submission.id ? 'Activating…' : 'Retry activation'}
-                        </Button>
-                      )}
-                    {submission.certificateHash && !activated && (
+                    {resumable && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        disabled={activationId === submission.id}
+                        onClick={() => void retryActivation(submission.id)}
+                      >
+                        {activationId === submission.id ? 'Activating…' : 'Retry activation'}
+                      </Button>
+                    )}
+                    {resumable && (
                       <StatusBadge
                         tone={submission.activationState === 'failed' ? 'danger' : 'info'}
                       >
                         {submission.activationState === 'failed'
                           ? 'Activation failed'
-                          : submission.activationState?.replace('_', ' ') || 'Activating'}
+                          : submission.activationState?.replaceAll('_', ' ') || 'Activating'}
                       </StatusBadge>
                     )}
                     {submission.activationError && !activated && (
                       <p className="basis-full text-[11px] text-ruby">
                         {submission.activationError}
+                      </p>
+                    )}
+                    {submission.rejectionReason && (
+                      <p className="basis-full text-[11px] text-ruby">
+                        Grading lab: {submission.rejectionReason}
                       </p>
                     )}
                   </div>

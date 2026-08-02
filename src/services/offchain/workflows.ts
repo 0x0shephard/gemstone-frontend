@@ -1,5 +1,5 @@
 import type { Hash } from 'viem';
-import { supabase } from '@/providers/supabase';
+import { invokeEdgeFunction, requireClient } from './invoke';
 
 export type KycStatus = 'not_started' | 'pending' | 'approved' | 'rejected' | 'on_hold';
 
@@ -37,11 +37,6 @@ const limits = {
     mime: new Set(['image/jpeg', 'image/png', 'image/webp']),
   },
 } as const;
-
-function requireClient() {
-  if (!supabase) throw new Error('Supabase is not configured');
-  return supabase;
-}
 
 async function sha256(file: File): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
@@ -111,13 +106,21 @@ export async function getKycStatus(): Promise<KycStatus> {
 }
 
 export async function issueSumsubToken(): Promise<{ token: string; expiresIn: number }> {
-  const { data, error } = await requireClient().functions.invoke('v1-sumsub-token');
-  if (error || !data?.token)
-    throw new Error(error?.message ?? data?.error ?? 'KYC token request failed');
-  return data;
+  return invokeEdgeFunction<{ token: string; expiresIn: number }>('v1-sumsub-token');
 }
 
-export async function submitSellerGem(input: SellerSubmissionInput): Promise<string> {
+export interface SellerSubmissionResult {
+  submissionId: string;
+  /**
+   * `awaiting_grading` under lab verification, `approved`/`registered` under the
+   * automatic path. All three are successes; they differ only in what happens next.
+   */
+  status: string;
+}
+
+export async function submitSellerGem(
+  input: SellerSubmissionInput,
+): Promise<SellerSubmissionResult> {
   if (input.certificates.length === 0) throw new Error('At least one certificate is required');
   if (input.media.length === 0) throw new Error('At least one gemstone image is required');
   if (input.media.length > 10) throw new Error('A maximum of 10 gemstone media files is allowed');
@@ -131,22 +134,16 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
   if (!user) throw new Error('Sign in before submitting a gemstone');
 
   const clientSubmissionId = crypto.randomUUID();
-  const { data: submission, error } = await client.functions.invoke('v1-seller-submit', {
-    body: {
-      action: 'create',
-      clientSubmissionId,
-      sellerWallet: input.sellerWallet,
-      attributes: input.attributes,
-      saleMode: input.saleMode,
-      custodyPreference: input.custodyPreference,
-      notes: input.notes,
-    },
+  const submission = await invokeEdgeFunction<{ submissionId?: string }>('v1-seller-submit', {
+    action: 'create',
+    clientSubmissionId,
+    sellerWallet: input.sellerWallet,
+    attributes: input.attributes,
+    saleMode: input.saleMode,
+    custodyPreference: input.custodyPreference,
+    notes: input.notes,
   });
-  if (error || submission?.error || !submission?.submissionId) {
-    throw new Error(
-      submission?.error ?? error?.message ?? 'The seller submission could not be verified',
-    );
-  }
+  if (!submission?.submissionId) throw new Error('The seller submission was not created');
 
   const submissionId = String(submission.submissionId);
   const uploadedObjects: Array<{ bucket: string; objectPath: string }> = [];
@@ -155,27 +152,21 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
     await uploadEvidence(user.id, submissionId, 'certificate', input.certificates, uploadedObjects);
     await uploadEvidence(user.id, submissionId, 'gem_media', input.media, uploadedObjects);
     verificationStarted = true;
-    const { data: verification, error: verificationError } = await client.functions.invoke(
-      'v1-seller-submit',
-      {
-        body: {
-          action: 'verify',
-          submissionId,
-          sellerWallet: input.sellerWallet,
-        },
-      },
-    );
-    if (
-      verificationError ||
-      verification?.error ||
-      !['approved', 'registered'].includes(String(verification?.status))
-    ) {
-      throw new Error(
-        verification?.error ??
-          verificationError?.message ??
-          'The uploaded evidence could not be auto-verified',
-      );
+    const verification = await invokeEdgeFunction<{ status?: string }>('v1-seller-submit', {
+      action: 'verify',
+      submissionId,
+      sellerWallet: input.sellerWallet,
+    });
+    /*
+     * `awaiting_grading` is the lab path's success state, not a failure. It was
+     * missing here when submissions stopped going straight through, which
+     * reported a correctly queued stone as rejected evidence.
+     */
+    const status = String(verification?.status);
+    if (!['awaiting_grading', 'approved', 'registered'].includes(status)) {
+      throw new Error(`The submission could not be verified (status: ${status})`);
     }
+    return { submissionId, status };
   } catch (uploadError) {
     if (!verificationStarted) {
       await Promise.all(
@@ -187,7 +178,6 @@ export async function submitSellerGem(input: SellerSubmissionInput): Promise<str
     }
     throw uploadError;
   }
-  return submissionId;
 }
 
 export interface SellerSubmissionSummary {
@@ -195,6 +185,9 @@ export interface SellerSubmissionSummary {
   status:
     | 'submitted'
     | 'in_review'
+    /** Queued for a grading lab. Nothing is on-chain and nothing is published. */
+    | 'awaiting_grading'
+    | 'graded'
     | 'expert_review'
     | 'changes_requested'
     | 'approved'
@@ -209,6 +202,8 @@ export interface SellerSubmissionSummary {
   activationError?: string;
   valuationMethod?: string;
   approvedValuationUsd?: string;
+  /** Set by a grading lab when it refuses the stone. Visible to the seller. */
+  rejectionReason?: string;
   createdAt: string;
 }
 
@@ -216,7 +211,15 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
   const { data, error } = await requireClient()
     .from('seller_submissions')
     .select(
-      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id,activation_state,activation_error,valuation_method,approved_valuation_usd,created_at',
+      /*
+       * The two `numeric(78,0)` columns are cast to text at the query.
+       * PostgREST emits numerics unquoted, so supabase-js parses them into JS
+       * numbers: an 18-decimal USD figure of $1,000 or more exceeds 1e21, whose
+       * `toString()` is exponential ("3.672e+21"), which `BigInt()` rejects — and
+       * the value has already lost precision as a double by then. Casting keeps
+       * the exact integer and keeps it parseable.
+       */
+      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id::text,activation_state,activation_error,valuation_method,approved_valuation_usd::text,rejection_reason,created_at',
     )
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -236,29 +239,22 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
       submission.approved_valuation_usd === null
         ? undefined
         : String(submission.approved_valuation_usd),
+    rejectionReason: submission.rejection_reason ?? undefined,
     createdAt: submission.created_at,
   }));
 }
 
 export async function activateSellerGem(submissionId: string): Promise<void> {
-  const { data, error } = await requireClient().functions.invoke('v1-seller-activate', {
-    body: { submissionId },
-  });
-  if (error || data?.error) {
-    throw new Error(data?.error ?? error?.message ?? 'Seller activation failed');
-  }
+  await invokeEdgeFunction('v1-seller-activate', { submissionId });
 }
 
 export async function createSellerCommitment(
   submissionId: string,
 ): Promise<{ certificateHash: Hash; canonicalPayload: string }> {
-  const { data, error } = await requireClient().functions.invoke('v1-seller-commitment', {
-    body: { submissionId },
-  });
-  if (error || !data?.certificateHash) {
-    throw new Error(error?.message ?? data?.error ?? 'Seller commitment failed');
-  }
-  return data;
+  return invokeEdgeFunction<{ certificateHash: Hash; canonicalPayload: string }>(
+    'v1-seller-commitment',
+    { submissionId },
+  );
 }
 
 export interface RedemptionCommitmentInput {
@@ -272,15 +268,9 @@ export interface RedemptionCommitmentInput {
 export async function createRedemptionCommitment(
   input: RedemptionCommitmentInput,
 ): Promise<{ workflowId: string; requestHash: Hash }> {
-  const { data, error } = await requireClient().functions.invoke('v1-redemption-commitment', {
-    body: {
-      ...input,
-      gemId: input.gemId.toString(),
-      tokenId: input.tokenId.toString(),
-    },
+  return invokeEdgeFunction<{ workflowId: string; requestHash: Hash }>('v1-redemption-commitment', {
+    ...input,
+    gemId: input.gemId.toString(),
+    tokenId: input.tokenId.toString(),
   });
-  if (error || !data?.requestHash) {
-    throw new Error(error?.message ?? data?.error ?? 'Redemption commitment failed');
-  }
-  return data;
 }

@@ -14,6 +14,26 @@ export function fmtCarats(n: number): string {
   return n.toFixed(2) + ' ct';
 }
 
+/**
+ * Renders an 18-decimal USD base-unit amount, tolerating exponential input.
+ *
+ * `numeric` columns arrive from PostgREST unquoted, so any that escape a
+ * `::text` cast reach the browser as JS numbers. Above 1e21 their `toString()`
+ * is exponential, and `BigInt()` throws on that — which took down the whole
+ * seller page rather than one table cell. Queries should still cast; this makes
+ * the failure a dash instead of a white screen.
+ */
+export function fmtUsdBaseUnits(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const text = String(value);
+  try {
+    return fmtUsd(Number(BigInt(text) / 10n ** 18n));
+  } catch {
+    const asNumber = Number(text);
+    return Number.isFinite(asNumber) ? fmtUsd(Math.round(asNumber / 1e18)) : '—';
+  }
+}
+
 export function fmtPct(n: number): string {
   return n.toFixed(1) + '%';
 }

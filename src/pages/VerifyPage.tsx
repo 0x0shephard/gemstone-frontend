@@ -9,13 +9,17 @@ import {
   loadQueue,
   loadSubmission,
   previewPrice,
+  rejectSubmission,
+  setVerificationMode,
   submitGrading,
   ppmToNumber,
   usdFromBaseUnits,
   type Breakdown,
   type EvidenceFile,
   type GradeInput,
+  type MatrixOptions,
   type QueueItem,
+  type VerificationMode,
 } from '@/services/offchain/verification';
 
 /**
@@ -24,44 +28,11 @@ import {
  * Not linked from public navigation, and non-members get the same "not found"
  * response the API returns rather than a login prompt — an unauthorised visitor
  * learns nothing about whether the route exists.
+ *
+ * Every dropdown below is populated from the pricing matrix the server serves,
+ * never from a local list. A hardcoded option that the matrix has since dropped
+ * would let a grader assess a whole stone before the engine refused it.
  */
-
-const VARIETIES = ['Emerald', 'Sapphire', 'Ruby', 'Peridot'];
-const CLARITIES = ['Dcl', 'I3', 'I2', 'I1', 'SI2', 'SI1', 'VS', 'VVS'];
-const TREATMENTS = ['Heated', 'Minor heat', 'Unheated', 'Oiled', 'No oil'];
-const SHAPES = [
-  'Cabochon',
-  'Cushion',
-  'Emerald cut',
-  'Marquise',
-  'Oval',
-  'Pear',
-  'Round',
-  'Diamond cut',
-];
-const COLORS_BY_VARIETY: Record<string, string[]> = {
-  Emerald: ['Green'],
-  Sapphire: [
-    'Blue',
-    'Purple',
-    'Gray',
-    'Green',
-    'Brown',
-    'Orange',
-    'Pink',
-    'Violet',
-    'White',
-    'Yellow',
-  ],
-  Ruby: ['Red'],
-  Peridot: ['Green'],
-};
-const GRADES_BY_VARIETY: Record<string, string[]> = {
-  Emerald: ['Bluish green', 'Deep green', 'Light green'],
-  Sapphire: ['Dark', 'Medium', 'Light'],
-  Ruby: ['Dark', 'Medium', 'Light'],
-  Peridot: ['Dark', 'Medium', 'Light'],
-};
 
 const EMPTY: GradeInput = {
   variety: '',
@@ -74,22 +45,37 @@ const EMPTY: GradeInput = {
 };
 
 const money = (value: number) => `$${value.toLocaleString('en-US')}`;
+const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 export default function VerifyPage() {
   const { user, loading: authLoading } = useAuth();
-  const [checking, setChecking] = useState(true);
+  /*
+   * Deliberately distinct from `refreshing`. Only the first load has nothing to
+   * show and may replace the page with a skeleton; a later refetch must leave the
+   * rendered page in place, or every queue update blanks the whole portal.
+   */
+  const [initialising, setInitialising] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [organization, setOrganization] = useState<string>();
+  const [matrix, setMatrix] = useState<MatrixOptions>();
+  const [mode, setMode] = useState<VerificationMode>('lab');
+  const [modePending, setModePending] = useState<VerificationMode>();
+  const [canManage, setCanManage] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [selected, setSelected] = useState<QueueItem>();
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [primaryImageId, setPrimaryImageId] = useState<string>();
   const [grades, setGrades] = useState<GradeInput>(EMPTY);
   const [preview, setPreview] = useState<{ usd: number; breakdown: Breakdown; version: string }>();
   const [priceError, setPriceError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; message: string }>();
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [result, setResult] = useState<{ tone: 'ok' | 'warn' | 'error'; message: string }>();
 
   const refresh = useCallback(async () => {
-    setChecking(true);
+    setRefreshing(true);
     try {
       const data = await loadQueue();
       if (!data) {
@@ -97,19 +83,23 @@ export default function VerifyPage() {
         return;
       }
       setOrganization(data.organization);
+      setMatrix(data.matrix);
+      setMode(data.verificationMode);
+      setCanManage(data.canManageSettings);
       setQueue(data.queue);
     } finally {
-      setChecking(false);
+      setRefreshing(false);
+      setInitialising(false);
     }
   }, []);
 
   useEffect(() => {
     if (!authLoading && user) void refresh();
-    else if (!authLoading) setChecking(false);
+    else if (!authLoading) setInitialising(false);
   }, [authLoading, user, refresh]);
 
-  const colors = COLORS_BY_VARIETY[grades.variety] ?? [];
-  const colorGrades = GRADES_BY_VARIETY[grades.variety] ?? [];
+  const variety = matrix?.varieties.find((entry) => entry.name === grades.variety);
+  const images = useMemo(() => evidence.filter((file) => file.eligibleAsPrimaryImage), [evidence]);
 
   const complete = useMemo(
     () =>
@@ -136,13 +126,13 @@ export default function VerifyPage() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const result = await previewPrice(selected.id, grades);
+        const priced = await previewPrice(selected.id, grades);
         if (cancelled) return;
         setPriceError(undefined);
         setPreview({
-          usd: usdFromBaseUnits(result.approvedValuationUsd),
-          breakdown: result.breakdown,
-          version: result.matrixVersion,
+          usd: usdFromBaseUnits(priced.approvedValuationUsd),
+          breakdown: priced.breakdown,
+          version: priced.matrixVersion,
         });
       } catch (error) {
         if (cancelled) return;
@@ -162,8 +152,31 @@ export default function VerifyPage() {
     setPreview(undefined);
     setResult(undefined);
     setEvidence([]);
-    const detail = await loadSubmission(item.id);
-    setEvidence(detail.evidence);
+    setPrimaryImageId(undefined);
+    setRejectReason('');
+    // Without this the empty-evidence branch renders while the fetch is in
+    // flight, telling the grader the stone has no photograph and will be
+    // registered without one — alarming, and untrue.
+    setEvidenceLoading(true);
+    try {
+      const detail = await loadSubmission(item.id);
+      setEvidence(detail.evidence);
+      // Default to the seller's first photograph; the grader can promote another.
+      setPrimaryImageId(detail.evidence.find((file) => file.eligibleAsPrimaryImage)?.id);
+    } catch (error) {
+      setResult({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Evidence could not be loaded',
+      });
+    } finally {
+      setEvidenceLoading(false);
+    }
+  }
+
+  function close() {
+    setSelected(undefined);
+    setEvidence([]);
+    setPrimaryImageId(undefined);
   }
 
   async function commit(event: FormEvent) {
@@ -172,18 +185,28 @@ export default function VerifyPage() {
     setSubmitting(true);
     setResult(undefined);
     try {
-      const response = await submitGrading(selected.id, grades);
-      setResult({
-        ok: true,
-        message: `Recorded at ${money(usdFromBaseUnits(response.approvedValuationUsd))}. Gem ${
-          response.activation?.onchainGemId ?? 'pending'
-        }.`,
-      });
-      setSelected(undefined);
+      const response = await submitGrading(selected.id, grades, primaryImageId);
+      const usd = money(usdFromBaseUnits(response.approvedValuationUsd));
+      if (response.activationState === 'failed') {
+        // The valuation is durable and activation is resumable, so this is a
+        // retry prompt rather than a lost grading.
+        setResult({
+          tone: 'warn',
+          message: `Valuation recorded at ${usd}, but the on-chain activation did not complete: ${
+            response.activationError ?? 'unknown error'
+          }. An operator can resume it; the grading is saved and will not be redone.`,
+        });
+      } else {
+        setResult({
+          tone: 'ok',
+          message: `Recorded at ${usd}. Gem ${response.activation?.onchainGemId ?? 'pending'}.`,
+        });
+      }
+      close();
       await refresh();
     } catch (error) {
       setResult({
-        ok: false,
+        tone: 'error',
         message: error instanceof Error ? error.message : 'Grading failed',
       });
     } finally {
@@ -191,7 +214,48 @@ export default function VerifyPage() {
     }
   }
 
-  if (authLoading || checking) {
+  async function refuse() {
+    if (!selected) return;
+    setRejecting(true);
+    setResult(undefined);
+    try {
+      await rejectSubmission(selected.id, rejectReason.trim());
+      setResult({ tone: 'ok', message: 'Submission rejected. Nothing was written on-chain.' });
+      close();
+      await refresh();
+    } catch (error) {
+      setResult({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Rejection failed',
+      });
+    } finally {
+      setRejecting(false);
+    }
+  }
+
+  /*
+   * One round trip, not two. The mode governs how *future* submissions are
+   * routed, so nothing already in the queue changes and the reload that used to
+   * follow was pure latency — and it blanked the page while it ran.
+   */
+  async function changeMode(next: VerificationMode) {
+    if (next === mode || modePending) return;
+    setResult(undefined);
+    setModePending(next);
+    try {
+      const { verificationMode } = await setVerificationMode(next);
+      setMode(verificationMode);
+    } catch (error) {
+      setResult({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Could not change verification mode',
+      });
+    } finally {
+      setModePending(undefined);
+    }
+  }
+
+  if (authLoading || initialising) {
     return (
       <div className="mx-auto w-full max-w-content p-8">
         <Skeleton className="h-64" />
@@ -201,7 +265,7 @@ export default function VerifyPage() {
 
   // Same response an unauthorised caller gets from the API: the route does not
   // advertise its own existence.
-  if (!user || !organization) {
+  if (!user || !organization || !matrix) {
     return (
       <div className="mx-auto w-full max-w-content px-6 py-24 text-center">
         <h1 className="font-display text-[28px] font-medium text-ink">Page not found</h1>
@@ -227,17 +291,28 @@ export default function VerifyPage() {
           </p>
         </div>
         <StatusBadge tone="neutral" dot>
-          {queue.length} awaiting review
+          {refreshing ? 'Refreshing…' : `${queue.length} awaiting review`}
         </StatusBadge>
       </header>
+
+      {canManage && <ModeControl mode={mode} pending={modePending} onChange={changeMode} />}
+
+      {mode === 'auto' && (
+        <p className="rounded-[4px] border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[13px] text-amber">
+          Automatic verification is active. New submissions are priced by the test-only
+          $500-per-carat rule and listed without reaching this queue.
+        </p>
+      )}
 
       {result && (
         <div
           role="status"
           className={`rounded-[4px] border px-4 py-3 text-[13px] ${
-            result.ok
+            result.tone === 'ok'
               ? 'border-emerald/25 bg-emerald/[0.06] text-emerald'
-              : 'border-ruby/25 bg-ruby/[0.06] text-ruby'
+              : result.tone === 'warn'
+                ? 'border-amber/25 bg-amber/[0.06] text-amber'
+                : 'border-ruby/25 bg-ruby/[0.06] text-ruby'
           }`}
         >
           {result.message}
@@ -298,33 +373,47 @@ export default function VerifyPage() {
                   ))}
               </dl>
 
+              <ImageSelector
+                images={images}
+                loading={evidenceLoading}
+                selectedId={primaryImageId}
+                onSelect={setPrimaryImageId}
+              />
+
               <div>
-                <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Evidence</h3>
-                {evidence.length === 0 ? (
+                <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Certificates</h3>
+                {evidenceLoading ? (
                   <p className="text-[12.5px] text-ink-muted">Loading evidence…</p>
+                ) : evidence.length === 0 ? (
+                  <p className="text-[12.5px] text-ink-muted">No evidence files on record.</p>
                 ) : (
                   <ul className="space-y-1.5">
-                    {evidence.map((file) => (
-                      <li key={file.id} className="flex items-center justify-between gap-3">
-                        <span className="font-mono text-[11.5px] text-ink-muted">
-                          {file.category} · {file.sha256.slice(0, 12)}…
-                        </span>
-                        {file.url ? (
-                          <a
-                            href={file.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[12px] font-medium text-atelier"
-                          >
-                            Open ↗
-                          </a>
-                        ) : (
-                          <span className="text-[12px] text-ink-dim">Unavailable</span>
-                        )}
-                      </li>
-                    ))}
+                    {evidence
+                      .filter((file) => !file.eligibleAsPrimaryImage)
+                      .map((file) => (
+                        <li key={file.id} className="flex items-center justify-between gap-3">
+                          <span className="font-mono text-[11.5px] text-ink-muted">
+                            {file.category} · {file.sha256.slice(0, 12)}…
+                          </span>
+                          {file.url ? (
+                            <a
+                              href={file.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[12px] font-medium text-atelier"
+                            >
+                              Open ↗
+                            </a>
+                          ) : (
+                            <span className="text-[12px] text-ink-dim">Unavailable</span>
+                          )}
+                        </li>
+                      ))}
                   </ul>
                 )}
+                <p className="mt-2 text-[11px] text-ink-dim">
+                  Certificates stay private and are never published to IPFS.
+                </p>
               </div>
             </Card>
 
@@ -346,17 +435,22 @@ export default function VerifyPage() {
                       }
                     >
                       <option value="">Select…</option>
-                      {VARIETIES.map((value) => (
-                        <option key={value}>{value}</option>
+                      {matrix.varieties.map((entry) => (
+                        <option key={entry.name} value={entry.name}>
+                          {titleCase(entry.name)}
+                        </option>
                       ))}
                     </select>
                   </Labeled>
-                  <Labeled label="Carat weight" hint="Priced from 0.5 to 5.0 ct">
+                  <Labeled
+                    label="Carat weight"
+                    hint={`Priced from ${matrix.caratRange.min} to ${matrix.caratRange.max} ct`}
+                  >
                     <input
                       type="number"
                       step="0.01"
-                      min="0.5"
-                      max="5"
+                      min={matrix.caratRange.min}
+                      max={matrix.caratRange.max}
                       className={inputClass}
                       value={grades.caratWeight || ''}
                       onChange={(event) =>
@@ -364,68 +458,38 @@ export default function VerifyPage() {
                       }
                     />
                   </Labeled>
-                  <Labeled label="Clarity">
-                    <select
-                      className={inputClass}
-                      value={grades.clarity}
-                      onChange={(event) => setGrades({ ...grades, clarity: event.target.value })}
-                    >
-                      <option value="">Select…</option>
-                      {CLARITIES.map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </Labeled>
-                  <Labeled label="Treatment">
-                    <select
-                      className={inputClass}
-                      value={grades.treatment}
-                      onChange={(event) => setGrades({ ...grades, treatment: event.target.value })}
-                    >
-                      <option value="">Select…</option>
-                      {TREATMENTS.map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </Labeled>
-                  <Labeled label="Shape">
-                    <select
-                      className={inputClass}
-                      value={grades.shape}
-                      onChange={(event) => setGrades({ ...grades, shape: event.target.value })}
-                    >
-                      <option value="">Select…</option>
-                      {SHAPES.map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </Labeled>
-                  <Labeled label="Colour">
-                    <select
-                      className={inputClass}
-                      value={grades.color}
-                      disabled={!grades.variety}
-                      onChange={(event) => setGrades({ ...grades, color: event.target.value })}
-                    >
-                      <option value="">Select…</option>
-                      {colors.map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </Labeled>
-                  <Labeled label="Colour grade">
-                    <select
-                      className={inputClass}
-                      value={grades.colorGrade}
-                      disabled={!grades.variety}
-                      onChange={(event) => setGrades({ ...grades, colorGrade: event.target.value })}
-                    >
-                      <option value="">Select…</option>
-                      {colorGrades.map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </Labeled>
+                  <Choice
+                    label="Clarity"
+                    options={matrix.clarities}
+                    value={grades.clarity}
+                    onChange={(clarity) => setGrades({ ...grades, clarity })}
+                  />
+                  <Choice
+                    label="Treatment"
+                    options={matrix.treatments}
+                    value={grades.treatment}
+                    onChange={(treatment) => setGrades({ ...grades, treatment })}
+                  />
+                  <Choice
+                    label="Shape"
+                    options={matrix.shapes}
+                    value={grades.shape}
+                    onChange={(shape) => setGrades({ ...grades, shape })}
+                  />
+                  <Choice
+                    label="Colour"
+                    options={variety?.colors ?? []}
+                    value={grades.color}
+                    disabled={!variety}
+                    onChange={(color) => setGrades({ ...grades, color })}
+                  />
+                  <Choice
+                    label="Colour grade"
+                    options={variety?.colorGrades ?? []}
+                    value={grades.colorGrade}
+                    disabled={!variety}
+                    onChange={(colorGrade) => setGrades({ ...grades, colorGrade })}
+                  />
                 </div>
 
                 {priceError && (
@@ -445,16 +509,39 @@ export default function VerifyPage() {
                   />
                 )}
 
-                <div className="flex items-center gap-3 border-t border-line/[0.08] pt-4">
+                <div className="flex flex-wrap items-center gap-3 border-t border-line/[0.08] pt-4">
                   <Button type="submit" disabled={!complete || !preview || submitting}>
                     {submitting ? 'Recording…' : 'Approve and record on-chain'}
                   </Button>
                   <p className="text-[11.5px] text-ink-dim">
-                    This writes a permanent valuation and cannot be undone.
+                    This registers the gem, writes a permanent valuation, and cannot be undone.
                   </p>
                 </div>
               </Card>
             </form>
+
+            <Card className="space-y-3 p-5">
+              <h3 className="text-[13px] font-semibold text-ink">Reject</h3>
+              <p className="text-[12.5px] text-ink-muted">
+                Refuses the stone. Nothing is registered on-chain and no image is published, so a
+                rejected submission leaves no permanent trace.
+              </p>
+              <Labeled label="Reason" hint="Shared with the seller. At least 10 characters.">
+                <textarea
+                  className={`${inputClass} min-h-[80px]`}
+                  value={rejectReason}
+                  onChange={(event) => setRejectReason(event.target.value)}
+                />
+              </Labeled>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={rejectReason.trim().length < 10 || rejecting}
+                onClick={() => void refuse()}
+              >
+                {rejecting ? 'Rejecting…' : 'Reject submission'}
+              </Button>
+            </Card>
           </div>
         ) : (
           <Card className="flex items-center justify-center p-12">
@@ -463,6 +550,173 @@ export default function VerifyPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/** Matrix-backed dropdown. Options are lowercase keys; labels are presentational. */
+function Choice({
+  label,
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Labeled label={label}>
+      <select
+        className={inputClass}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option value="">Select…</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {titleCase(option)}
+          </option>
+        ))}
+      </select>
+    </Labeled>
+  );
+}
+
+/**
+ * Promotes one seller photograph to the public NFT image.
+ *
+ * The choice is permanent: the image is pinned to IPFS, its CID sealed into the
+ * metadata document, and that document's URI written by `registerGem` to a field
+ * with no setter. Reviewing the photograph here is the only opportunity to
+ * reject a bad one.
+ */
+function ImageSelector({
+  images,
+  loading,
+  selectedId,
+  onSelect,
+}: {
+  images: EvidenceFile[];
+  loading: boolean;
+  selectedId?: string;
+  onSelect: (id: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div>
+        <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Public image</h3>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[0, 1, 2, 3].map((slot) => (
+            <Skeleton key={slot} className="h-28" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (images.length === 0) {
+    return (
+      <div>
+        <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Public image</h3>
+        <p className="text-[12.5px] text-ink-muted">
+          No gemstone media on this submission. The gem will be registered without a public image,
+          and that cannot be added later.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <fieldset>
+      <legend className="mb-2 text-[12px] font-semibold text-ink-soft">
+        Public image · permanent
+      </legend>
+      <p className="mb-2.5 text-[11.5px] text-ink-dim">
+        The selected photograph is published to IPFS and written into the token metadata. It cannot
+        be changed after approval.
+      </p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {images.map((file) => {
+          const active = file.id === selectedId;
+          return (
+            <label
+              key={file.id}
+              className={`relative block cursor-pointer overflow-hidden rounded-[4px] border transition-colors ${
+                active ? 'border-atelier' : 'border-line/[0.1] hover:border-line/25'
+              }`}
+            >
+              <input
+                type="radio"
+                name="primary-image"
+                className="sr-only"
+                checked={active}
+                onChange={() => onSelect(file.id)}
+              />
+              {file.url ? (
+                <img
+                  src={file.url}
+                  alt={`Gemstone media ${file.sha256.slice(0, 8)}`}
+                  className="h-28 w-full object-cover"
+                />
+              ) : (
+                <span className="flex h-28 items-center justify-center text-[11px] text-ink-dim">
+                  Unavailable
+                </span>
+              )}
+              {active && (
+                <span className="absolute left-1.5 top-1.5 rounded-[3px] bg-atelier px-1.5 py-0.5 text-[10px] font-semibold text-black">
+                  Primary
+                </span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+/** Protocol-wide switch, visible only to an admin organisation's owner. */
+function ModeControl({
+  mode,
+  pending,
+  onChange,
+}: {
+  mode: VerificationMode;
+  pending?: VerificationMode;
+  onChange: (mode: VerificationMode) => void | Promise<void>;
+}) {
+  return (
+    <Card className="flex flex-wrap items-center justify-between gap-4 p-4">
+      <div>
+        <h2 className="text-[13px] font-semibold text-ink">Verification mode</h2>
+        <p className="mt-1 max-w-prose text-[12.5px] text-ink-muted">
+          {mode === 'lab'
+            ? 'New submissions wait here for a graded valuation. Nothing reaches the chain until a lab approves.'
+            : 'New submissions bypass this queue and are priced by the test-only $500-per-carat rule.'}
+        </p>
+      </div>
+      <div className="flex gap-2">
+        {(['lab', 'auto'] as const).map((option) => (
+          <Button
+            key={option}
+            type="button"
+            variant={mode === option ? 'primary' : 'ghost'}
+            // Both disable while a switch is in flight: the setting is global, and
+            // a second click mid-request would race the first.
+            disabled={Boolean(pending)}
+            aria-pressed={mode === option}
+            onClick={() => void onChange(option)}
+          >
+            {pending === option ? 'Switching…' : option === 'lab' ? 'Lab review' : 'Automatic'}
+          </Button>
+        ))}
+      </div>
+    </Card>
   );
 }
 

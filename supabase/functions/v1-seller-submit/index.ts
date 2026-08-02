@@ -4,6 +4,7 @@ import { activateSellerSubmission } from '../_shared/sellerAutomation.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { canonicalDocument } from '../_shared/ipfs.ts';
 import { dataUri } from '../_shared/metadataDocument.ts';
+import { verificationMode } from '../_shared/settings.ts';
 
 const walletPattern = /^0x[0-9a-f]{40}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -70,8 +71,9 @@ function parseAttributes(value: unknown): SellerAttributes {
  * which it can still change. Publishing here would be premature: a submission
  * may never be approved, and a rejected one should leave nothing pinned.
  *
- * No `image` yet — seller media lands in private Supabase buckets and there is
- * no public media pipeline to reference.
+ * No `image` here either: seller media is private until a grader promotes one
+ * photograph, which happens at approval. The republished document carries the
+ * resulting `ipfs://` image CID.
  *
  * Never add seller identity, vault location, or appraisal notes here; the
  * shared builder rejects them.
@@ -93,6 +95,36 @@ function responseFor(submission: {
     verificationProvider: submission.verification_provider,
   };
 }
+
+/**
+ * Evidence a submission needs before it is worth anyone's time.
+ *
+ * Identical in both modes: a grader cannot assess a stone with no photograph any
+ * more than the automated path can commit one.
+ */
+async function assertEvidenceComplete(
+  admin: ReturnType<typeof adminClient>,
+  submissionId: string,
+  ownerId: string,
+): Promise<{ certificateCount: number; mediaCount: number }> {
+  const { data: files, error } = await admin
+    .from('evidence_files')
+    .select('category')
+    .eq('submission_id', submissionId)
+    .eq('owner_id', ownerId);
+  if (error) throw error;
+  const certificateCount = (files ?? []).filter((file) => file.category === 'certificate').length;
+  const mediaCount = (files ?? []).filter((file) => file.category === 'gem_media').length;
+  if (certificateCount < 1 || mediaCount < 1) {
+    throw new EvidenceError('At least one certificate and one gemstone image are required');
+  }
+  if (mediaCount > 10) {
+    throw new EvidenceError('A maximum of 10 gemstone media files is allowed');
+  }
+  return { certificateCount, mediaCount };
+}
+
+class EvidenceError extends Error {}
 
 async function requireLinkedWallet(
   admin: ReturnType<typeof adminClient>,
@@ -151,9 +183,18 @@ Deno.serve(async (request) => {
       if (submission.seller_wallet !== sellerWallet) {
         return json({ error: 'Submission wallet mismatch' }, 403);
       }
+      const mode = await verificationMode(admin);
+
+      // A retry of an already-approved submission resumes activation regardless of
+      // mode: the valuation is whatever was recorded then, and the automatic
+      // fallback stays available only to the path that chose it.
       if (submission.status === 'approved' || submission.status === 'registered') {
         try {
-          return json(await activateSellerSubmission(admin, submissionId));
+          return json(
+            await activateSellerSubmission(admin, submissionId, {
+              allowAutomaticValuation: mode === 'auto',
+            }),
+          );
         } catch (error) {
           return json(
             {
@@ -165,25 +206,52 @@ Deno.serve(async (request) => {
           );
         }
       }
+
+      // Already queued. Re-submitting must not fabricate a second queue entry, and
+      // a seller cannot promote their own stone past a lab.
+      if (submission.status === 'awaiting_grading') {
+        return json({ ...responseFor(submission), verificationMode: mode });
+      }
       if (submission.status !== 'submitted') {
-        return json({ error: 'Submission cannot be auto-verified in its current state' }, 409);
+        return json({ error: 'Submission cannot be verified in its current state' }, 409);
       }
 
-      const { data: files, error: filesError } = await admin
-        .from('evidence_files')
-        .select('category')
-        .eq('submission_id', submissionId)
-        .eq('owner_id', user.id);
-      if (filesError) throw filesError;
-      const certificateCount = (files ?? []).filter(
-        (file) => file.category === 'certificate',
-      ).length;
-      const mediaCount = (files ?? []).filter((file) => file.category === 'gem_media').length;
-      if (certificateCount < 1 || mediaCount < 1) {
-        return json({ error: 'At least one certificate and one gemstone image are required' }, 409);
+      let evidenceCounts: { certificateCount: number; mediaCount: number };
+      try {
+        evidenceCounts = await assertEvidenceComplete(admin, submissionId, user.id);
+      } catch (error) {
+        if (error instanceof EvidenceError) return json({ error: error.message }, 409);
+        throw error;
       }
-      if (mediaCount > 10) {
-        return json({ error: 'A maximum of 10 gemstone media files is allowed' }, 409);
+
+      /*
+       * Lab mode stops here. Nothing is written on-chain and nothing is pinned:
+       * the grader chooses the primary image, that CID lives inside the metadata
+       * document, and `registerGem` fixes the document's URI permanently. A stone
+       * that is never approved therefore leaves no public trace and costs no gas.
+       */
+      if (mode === 'lab') {
+        const { data: queued, error: queueError } = await admin
+          .from('seller_submissions')
+          .update({
+            status: 'awaiting_grading',
+            verification_provider: 'lab-pending',
+          })
+          .eq('id', submissionId)
+          .eq('seller_id', user.id)
+          .eq('status', 'submitted')
+          .select('id,status,metadata_uri,verification_provider')
+          .maybeSingle();
+        if (queueError) throw queueError;
+        if (!queued) {
+          return json({ error: 'Submission changed while it was being queued' }, 409);
+        }
+        await audit(user.id, 'seller.submission_queued', 'seller_submission', queued.id, {
+          ...evidenceCounts,
+          saleMode: submission.sale_mode,
+          custodyPreference: submission.custody_preference,
+        });
+        return json({ ...responseFor(queued), verificationMode: mode });
       }
 
       const { data: approved, error: approvalError } = await admin
@@ -204,13 +272,16 @@ Deno.serve(async (request) => {
       }
       await audit(user.id, 'seller.submission_auto_approved', 'seller_submission', approved.id, {
         verificationProvider: 'mvp-auto',
-        certificateCount,
-        mediaCount,
+        ...evidenceCounts,
         saleMode: submission.sale_mode,
         custodyPreference: submission.custody_preference,
       });
       try {
-        return json(await activateSellerSubmission(admin, approved.id));
+        return json(
+          await activateSellerSubmission(admin, approved.id, {
+            allowAutomaticValuation: true,
+          }),
+        );
       } catch (error) {
         return json(
           {
@@ -268,7 +339,9 @@ Deno.serve(async (request) => {
         custody_preference: body.custodyPreference,
         notes,
         status: 'submitted',
-        verification_provider: 'mvp-auto-pending',
+        // Neutral until the verify step resolves the mode. The submission does not
+        // know yet whether a lab or the automated rule will price it.
+        verification_provider: 'pending',
         metadata_uri: publicMetadata(attributes),
       })
       .select('id,status,metadata_uri,verification_provider')

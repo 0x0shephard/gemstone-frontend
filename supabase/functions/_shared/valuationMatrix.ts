@@ -166,3 +166,40 @@ export const VALUATION_MATRIX: ValuationMatrix = {
   totalClampPpm: { min: 700_000n, max: 1_500_000n },
   priceClampUsd: { min: 100n, max: 250_000n },
 };
+
+export interface MatrixOptions {
+  version: string;
+  varieties: Array<{ name: string; colors: string[]; colorGrades: string[] }>;
+  clarities: string[];
+  treatments: string[];
+  shapes: string[];
+  caratRange: { min: number; max: number };
+}
+
+/**
+ * The choices a grading form may offer, derived from the matrix rather than
+ * restated.
+ *
+ * A hardcoded dropdown drifts silently: the grader picks a value the engine has
+ * no price for and the refusal arrives after they have already assessed the
+ * stone. Serving the options from the same document that prices them makes an
+ * unpriceable selection unreachable.
+ */
+export function matrixOptions(matrix: ValuationMatrix = VALUATION_MATRIX): MatrixOptions {
+  const anchors = matrix.caratAnchors;
+  return {
+    version: matrix.version,
+    varieties: Object.entries(matrix.varieties).map(([name, spec]) => ({
+      name,
+      colors: [...spec.colors],
+      colorGrades: [...spec.colorGrades],
+    })),
+    clarities: Object.keys(matrix.clarityPpm),
+    treatments: Object.keys(matrix.treatmentPpm),
+    shapes: [...matrix.shapes],
+    caratRange: {
+      min: Number(anchors[0].microCarats) / 1_000_000,
+      max: Number(anchors[anchors.length - 1].microCarats) / 1_000_000,
+    },
+  };
+}

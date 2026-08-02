@@ -3,8 +3,14 @@ import {
   assertNoPrivateFields,
   buildPublicMetadata,
   isValidCid,
+  verifyPublishedBytes,
   verifyPublishedDocument,
 } from './metadataDocument.ts';
+
+const encoder = new TextEncoder();
+
+/** Retries are real in production; tests must not spend 12s proving it. */
+const NO_WAIT = { sleep: async () => {} };
 
 const attributes = {
   name: 'Ruby Horizon',
@@ -29,7 +35,30 @@ function gatewayServing(bodyByGateway: Record<string, string | number>) {
     if (typeof body === 'number') {
       return { ok: false, status: body, statusText: 'Error' } as Response;
     }
-    return { ok: true, status: 200, statusText: 'OK', text: async () => body } as Response;
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      arrayBuffer: async () => encoder.encode(body).buffer,
+    } as Response;
+  }) as unknown as typeof fetch;
+}
+
+/** Serves raw bytes, for the image path where there is no text form. */
+function gatewayServingBytes(bodyByGateway: Record<string, Uint8Array | number>) {
+  return vi.fn(async (url: string | URL) => {
+    const href = String(url);
+    const gateway = Object.keys(bodyByGateway).find((key) => href.startsWith(key));
+    const body = gateway ? bodyByGateway[gateway] : 404;
+    if (typeof body === 'number') {
+      return { ok: false, status: body, statusText: 'Error' } as Response;
+    }
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      arrayBuffer: async () => body.buffer,
+    } as Response;
   }) as unknown as typeof fetch;
 }
 
@@ -90,6 +119,7 @@ describe('published document verification', () => {
         'https://a.example': document,
         'https://b.example': document,
       }),
+      NO_WAIT,
     );
     expect(result.confirmedBy).toEqual(['https://a.example', 'https://b.example']);
   });
@@ -100,7 +130,7 @@ describe('published document verification', () => {
       'https://b.example': document,
       'https://c.example': document,
     });
-    await verifyPublishedDocument(CID, document, gateways, fetchImpl);
+    await verifyPublishedDocument(CID, document, gateways, fetchImpl, NO_WAIT);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -111,6 +141,7 @@ describe('published document verification', () => {
         document,
         gateways,
         gatewayServing({ 'https://a.example': document }),
+        NO_WAIT,
       ),
     ).rejects.toThrow(/confirmed by 1 of 2/i);
   });
@@ -126,13 +157,128 @@ describe('published document verification', () => {
           'https://b.example': '{"name":"Tampered"}',
           'https://c.example': '{"name":"Tampered"}',
         }),
+        NO_WAIT,
       ),
-    ).rejects.toThrow(/did not match/i);
+    ).rejects.toThrow(/different bytes/i);
   });
 
   it('refuses to verify a malformed CID at all', async () => {
     await expect(
-      verifyPublishedDocument('not-a-cid', document, gateways, gatewayServing({})),
+      verifyPublishedDocument('not-a-cid', document, gateways, gatewayServing({}), NO_WAIT),
     ).rejects.toThrow(/malformed CID/i);
+  });
+});
+
+describe('published image verification', () => {
+  const gateways = ['https://a.example', 'https://b.example', 'https://c.example'];
+  // A PNG header plus a byte no text decoder round-trips cleanly, so a
+  // text-based comparison would pass here where a byte comparison must not.
+  const image = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe]);
+
+  it('passes once two gateways return byte-identical image data', async () => {
+    const result = await verifyPublishedBytes(
+      CID,
+      image,
+      gateways,
+      gatewayServingBytes({ 'https://a.example': image, 'https://b.example': image }),
+      { label: 'Image', ...NO_WAIT },
+    );
+    expect(result.confirmedBy).toEqual(['https://a.example', 'https://b.example']);
+  });
+
+  it('rejects a gateway whose bytes differ only past the text-decodable prefix', async () => {
+    const tampered = new Uint8Array(image);
+    tampered[tampered.length - 1] = 0x00;
+    await expect(
+      verifyPublishedBytes(
+        CID,
+        image,
+        gateways,
+        gatewayServingBytes({
+          'https://a.example': image,
+          'https://b.example': tampered,
+          'https://c.example': tampered,
+        }),
+        { label: 'Image', ...NO_WAIT },
+      ),
+    ).rejects.toThrow(/different bytes/i);
+  });
+
+  it('rejects a truncated response of the same prefix', async () => {
+    await expect(
+      verifyPublishedBytes(
+        CID,
+        image,
+        gateways,
+        gatewayServingBytes({
+          'https://a.example': image,
+          'https://b.example': image.slice(0, 8),
+          'https://c.example': image.slice(0, 8),
+        }),
+        { label: 'Image', ...NO_WAIT },
+      ),
+    ).rejects.toThrow(/different bytes/i);
+  });
+
+  it('names the failing subject in the error, so an image failure is not read as metadata', async () => {
+    await expect(
+      verifyPublishedBytes(CID, image, gateways, gatewayServingBytes({}), {
+        label: 'Image',
+        ...NO_WAIT,
+      }),
+    ).rejects.toThrow(/^Image CID/);
+  });
+});
+
+describe('read-back retries', () => {
+  const gateways = ['https://a.example', 'https://b.example'];
+  const document = '{"name":"Ruby Horizon"}';
+
+  /** Fails the first `failFor` calls per gateway, then serves correctly. */
+  function flakyGateway(failFor: number) {
+    const seen = new Map<string, number>();
+    return vi.fn(async (url: string | URL) => {
+      const gateway = gateways.find((candidate) => String(url).startsWith(candidate));
+      const count = (seen.get(gateway ?? '') ?? 0) + 1;
+      seen.set(gateway ?? '', count);
+      if (count <= failFor) {
+        return { ok: false, status: 429, statusText: 'Too Many Requests' } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        arrayBuffer: async () => encoder.encode(document).buffer,
+      } as Response;
+    }) as unknown as typeof fetch;
+  }
+
+  it('recovers when a gateway rate-limits the first pass', async () => {
+    // Exactly the production failure: freshly pinned content, gateways throttling
+    // datacenter egress. One pass would have made this a permanent failure.
+    const result = await verifyPublishedDocument(CID, document, gateways, flakyGateway(1), {
+      ...NO_WAIT,
+    });
+    expect(result.confirmedBy).toHaveLength(2);
+  });
+
+  it('gives up after the configured number of attempts', async () => {
+    await expect(
+      verifyPublishedDocument(CID, document, gateways, flakyGateway(99), {
+        attempts: 2,
+        ...NO_WAIT,
+      }),
+    ).rejects.toThrow(/after 2 attempts/i);
+  });
+
+  it('does not retry a byte mismatch, which waiting cannot fix', async () => {
+    const fetchImpl = gatewayServing({
+      'https://a.example': document,
+      'https://b.example': '{"name":"Tampered"}',
+    });
+    await expect(
+      verifyPublishedDocument(CID, document, gateways, fetchImpl, NO_WAIT),
+    ).rejects.toThrow(/different bytes/i);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });

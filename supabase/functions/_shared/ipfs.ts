@@ -3,6 +3,7 @@ import {
   buildPublicMetadata,
   ipfsUri,
   isValidCid,
+  verifyPublishedBytes,
   verifyPublishedDocument,
   type PublicAttributes,
 } from './metadataDocument.ts';
@@ -17,11 +18,22 @@ import {
  * with an unreachable URI can never be corrected.
  */
 
-/** Gateways used for read-back verification. Independent of the pinning provider on purpose. */
+/**
+ * Gateways used for read-back verification. Independent of the pinning provider
+ * on purpose: the provider serving content back only proves it accepted it.
+ *
+ * `cloudflare-ipfs.com` was removed — Cloudflare retired that hostname and it now
+ * fails DNS resolution, so it consumed one of the three slots while being
+ * incapable of ever confirming.
+ *
+ * Public gateways rate-limit datacenter egress, which is why verification
+ * retries. Operators running real volume should set `IPFS_VERIFICATION_GATEWAYS`
+ * to a dedicated gateway; it is tried first.
+ */
 const VERIFICATION_GATEWAYS = [
-  'https://cloudflare-ipfs.com/ipfs',
   'https://ipfs.io/ipfs',
   'https://dweb.link/ipfs',
+  'https://w3s.link/ipfs',
 ];
 
 /**
@@ -53,19 +65,19 @@ function verificationGateways(): string[] {
  * Uploads exact bytes and returns the provider-reported CID. The CID is not
  * trusted here; `publishMetadata` verifies it against independent gateways.
  */
-async function pinDocument(document: string, name: string): Promise<string> {
+async function pinBlob(blob: Blob, filename: string, name: string): Promise<string> {
   const token = pinningToken();
   if (!token) throw new Error('IPFS pinning is not configured');
 
   const form = new FormData();
-  form.append('file', new Blob([document], { type: 'application/json' }), `${name}.json`);
+  form.append('file', blob, filename);
   form.append('pinataMetadata', JSON.stringify({ name }));
 
   const response = await fetch(PIN_ENDPOINT, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}` },
     body: form,
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok) {
     throw new Error(
@@ -77,6 +89,54 @@ async function pinDocument(document: string, name: string): Promise<string> {
     throw new Error('Pinning provider returned no usable CID');
   }
   return body.IpfsHash;
+}
+
+function pinDocument(document: string, name: string): Promise<string> {
+  return pinBlob(new Blob([document], { type: 'application/json' }), `${name}.json`, name);
+}
+
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+export interface PublishedImage {
+  /** `ipfs://<cid>`, embedded in the metadata document as its `image`. */
+  uri: string;
+  cid: string;
+  confirmedBy: string[];
+}
+
+/**
+ * Pins a gemstone photograph and proves it is retrievable before its CID is
+ * sealed inside the metadata document.
+ *
+ * This must run *before* {@link publishMetadata}: the image CID is a field of the
+ * document, so publishing the document first would fix a metadata CID that
+ * referenced nothing. And both must run before `registerGem`, which writes the
+ * metadata URI to a field with no setter.
+ *
+ * Only seller `gem_media` is ever passed here. Certificates stay in their private
+ * bucket — they routinely carry the seller's name and the stone's appraisal
+ * history, and pinning is irreversible.
+ */
+export async function publishImage(
+  bytes: Uint8Array,
+  contentType: string,
+  name: string,
+): Promise<PublishedImage> {
+  const extension = IMAGE_EXTENSIONS[contentType];
+  if (!extension) {
+    throw new Error(`Refusing to publish an image of unsupported type ${contentType}`);
+  }
+  if (bytes.byteLength === 0) throw new Error('Refusing to publish an empty image');
+
+  const cid = await pinBlob(new Blob([bytes], { type: contentType }), `${name}.${extension}`, name);
+  const { confirmedBy } = await verifyPublishedBytes(cid, bytes, verificationGateways(), fetch, {
+    label: 'Image',
+  });
+  return { uri: ipfsUri(cid), cid, confirmedBy };
 }
 
 export interface PublishedMetadata {

@@ -147,54 +147,115 @@ export interface VerificationResult {
   failures: Array<{ gateway: string; reason: string }>;
 }
 
+/** Constant-time-irrelevant byte equality; these are public documents, not secrets. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return false;
+  }
+  return true;
+}
+
 /**
  * Confirms a CID resolves to exactly the bytes that were published, from more
  * than one independent gateway.
  *
  * A pinning provider reporting success only proves it accepted the upload. This
  * proves the content is retrievable and byte-identical before the CID is written
- * to an immutable on-chain field.
+ * to an immutable on-chain field — or, for an image, before its CID is sealed
+ * inside a metadata document that is itself about to become immutable.
  */
-export async function verifyPublishedDocument(
+export interface VerifyOptions {
+  minimumConfirmations?: number;
+  label?: string;
+  /** Passes over the gateway list. Each pass re-tries gateways that have not yet confirmed. */
+  attempts?: number;
+  /** Backoff before each retry pass, in milliseconds. */
+  retryDelayMs?: number;
+  /** Injectable for tests, so a retry suite does not actually wait. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export async function verifyPublishedBytes(
+  cid: string,
+  expected: Uint8Array,
+  gateways: readonly string[],
+  fetchImpl: typeof fetch,
+  options: VerifyOptions = {},
+): Promise<VerificationResult> {
+  if (!isValidCid(cid)) throw new Error(`Refusing to verify a malformed CID: ${cid}`);
+
+  const {
+    minimumConfirmations = 2,
+    label = 'Content',
+    /*
+     * Read-back runs immediately after pinning, and content needs a moment to
+     * propagate to gateways that have never seen it. Public gateways also
+     * rate-limit datacenter egress, which is transient. A single pass turned
+     * both into a permanent activation failure.
+     */
+    attempts = 3,
+    retryDelayMs = 4_000,
+    sleep = defaultSleep,
+  } = options;
+
+  const confirmed = new Set<string>();
+  let failures: VerificationResult['failures'] = [];
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0) await sleep(retryDelayMs * attempt);
+    failures = [];
+
+    for (const gateway of gateways) {
+      if (confirmed.has(gateway)) continue;
+      const url = `${gateway.replace(/\/$/, '')}/${cid}`;
+      try {
+        const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
+        if (!response.ok) {
+          failures.push({ gateway, reason: `${response.status} ${response.statusText}` });
+          continue;
+        }
+        const body = new Uint8Array(await response.arrayBuffer());
+        if (!sameBytes(body, expected)) {
+          // Never retried: differing bytes is a correctness failure, not a
+          // transient one, and waiting will not change the answer.
+          throw new Error(
+            `${label} CID ${cid} resolved to different bytes at ${gateway}. Refusing to publish.`,
+          );
+        }
+        confirmed.add(gateway);
+        if (confirmed.size >= minimumConfirmations) {
+          return { confirmedBy: [...confirmed], failures };
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Refusing to publish')) throw error;
+        failures.push({
+          gateway,
+          reason: error instanceof Error ? error.message : 'Unreachable',
+        });
+      }
+    }
+  }
+
+  const detail = failures.map((failure) => `${failure.gateway}: ${failure.reason}`).join('; ');
+  throw new Error(
+    `${label} CID ${cid} confirmed by ${confirmed.size} of ${minimumConfirmations} required gateways ` +
+      `after ${attempts} attempts. ${detail}`,
+  );
+}
+
+/** Text form of {@link verifyPublishedBytes}, for the canonical JSON document. */
+export function verifyPublishedDocument(
   cid: string,
   expected: string,
   gateways: readonly string[],
   fetchImpl: typeof fetch,
-  minimumConfirmations = 2,
+  options: VerifyOptions = {},
 ): Promise<VerificationResult> {
-  if (!isValidCid(cid)) throw new Error(`Refusing to verify a malformed CID: ${cid}`);
-
-  const result: VerificationResult = { confirmedBy: [], failures: [] };
-  for (const gateway of gateways) {
-    const url = `${gateway.replace(/\/$/, '')}/${cid}`;
-    try {
-      const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
-      if (!response.ok) {
-        result.failures.push({ gateway, reason: `${response.status} ${response.statusText}` });
-        continue;
-      }
-      const body = await response.text();
-      if (body !== expected) {
-        result.failures.push({ gateway, reason: 'Content did not match the published document' });
-        continue;
-      }
-      result.confirmedBy.push(gateway);
-      if (result.confirmedBy.length >= minimumConfirmations) return result;
-    } catch (error) {
-      result.failures.push({
-        gateway,
-        reason: error instanceof Error ? error.message : 'Unreachable',
-      });
-    }
-  }
-
-  if (result.confirmedBy.length < minimumConfirmations) {
-    const detail = result.failures
-      .map((failure) => `${failure.gateway}: ${failure.reason}`)
-      .join('; ');
-    throw new Error(
-      `Metadata CID ${cid} confirmed by ${result.confirmedBy.length} of ${minimumConfirmations} required gateways. ${detail}`,
-    );
-  }
-  return result;
+  return verifyPublishedBytes(cid, new TextEncoder().encode(expected), gateways, fetchImpl, {
+    label: 'Metadata',
+    ...options,
+  });
 }

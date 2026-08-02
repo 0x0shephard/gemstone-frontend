@@ -1,6 +1,8 @@
 import { adminClient, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { matrixOptions } from '../_shared/valuationMatrix.ts';
+import { verificationMode } from '../_shared/settings.ts';
 import { NotAVerifierError, QUEUE_COLUMNS, requireVerifier } from '../_shared/verifier.ts';
 
 /**
@@ -11,8 +13,18 @@ import { NotAVerifierError, QUEUE_COLUMNS, requireVerifier } from '../_shared/ve
  * creates a conflict of interest.
  */
 
-/** Statuses a lab is expected to act on. */
-const GRADABLE = ['approved', 'custody_confirmed'];
+/**
+ * The one status a lab acts on.
+ *
+ * This previously read `['approved', 'custody_confirmed']` and matched nothing:
+ * `approved` survived only for the duration of the auto-activation request, and
+ * `custody_confirmed` is an `activation_state`, never a `status`, so the filter
+ * could not match a row that existed.
+ */
+const GRADABLE = ['awaiting_grading'];
+
+/** Signed-URL lifetime. Long enough to assess a stone, short enough not to be shareable. */
+const SIGNED_URL_TTL_SECONDS = 900;
 
 Deno.serve(async (request) => {
   const early = preflight(request);
@@ -52,13 +64,20 @@ Deno.serve(async (request) => {
         (evidence ?? []).map(async (file) => {
           const { data: signed } = await admin.storage
             .from(file.bucket)
-            .createSignedUrl(file.object_path, 300);
+            .createSignedUrl(file.object_path, SIGNED_URL_TTL_SECONDS);
           return {
             id: file.id,
             category: file.category,
             mimeType: file.mime_type,
             sha256: file.sha256,
             createdAt: file.created_at,
+            /*
+             * Only gemstone media can become the public NFT image. Certificates
+             * routinely name the seller and carry appraisal history, and pinning
+             * is irreversible — so eligibility is decided here, not left to the
+             * UI to remember.
+             */
+            eligibleAsPrimaryImage: file.category === 'gem_media',
             url: signed?.signedUrl ?? null,
           };
         }),
@@ -68,7 +87,8 @@ Deno.serve(async (request) => {
         organization: membership.organizationName,
         submission,
         evidence: files,
-        expiresIn: 300,
+        matrix: matrixOptions(),
+        expiresIn: SIGNED_URL_TTL_SECONDS,
       });
     }
 
@@ -84,6 +104,12 @@ Deno.serve(async (request) => {
     return json({
       organization: membership.organizationName,
       role: membership.role,
+      kind: membership.kind,
+      // Only an admin organisation may change it; every member may see it, so a
+      // grader can tell whether an empty queue means idle or means auto mode.
+      verificationMode: await verificationMode(admin),
+      canManageSettings: membership.kind === 'admin' && membership.role === 'org_admin',
+      matrix: matrixOptions(),
       queue: data ?? [],
     });
   } catch (error) {

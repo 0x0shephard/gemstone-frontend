@@ -107,15 +107,25 @@ Seller and redemption commitments are generated in Edge Functions from RFC 8785 
 `keccak256(UTF8(payload))`, with a random 32-byte nonce. The exact canonical payload is retained
 privately; only its hash and approved public metadata reach the protocol.
 
-For the Sepolia MVP, seller intake uses a clearly marked `mvp-auto` verifier. The server verifies
-that the authenticated user controls the submitted primary wallet and that the private evidence
-package contains at least one certificate and one gemstone image before approving it. It then
-creates an evidence commitment and a test-only `mvp-flat-carat-v1` valuation commitment, registers
-the gem, records protocol custody, records the valuation, and activates the seller-selected buy-now
-listing or 24-hour auction. The temporary rule is $500 per carat, rounded up to whole USD and clamped
-to $100–$25,000. It is not a production appraisal. Sumsub and the offline pricing/verification
-engine can replace the approval and valuation transitions later without changing the browser’s
-submission interface.
+Seller intake takes one of two paths, chosen by the `verification_mode` row in `protocol_settings`.
+Only an `org_admin` of an `admin`-kind verifier organisation can change it, from the portal; there is
+no client write policy on that table, so a seller cannot route their own stone around a lab. Both
+paths first check that the authenticated user controls the submitted primary wallet and that the
+private evidence package holds at least one certificate and one gemstone image.
+
+`lab` is the default. The submission parks at `awaiting_grading` and **nothing is written on-chain
+or published**. A grading lab prices it, and only that approval registers the gem, records protocol
+custody, records the graded valuation, and activates the seller-selected buy-now listing or 24-hour
+auction. A rejected stone therefore leaves no permanent trace and costs no gas.
+
+`auto` restores the earlier straight-through `mvp-auto` path for Sepolia demos and the lifecycle
+verifier, which have no seeded lab account. It prices with the test-only `mvp-flat-carat-v1` rule —
+$500 per carat, rounded up to whole USD and clamped to $100–$25,000. That is not a production
+appraisal, and `approvedValuationUsd` has no setter, so the mode is worth switching deliberately.
+Every change is audit-logged with the organisation, the previous mode, and the new one.
+
+The full path from a browser action to each contract call is mapped in
+[`docs/workflows.md`](./docs/workflows.md).
 
 ## Environment and deployment
 
@@ -153,6 +163,7 @@ npx supabase functions deploy v1-seller-commitment
 npx supabase functions deploy v1-seller-activate
 npx supabase functions deploy v1-verification-queue
 npx supabase functions deploy v1-verification-grade
+npx supabase functions deploy v1-verification-settings
 npx supabase functions deploy v1-demand-refresh
 npx supabase functions deploy v1-private-file-url
 npx supabase functions deploy v1-redemption-commitment
@@ -181,14 +192,32 @@ insert into public.verifier_members (profile_id, organization_id, role)
 values ('<profile-uuid>', '<organization-uuid>', 'grader');
 ```
 
+An `admin`-kind organisation whose member holds `org_admin` additionally sees the verification-mode
+switch. Create one the same way, with `kind = 'admin'` and `role = 'org_admin'`.
+
 `/verify` is absent from navigation and returns "page not found" to anyone without an active
 membership — the same response the API gives, so the route does not advertise itself. Graders see
 the stone, its unverified seller claims and the evidence files, but never the seller's identity:
 that is stripped by the column selection in the Edge Function, not hidden in the UI.
 
-Approving a grading prices the stone, records it, and immediately runs the existing resumable
-activation, which registers, confirms custody, verifies at the graded valuation and lists. A stone
-the matrix cannot price is refused with an explanation rather than valued by guesswork.
+Approving a grading prices the stone, records it, and immediately runs the resumable activation,
+which registers, confirms custody, verifies at the graded valuation and lists. A stone the matrix
+cannot price is refused with an explanation rather than valued by guesswork, and a grader can reject
+outright with a reason the seller sees. Because grading now precedes every on-chain write, a
+rejection has nothing to unwind.
+
+The grading form's dropdowns are served by `matrixOptions()`, from the same versioned matrix that
+prices the stone, rather than restated in the component. A test walks the full cross product of
+advertised options and asserts every one of them is priceable, so the form cannot offer a value the
+engine would refuse after the grader has already assessed the stone.
+
+The grader also chooses which of the seller's photographs becomes the public NFT `image`. That
+image is pinned to IPFS and read back from independent gateways, its CID is sealed into the metadata
+document, and `registerGem` writes that document's URI to a field with no setter — so the choice is
+permanent and belongs at the review step. Certificates are never eligible: they routinely carry the
+seller's name and appraisal history, and eligibility is decided server-side rather than left to the
+UI. Without `IPFS_PINNING_JWT` the inline `data:` document is kept and no image is published, which
+is the degraded Sepolia MVP path.
 
 `DEMAND_REFRESH_SECRET` gates `v1-demand-refresh`, which ingests `BidPlaced` events into the demand
 counts behind the pricing engine's market multipliers. It is a scheduled job, not a user-facing

@@ -5,7 +5,7 @@ import {
   marketMultiplier,
   type DemandInput,
 } from './valuationMath.ts';
-import { PPM, VALUATION_MATRIX } from './valuationMatrix.ts';
+import { matrixOptions, PPM, VALUATION_MATRIX } from './valuationMatrix.ts';
 
 const USD = 10n ** 18n;
 const usd = (value: Valuation['priceUsd']) => Number(value / USD);
@@ -196,5 +196,61 @@ describe('refusal paths', () => {
 
   it('refuses a non-positive carat weight', () => {
     expect(() => calculateValuation({ ...EXAMPLE, caratWeight: 0 })).toThrow(/positive number/i);
+  });
+});
+
+/**
+ * The grading form is populated from `matrixOptions()` rather than a local list,
+ * so that a grader cannot select something the engine has no price for. That
+ * guarantee only holds if every option the helper advertises is in fact
+ * priceable — this walks the full cross product and proves it.
+ */
+describe('matrix options are exhaustively priceable', () => {
+  const options = matrixOptions();
+
+  it('advertises only varieties, clarities, treatments and shapes the engine prices', () => {
+    for (const variety of options.varieties) {
+      for (const clarity of options.clarities) {
+        for (const treatment of options.treatments) {
+          for (const shape of options.shapes) {
+            for (const color of variety.colors) {
+              for (const colorGrade of variety.colorGrades) {
+                expect(() =>
+                  calculateValuation({
+                    variety: variety.name,
+                    caratWeight: 1,
+                    clarity,
+                    treatment,
+                    shape,
+                    color,
+                    colorGrade,
+                  }),
+                ).not.toThrow();
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('advertises a carat range whose endpoints both price', () => {
+    for (const caratWeight of [options.caratRange.min, options.caratRange.max]) {
+      expect(() => calculateValuation({ ...EXAMPLE, caratWeight })).not.toThrow();
+    }
+  });
+
+  it('advertises a carat range that excludes what the engine refuses', () => {
+    for (const caratWeight of [options.caratRange.min - 0.01, options.caratRange.max + 0.01]) {
+      expect(() => calculateValuation({ ...EXAMPLE, caratWeight })).toThrow();
+    }
+  });
+
+  it('does not offer a colour from another variety', () => {
+    const sapphire = options.varieties.find((entry) => entry.name === 'sapphire');
+    expect(sapphire).toBeDefined();
+    expect(() =>
+      calculateValuation({ ...EXAMPLE, variety: 'emerald', color: sapphire!.colors[0] }),
+    ).toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import { supabase } from '@/providers/supabase';
+import { invokeEdgeFunction } from './invoke';
 
 /**
  * Verification portal client.
@@ -8,18 +8,7 @@ import { supabase } from '@/providers/supabase';
  * field here to accidentally render.
  */
 
-function requireClient() {
-  if (!supabase) throw new Error('Supabase is not configured');
-  return supabase;
-}
-
-async function invoke<T>(name: string, body: Record<string, unknown> = {}): Promise<T> {
-  const { data, error } = await requireClient().functions.invoke(name, { body });
-  if (error || data?.error) {
-    throw new Error(data?.error ?? error?.message ?? 'Verification request failed');
-  }
-  return data as T;
-}
+const invoke = invokeEdgeFunction;
 
 export interface QueueItem {
   id: string;
@@ -37,6 +26,12 @@ export interface EvidenceFile {
   mimeType: string;
   sha256: string;
   createdAt: string;
+  /**
+   * Whether this file may become the public NFT image. Only gemstone media
+   * qualifies — certificates name the seller and carry appraisal history, and
+   * publication to IPFS cannot be undone. Decided server-side.
+   */
+  eligibleAsPrimaryImage: boolean;
   /** Short-lived signed URL, minted per request. Null if signing failed. */
   url: string | null;
 }
@@ -80,12 +75,36 @@ export interface PricePreview {
   breakdown: Breakdown;
 }
 
-/** Returns null when the signed-in user is not an active verifier. */
-export async function loadQueue(): Promise<{
+/**
+ * Grading choices, served by the same module that prices them.
+ *
+ * Restating these in the component would let a dropdown offer a value the engine
+ * has no price for, and the refusal would only surface after the grader had
+ * already assessed the stone.
+ */
+export interface MatrixOptions {
+  version: string;
+  varieties: Array<{ name: string; colors: string[]; colorGrades: string[] }>;
+  clarities: string[];
+  treatments: string[];
+  shapes: string[];
+  caratRange: { min: number; max: number };
+}
+
+export type VerificationMode = 'lab' | 'auto';
+
+export interface QueueResponse {
   organization: string;
   role: string;
+  kind: 'lab' | 'admin';
+  verificationMode: VerificationMode;
+  canManageSettings: boolean;
+  matrix: MatrixOptions;
   queue: QueueItem[];
-} | null> {
+}
+
+/** Returns null when the signed-in user is not an active verifier. */
+export async function loadQueue(): Promise<QueueResponse | null> {
   try {
     return await invoke('v1-verification-queue');
   } catch (error) {
@@ -96,8 +115,15 @@ export async function loadQueue(): Promise<{
 
 export async function loadSubmission(
   submissionId: string,
-): Promise<{ submission: QueueItem; evidence: EvidenceFile[] }> {
+): Promise<{ submission: QueueItem; evidence: EvidenceFile[]; matrix: MatrixOptions }> {
   return invoke('v1-verification-queue', { submissionId });
+}
+
+/** Only an `org_admin` of an admin organisation may pass a mode. */
+export async function setVerificationMode(
+  mode: VerificationMode,
+): Promise<{ verificationMode: VerificationMode }> {
+  return invoke('v1-verification-settings', { mode });
 }
 
 /**
@@ -111,12 +137,35 @@ export async function previewPrice(
   return invoke('v1-verification-grade', { submissionId, graded, preview: true });
 }
 
-/** Commits the grading and fires the on-chain transactions. */
+export interface GradingResult extends PricePreview {
+  activation?: { onchainGemId?: string; transactionHash?: string };
+  /** Present when the valuation was recorded but the chain work did not complete. */
+  activationState?: 'failed';
+  activationError?: string;
+}
+
+/**
+ * Commits the grading and fires the on-chain transactions.
+ *
+ * `primaryImageId` names the gemstone photograph that becomes the permanent NFT
+ * `image`. It is pinned to IPFS, read back from independent gateways, and its CID
+ * sealed into the metadata document before `registerGem` writes that document's
+ * URI to a field with no setter — so this choice cannot be revised afterwards.
+ */
 export async function submitGrading(
   submissionId: string,
   graded: GradeInput,
-): Promise<PricePreview & { activation: { onchainGemId?: string; transactionHash?: string } }> {
-  return invoke('v1-verification-grade', { submissionId, graded });
+  primaryImageId?: string,
+): Promise<GradingResult> {
+  return invoke('v1-verification-grade', { submissionId, graded, primaryImageId });
+}
+
+/** Refuses a stone. Writes nothing on-chain and pins nothing. */
+export async function rejectSubmission(
+  submissionId: string,
+  reason: string,
+): Promise<{ status: string }> {
+  return invoke('v1-verification-grade', { submissionId, action: 'reject', reason });
 }
 
 export const ppmToNumber = (ppm: string): number => Number(ppm) / 1_000_000;
