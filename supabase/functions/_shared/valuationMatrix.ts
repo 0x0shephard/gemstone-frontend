@@ -1,0 +1,168 @@
+/**
+ * Versioned gemstone valuation matrix.
+ *
+ * `GemRegistry.verifyGem` records a `valuationMatrixHash` committing to "the exact
+ * pricing matrix/version used". This document is that matrix: it is canonicalised
+ * and hashed, the hash goes on-chain, and a gem priced under one version stays
+ * reproducible after the matrix changes.
+ *
+ * Changing any value here is a pricing change. Bump `version` when you do, so
+ * historical valuations keep resolving to the matrix that produced them.
+ *
+ * Multipliers are parts-per-million (`1_000_000` = 1.0) so the engine can price
+ * entirely in integers. Floating point anywhere in this path would make the same
+ * inputs hash differently between runs.
+ */
+
+export const PPM = 1_000_000n;
+
+/** A point on the carat curve: weight in micro-carats, multiplier in ppm. */
+export interface CaratAnchor {
+  microCarats: bigint;
+  multiplierPpm: bigint;
+}
+
+export interface VarietySpec {
+  /** Base price per carat, whole USD. Omit a variety entirely if it has no agreed price. */
+  basePricePerCaratUsd: bigint;
+  /** Colour choices. `N` for the colour criterion; a single colour makes the multiplier exactly 1.0. */
+  colors: readonly string[];
+  /** Colour-grade choices for this variety. */
+  colorGrades: readonly string[];
+}
+
+export interface ValuationMatrix {
+  version: string;
+  varieties: Readonly<Record<string, VarietySpec>>;
+  caratAnchors: readonly CaratAnchor[];
+  clarityPpm: Readonly<Record<string, bigint>>;
+  treatmentPpm: Readonly<Record<string, bigint>>;
+  shapes: readonly string[];
+  /** How strongly demand moves price, per variable criterion. */
+  deltaPpm: Readonly<Record<'shape' | 'color' | 'colorGrade', bigint>>;
+  /** Laplace prior. `1` keeps an unobserved choice at a neutral 1.0 rather than the floor. */
+  demandPriorCount: bigint;
+  /** Bounds on a single market multiplier. */
+  criterionClampPpm: { min: bigint; max: bigint };
+  /** Bound on the product of all market multipliers, so they cannot compound. */
+  totalClampPpm: { min: bigint; max: bigint };
+  /** Final price bounds, whole USD. */
+  priceClampUsd: { min: bigint; max: bigint };
+}
+
+/**
+ * CONFIRMED DECISIONS. These are settled, not open questions — but each is still
+ * a one-line change here, and any change is a pricing change requiring a version
+ * bump.
+ *
+ *  1. Tourmaline and Aquamarine are deliberately absent: these varieties are not
+ *     being listed. The engine refuses them rather than pricing an unlisted
+ *     variety by accident.
+ *  2. The multiplier table is authoritative where the source document's worked
+ *     example disagrees with it — 2ct is 2.4, not the 2.24 the example computes.
+ *     The tests record the difference so the choice stays visible.
+ *  3. Carats are priced from 0.5 to 5.0 only. Stones above 5ct are not being
+ *     listed for now, and the engine refuses anything outside the anchor range
+ *     rather than extrapolating an exponential curve into an immutable field.
+ *     Note this floors as well as caps: a stone under 0.5ct is also refused.
+ *  4. Delta is 0.5 for all three variable criteria. The source specifies it only
+ *     for shape; colour and colour grade reuse the same strength.
+ *  5. Clamps bound a single market multiplier to 0.75–1.30 and their product to
+ *     0.70–1.50. Without them one dominant choice among ten reaches 5.5x.
+ *  6. Treatment is a single axis, exactly as the source lists it. Heat and oil do
+ *     not stack.
+ *
+ * Two mechanical notes:
+ *
+ *  - Colour sets are specified in the source only for Emerald and Sapphire. Ruby
+ *    and Peridot declare their single characteristic colour, which is
+ *    mathematically inert: with N = 1 the colour multiplier is always exactly
+ *    1.0, so this asserts nothing about their pricing.
+ *  - Colour grades outside Emerald use the generic Dark/Medium/Light triple,
+ *    following the source note that most gemstone colours have three gradings.
+ */
+export const VALUATION_MATRIX: ValuationMatrix = {
+  version: 'digital-carat-matrix-v1',
+
+  varieties: {
+    emerald: {
+      basePricePerCaratUsd: 1_000n,
+      colors: ['green'],
+      colorGrades: ['bluish green', 'deep green', 'light green'],
+    },
+    sapphire: {
+      basePricePerCaratUsd: 2_000n,
+      colors: [
+        'blue',
+        'purple',
+        'gray',
+        'green',
+        'brown',
+        'orange',
+        'pink',
+        'violet',
+        'white',
+        'yellow',
+      ],
+      colorGrades: ['dark', 'medium', 'light'],
+    },
+    ruby: {
+      basePricePerCaratUsd: 1_500n,
+      colors: ['red'],
+      colorGrades: ['dark', 'medium', 'light'],
+    },
+    peridot: {
+      basePricePerCaratUsd: 200n,
+      colors: ['green'],
+      colorGrades: ['dark', 'medium', 'light'],
+    },
+    // tourmaline and aquamarine intentionally absent — not being listed.
+  },
+
+  // 0.5 -> 0.55, 1 -> 1.00, 2 -> 2.40, 3 -> 4.20, 5 -> 9.00
+  caratAnchors: [
+    { microCarats: 500_000n, multiplierPpm: 550_000n },
+    { microCarats: 1_000_000n, multiplierPpm: 1_000_000n },
+    { microCarats: 2_000_000n, multiplierPpm: 2_400_000n },
+    { microCarats: 3_000_000n, multiplierPpm: 4_200_000n },
+    { microCarats: 5_000_000n, multiplierPpm: 9_000_000n },
+  ],
+
+  clarityPpm: {
+    dcl: 200_000n,
+    i3: 600_000n,
+    i2: 700_000n,
+    i1: 800_000n,
+    si2: 950_000n,
+    si1: 1_050_000n,
+    vs: 1_200_000n,
+    vvs: 1_450_000n,
+  },
+
+  treatmentPpm: {
+    heated: 900_000n,
+    'minor heat': 970_000n,
+    unheated: 1_200_000n,
+    oiled: 950_000n,
+    'no oil': 1_150_000n,
+  },
+
+  shapes: [
+    'cabochon',
+    'cushion',
+    'emerald cut',
+    'marquise',
+    'oval',
+    'pear',
+    'round',
+    'diamond cut',
+  ],
+
+  deltaPpm: { shape: 500_000n, color: 500_000n, colorGrade: 500_000n },
+
+  demandPriorCount: 1n,
+
+  criterionClampPpm: { min: 750_000n, max: 1_300_000n },
+  totalClampPpm: { min: 700_000n, max: 1_500_000n },
+  priceClampUsd: { min: 100n, max: 250_000n },
+};

@@ -34,6 +34,7 @@ export const gemRegistryAbi = parseAbi([
 export const primarySaleAbi = parseAbi([
   'function createDailyAuction(uint256 gemId, uint256 floorUsd)',
   'function auctions(uint256 gemId) view returns (bool exists,bool settled,uint64 startTime,uint64 endTime,uint256 floorUsd,address highestBidder,address paymentAsset,uint256 amount,uint256 usdValue,uint256 reserveUsd)',
+  'event BidPlaced(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount, uint256 usdValue)',
 ]);
 
 export interface OperatorChain {

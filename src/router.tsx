@@ -16,6 +16,7 @@ const SwapsPage = lazy(() => import('@/pages/SwapsPage'));
 const RedeemPage = lazy(() => import('@/pages/RedeemPage'));
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const SellerPage = lazy(() => import('@/pages/SellerPage'));
+const VerifyPage = lazy(() => import('@/pages/VerifyPage'));
 const AboutPage = lazy(() => import('@/pages/AboutPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
@@ -48,6 +49,9 @@ export const router = createBrowserRouter([
       { path: '/redeem', element: route(<RedeemPage />) },
       { path: '/profile', element: route(<ProfilePage />) },
       { path: '/seller', element: route(<SellerPage />) },
+      // Deliberately absent from navigation. Non-members are shown the same
+      // "not found" the API returns rather than a sign-in prompt.
+      { path: '/verify', element: route(<VerifyPage />) },
       { path: '/about', element: route(<AboutPage />) },
     ],
   },

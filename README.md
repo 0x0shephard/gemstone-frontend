@@ -143,15 +143,59 @@ npx supabase secrets set \
   SEPOLIA_OPERATOR_PRIVATE_KEY=... \
   GEM_REGISTRY_ADDRESS=0x... \
   PRIMARY_SALE_AUCTION_ADDRESS=0x... \
-  DEPLOYMENT_BLOCK=...
+  DEPLOYMENT_BLOCK=... \
+  IPFS_PINNING_JWT=... \
+  DEMAND_REFRESH_SECRET=...
 npx supabase functions deploy v1-siwe-nonce
 npx supabase functions deploy v1-siwe-verify
 npx supabase functions deploy v1-seller-submit
 npx supabase functions deploy v1-seller-commitment
 npx supabase functions deploy v1-seller-activate
+npx supabase functions deploy v1-verification-queue
+npx supabase functions deploy v1-verification-grade
+npx supabase functions deploy v1-demand-refresh
 npx supabase functions deploy v1-private-file-url
 npx supabase functions deploy v1-redemption-commitment
 ```
+
+`IPFS_PINNING_JWT` enables public metadata publication. Without it, submissions keep the inline
+`data:` metadata URI used by the Sepolia MVP. With it, `prepareSellerSubmission` pins the canonical
+document, reads it back from at least two independent gateways, and only then writes `ipfs://<CID>`
+into the evidence commitment and `registerGem`. Any failure aborts activation rather than degrading,
+because `metadataURI` has no setter in `GemRegistry` or `DGENFT` and cannot be corrected afterwards.
+Set `IPFS_VERIFICATION_GATEWAYS` to a comma-separated list to check additional gateways first.
+
+The exact published bytes are retained in `seller_submissions.metadata_document` beside the CID.
+Re-pinning those bytes reproduces the same CID, so a lapsed pin can be restored without changing
+anything on-chain. Treat that column as the canonical record.
+
+### Verification portal
+
+Third-party grading labs sign in with Supabase credentials and hold no wallet. Authority comes from
+a row in `verifier_members`, and the operator key relays their decision on-chain. Onboard a lab by
+inserting an organisation and a membership:
+
+```sql
+insert into public.verifier_organizations (name, kind) values ('Example Gem Lab', 'lab');
+insert into public.verifier_members (profile_id, organization_id, role)
+values ('<profile-uuid>', '<organization-uuid>', 'grader');
+```
+
+`/verify` is absent from navigation and returns "page not found" to anyone without an active
+membership — the same response the API gives, so the route does not advertise itself. Graders see
+the stone, its unverified seller claims and the evidence files, but never the seller's identity:
+that is stripped by the column selection in the Edge Function, not hidden in the UI.
+
+Approving a grading prices the stone, records it, and immediately runs the existing resumable
+activation, which registers, confirms custody, verifies at the graded valuation and lists. A stone
+the matrix cannot price is refused with an explanation rather than valued by guesswork.
+
+`DEMAND_REFRESH_SECRET` gates `v1-demand-refresh`, which ingests `BidPlaced` events into the demand
+counts behind the pricing engine's market multipliers. It is a scheduled job, not a user-facing
+endpoint: callers present the secret in `x-demand-refresh-secret` rather than a Supabase session.
+Running it is idempotent — bids are keyed by transaction hash and log index, so replayed ranges
+cannot double count. Until it runs, every market multiplier resolves to a neutral 1.0 and stones are
+priced on base value alone, which is correct behaviour rather than a failure.
 
 `SEPOLIA_OPERATOR_PRIVATE_KEY` is a server-only testnet signer. Never prefix it with `VITE_`, expose
 it to the browser, or reuse it for mainnet. The signer must hold the deployed registry compliance,

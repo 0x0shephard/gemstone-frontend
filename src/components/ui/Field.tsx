@@ -1,4 +1,4 @@
-import { forwardRef, type InputHTMLAttributes } from 'react';
+import { forwardRef, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 export const inputClass =
@@ -29,6 +29,34 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(
   ),
 );
 Field.displayName = 'Field';
+
+/**
+ * Label wrapper for controls that are not a bare `<input>` — `<select>`,
+ * `<textarea>`, or a composite. `Field` renders its own input and discards
+ * children, so it cannot be used for these.
+ */
+export function Labeled({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-muted">
+        {label}
+      </span>
+      {children}
+      {hint && !error && <span className="mt-1 block text-[11px] text-ink-dim">{hint}</span>}
+      {error && <span className="mt-1 block text-[11.5px] text-ruby">{error}</span>}
+    </label>
+  );
+}
 
 /** "OR" divider used between auth methods. */
 export function OrDivider() {

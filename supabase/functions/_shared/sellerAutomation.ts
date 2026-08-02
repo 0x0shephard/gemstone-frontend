@@ -11,6 +11,8 @@ import {
   writeAndConfirm,
 } from './chain.ts';
 import { createMvpValuation } from './mvpPricing.ts';
+import { pinningConfigured, publishMetadata, type PublishedMetadata } from './ipfs.ts';
+import { isDataUri, type PublicAttributes } from './metadataDocument.ts';
 
 type AdminClient = SupabaseClient;
 
@@ -21,6 +23,7 @@ interface SellerSubmission {
   attributes: Record<string, unknown> & { caratWeight: number };
   sale_mode: 'buy_now' | 'auction';
   metadata_uri: string;
+  metadata_cid: string | null;
   status: string;
   approved_at: string;
   certificate_hash: Hash | null;
@@ -38,7 +41,7 @@ interface SellerSubmission {
 }
 
 const sellerColumns =
-  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at';
+  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at';
 
 async function loadSubmission(admin: AdminClient, submissionId: string): Promise<SellerSubmission> {
   const { data, error } = await admin
@@ -60,6 +63,7 @@ export async function prepareSellerSubmission(
   }
 
   let evidence: { hash: Hash; canonicalPayload: string; nonce: `0x${string}` } | undefined;
+  let publication: PublishedMetadata | undefined;
   if (!submission.certificate_hash || !submission.canonical_payload) {
     const { data: files, error } = await admin
       .from('evidence_files')
@@ -73,13 +77,31 @@ export async function prepareSellerSubmission(
     if (certificateDigests.length === 0 || !submission.metadata_uri) {
       throw new Error('Approved certificates and metadata URI are required');
     }
+
+    /*
+     * Publish before committing. The commitment binds `metadataUri`, and
+     * `registerGem` writes that same URI to a field with no setter, so this is
+     * the last point at which the published document can still change.
+     *
+     * Only inline URIs are replaced: once a submission carries a CID the
+     * document is already public and immutable. Without pinning credentials the
+     * inline document is kept, which is the Sepolia MVP path.
+     */
+    let metadataUri = submission.metadata_uri;
+    if (pinningConfigured() && isDataUri(metadataUri)) {
+      publication = await publishMetadata(submission.attributes as unknown as PublicAttributes, {
+        name: `digital-carat-submission-${submissionId}`,
+      });
+      metadataUri = publication.uri;
+    }
+
     evidence = createCommitment({
       submissionId,
       sellerWallet: submission.seller_wallet,
       approvedAttributes: submission.attributes,
       saleMode: submission.sale_mode,
       certificateDigests,
-      metadataUri: submission.metadata_uri,
+      metadataUri,
       timestamp: new Date().toISOString(),
     });
   }
@@ -107,6 +129,14 @@ export async function prepareSellerSubmission(
               commitment_nonce: evidence.nonce,
             }
           : {}),
+        ...(publication
+          ? {
+              metadata_uri: publication.uri,
+              metadata_cid: publication.cid,
+              metadata_document: publication.document,
+              metadata_published_at: new Date().toISOString(),
+            }
+          : {}),
         ...(valuation
           ? {
               valuation_method: valuation.method,
@@ -131,6 +161,8 @@ export async function prepareSellerSubmission(
       {
         valuationMethod: submission.valuation_method,
         approvedValuationUsd: submission.approved_valuation_usd,
+        metadataCid: publication?.cid ?? null,
+        metadataConfirmedBy: publication?.confirmedBy ?? null,
       },
     );
   }

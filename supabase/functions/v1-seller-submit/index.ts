@@ -2,6 +2,8 @@ import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { activateSellerSubmission } from '../_shared/sellerAutomation.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { canonicalDocument } from '../_shared/ipfs.ts';
+import { dataUri } from '../_shared/metadataDocument.ts';
 
 const walletPattern = /^0x[0-9a-f]{40}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -60,38 +62,22 @@ function parseAttributes(value: unknown): SellerAttributes {
 }
 
 /**
- * ERC-721 metadata as specified in the contracts repo's off-chain data
- * architecture. The shape matters permanently: `metadataURI` is written once in
- * `registerGem`, copied into `tokenURI` at mint, and has no setter in either
- * contract, so external marketplaces read whatever is published here forever.
+ * Provisional inline metadata recorded at submission time.
  *
- * No `image` yet: seller media lands in private Supabase buckets and there is no
- * public media pipeline to reference. No `certificate_hash` either, because the
- * hash is derived after submission and this runs at insert time.
+ * This is not the document that reaches the chain. `prepareSellerSubmission`
+ * republishes it to IPFS and swaps in the resulting `ipfs://` CID immediately
+ * before the evidence commitment binds the URI, which is the last point at
+ * which it can still change. Publishing here would be premature: a submission
+ * may never be approved, and a rejected one should leave nothing pinned.
  *
- * Never add seller identity, vault location, or appraisal notes here.
+ * No `image` yet — seller media lands in private Supabase buckets and there is
+ * no public media pipeline to reference.
+ *
+ * Never add seller identity, vault location, or appraisal notes here; the
+ * shared builder rejects them.
  */
 function publicMetadata(attributes: SellerAttributes): string {
-  const traits: Array<[string, string | number]> = [
-    ['Gem Type', attributes.gemstoneType],
-    ['Carat Weight', attributes.caratWeight],
-    ['Origin', attributes.origin],
-    ['Dimensions', attributes.dimensions],
-    ['Color', attributes.color],
-    ['Clarity', attributes.clarity],
-    ['Cut', attributes.cut],
-    ['Treatment', attributes.treatment],
-    ['Certification Lab', attributes.gradingLab],
-  ];
-  const metadata = {
-    name: attributes.name,
-    description:
-      'Digital Carat Sepolia MVP gemstone submission with test-only automated valuation and custody activation.',
-    attributes: traits
-      .filter(([, value]) => value !== '' && value !== undefined && value !== null)
-      .map(([trait_type, value]) => ({ trait_type, value })),
-  };
-  return `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(metadata))}`;
+  return dataUri(canonicalDocument(attributes));
 }
 
 function responseFor(submission: {
