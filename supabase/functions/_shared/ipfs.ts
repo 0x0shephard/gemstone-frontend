@@ -1,10 +1,10 @@
 import { canonicalize } from 'npm:json-canonicalize@1.1.0';
+import { computeCidV0 } from './cid.ts';
 import {
   buildPublicMetadata,
   ipfsUri,
   isValidCid,
   verifyPublishedBytes,
-  verifyPublishedDocument,
   type PublicAttributes,
 } from './metadataDocument.ts';
 
@@ -35,6 +35,83 @@ const VERIFICATION_GATEWAYS = [
   'https://dweb.link/ipfs',
   'https://w3s.link/ipfs',
 ];
+
+/**
+ * The pinning provider's own gateway, tried last.
+ *
+ * Public gateways return 401 to datacenter egress, and Edge Functions run from
+ * exactly those IP ranges — so from here two independent confirmations are often
+ * unobtainable no matter how many times we retry. This gives the *second*
+ * confirmation somewhere reliable to come from while
+ * `minimumIndependentConfirmations` still requires the first to be independent,
+ * which is the one that actually proves anything.
+ */
+const PROVIDER_GATEWAYS = ['https://gateway.pinata.cloud/ipfs'];
+
+/** Operator override, then independent publics, then the provider as a fallback. */
+function allGateways(): string[] {
+  return [...verificationGateways(), ...PROVIDER_GATEWAYS];
+}
+
+/**
+ * Establishes that `cid` really describes `bytes`, and that the content is
+ * fetchable, using whichever proof is available.
+ *
+ * Where the CID can be derived locally that is the integrity check, and it is
+ * stronger than any read-back: a CID is the hash of its content, so a match
+ * means the provider cannot be describing anything else. Gateways then only have
+ * to demonstrate *liveness*, which any one of them — including the provider's —
+ * can do.
+ *
+ * Only when the CID cannot be derived (content past the single-block limit) does
+ * the original rule apply, where an independent gateway has to vouch for bytes
+ * we could not verify ourselves.
+ */
+async function provePublished(
+  cid: string,
+  bytes: Uint8Array,
+  label: string,
+): Promise<{ confirmedBy: string[]; verifiedLocally: boolean }> {
+  const derived = await computeCidV0(bytes);
+
+  if (derived && derived !== cid) {
+    throw new Error(
+      `${label} CID mismatch: the pinning provider reported ${cid}, but these bytes are ${derived}. ` +
+        'Refusing to publish content the provider has misdescribed.',
+    );
+  }
+
+  await announce(cid);
+  const { confirmedBy } = await verifyPublishedBytes(cid, bytes, allGateways(), fetch, {
+    label,
+    providerGateways: PROVIDER_GATEWAYS,
+    ...(derived
+      ? { minimumConfirmations: 1, minimumIndependentConfirmations: 0 }
+      : { minimumConfirmations: 2, minimumIndependentConfirmations: 1 }),
+  });
+  return { confirmedBy, verifiedLocally: Boolean(derived) };
+}
+
+/**
+ * Pulls the CID through the provider's gateway once, before verification runs.
+ *
+ * Freshly pinned content is not yet announced to the wider network, so the first
+ * public-gateway request has to do a cold DHT lookup. Measured cold, the
+ * provider took ~10s and every public gateway then answered in 1–4s.
+ *
+ * Best effort. A failure here is not a verification failure.
+ */
+async function announce(cid: string): Promise<void> {
+  await Promise.allSettled(
+    PROVIDER_GATEWAYS.map(async (gateway) => {
+      const response = await fetch(`${gateway.replace(/\/$/, '')}/${cid}`, {
+        signal: AbortSignal.timeout(30_000),
+      });
+      // Drain the body so the connection completes and the content is really pulled.
+      await response.arrayBuffer().catch(() => undefined);
+    }),
+  );
+}
 
 /**
  * File pinning, not JSON pinning. A JSON endpoint re-serialises the document
@@ -133,9 +210,7 @@ export async function publishImage(
   if (bytes.byteLength === 0) throw new Error('Refusing to publish an empty image');
 
   const cid = await pinBlob(new Blob([bytes], { type: contentType }), `${name}.${extension}`, name);
-  const { confirmedBy } = await verifyPublishedBytes(cid, bytes, verificationGateways(), fetch, {
-    label: 'Image',
-  });
+  const { confirmedBy } = await provePublished(cid, bytes, 'Image');
   return { uri: ipfsUri(cid), cid, confirmedBy };
 }
 
@@ -163,12 +238,7 @@ export async function publishMetadata(
   const document = canonicalize(metadata);
 
   const cid = await pinDocument(document, options.name);
-  const { confirmedBy } = await verifyPublishedDocument(
-    cid,
-    document,
-    verificationGateways(),
-    fetch,
-  );
+  const { confirmedBy } = await provePublished(cid, new TextEncoder().encode(document), 'Metadata');
   return { uri: ipfsUri(cid), cid, document, confirmedBy };
 }
 

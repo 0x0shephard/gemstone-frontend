@@ -19,18 +19,24 @@ pilot/
 
 ## Before you start
 
-| Requirement            | Check                                                                                                                  |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Migrations applied     | `verification_mode` row exists in `protocol_settings`                                                                  |
-| Functions deployed     | `v1-seller-submit`, `v1-seller-activate`, `v1-verification-queue`, `v1-verification-grade`, `v1-verification-settings` |
-| `IPFS_PINNING_JWT` set | `npx supabase secrets list` — without it every gem registers permanently imageless                                     |
-| Reserve solvent        | `coverageRatioBps()` ≥ `minimumCoverageBps`                                                                            |
-| Mode is `lab`          | `/verify` shows **Lab review** selected                                                                                |
-| Two accounts           | a verifier (`verifier_members` row) and a **separate** seller with a SIWE-linked wallet                                |
+| Requirement            | Check                                                                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Migrations applied     | `verification_mode` row exists in `protocol_settings`                                                                                        |
+| Functions deployed     | `v1-seller-submit`, `v1-seller-activate`, `v1-verification-queue`, `v1-verification-grade`, `v1-verification-settings`, `v1-custody-confirm` |
+| `IPFS_PINNING_JWT` set | `npx supabase secrets list` — without it every gem registers permanently imageless                                                           |
+| Reserve solvent        | `coverageRatioBps()` ≥ `minimumCoverageBps`                                                                                                  |
+| Mode is `lab`          | `/verify` shows **Lab review** selected                                                                                                      |
+| Two accounts           | a verifier (`verifier_members` row) and a **separate** seller with a SIWE-linked wallet                                                      |
+| Custody authority      | that verifier is in an `admin`-kind org, or holds `role = 'custodian'`                                                                       |
 
 The seller and the grader must be different accounts. Grading your own submission
 tells you nothing about the access control, and the queue deliberately hides
 seller identity from the grader.
+
+Custody and grading may be the same account for a walkthrough, but they are
+separate authorities: `canConfirmCustody` is `kind = 'admin'` or
+`role = 'custodian'`, while grading needs only an active membership. A pure lab
+(`kind = 'lab'`, `role = 'grader'`) never sees the custody queue at all.
 
 ## Expected valuations
 
@@ -90,7 +96,24 @@ Pick the sale mode from `stones[].saleMode`; the pack mixes `buy_now` and
 Submit. The status must read **"Awaiting lab review"**. If it jumps straight to a
 gem ID, you are in `auto` mode and the engine is being bypassed.
 
-### 2 · Grade as the lab
+### 2 · Record custody
+
+Sign in as a member who can confirm custody — an `admin`-kind organisation, or
+any member holding `role = 'custodian'`. The stone appears under **Awaiting
+custody** in `/verify`.
+
+Press **Record arrival**, leave "matches the declared carat and dimensions"
+ticked, and confirm. It moves to the grading queue.
+
+Worth exercising the other branch on one stone: untick the box and give a reason
+of at least ten characters. The server refuses a bare "does not match" — a
+divergence with no explanation tells the grader something is wrong but not what.
+The note then appears on the grading screen in amber.
+
+Nothing here touches the chain. This is the physical event that the on-chain
+`confirmCustody` later attests to during activation.
+
+### 3 · Grade as the lab
 
 Sign in as the **verifier** account and open `/verify`. The stone appears in the
 queue. Confirm the seller's identity is nowhere on the page — not their name,
@@ -108,7 +131,7 @@ Select it, then:
 Approve. That single click runs `registerGem → confirmCustody → verifyGem →
 listGem`, plus `createDailyAuction` for auction stones.
 
-### 3 · Verify the result
+### 4 · Verify the result
 
 | Check                                      | Where                              |
 | ------------------------------------------ | ---------------------------------- |
@@ -129,7 +152,7 @@ memoised for the lifetime of the loaded module and only invalidated by the actin
 user's own transaction, and this one was signed server-side by the operator.
 Reload.
 
-### 4 · Reject one
+### 5 · Reject one
 
 Grade a stone and use **Reject** with a reason instead. Confirm status becomes
 `rejected`, the reason reaches the seller's page, no gem is registered, and

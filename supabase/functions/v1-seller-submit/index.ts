@@ -208,8 +208,8 @@ Deno.serve(async (request) => {
       }
 
       // Already queued. Re-submitting must not fabricate a second queue entry, and
-      // a seller cannot promote their own stone past a lab.
-      if (submission.status === 'awaiting_grading') {
+      // a seller cannot promote their own stone past custody intake or a lab.
+      if (['awaiting_custody', 'awaiting_grading'].includes(submission.status)) {
         return json({ ...responseFor(submission), verificationMode: mode });
       }
       if (submission.status !== 'submitted') {
@@ -225,16 +225,21 @@ Deno.serve(async (request) => {
       }
 
       /*
-       * Lab mode stops here. Nothing is written on-chain and nothing is pinned:
-       * the grader chooses the primary image, that CID lives inside the metadata
-       * document, and `registerGem` fixes the document's URI permanently. A stone
-       * that is never approved therefore leaves no public trace and costs no gas.
+       * Lab mode stops here, at `awaiting_custody`. Nothing is written on-chain
+       * and nothing is pinned: the grader chooses the primary image, that CID
+       * lives inside the metadata document, and `registerGem` fixes the
+       * document's URI permanently. A stone that is never approved therefore
+       * leaves no public trace and costs no gas.
+       *
+       * Grading cannot begin until the stone physically arrives and a custodian
+       * logs it — a lab assessing the seller's photographs would defeat the point
+       * of separating claimed attributes from graded ones.
        */
       if (mode === 'lab') {
         const { data: queued, error: queueError } = await admin
           .from('seller_submissions')
           .update({
-            status: 'awaiting_grading',
+            status: 'awaiting_custody',
             verification_provider: 'lab-pending',
           })
           .eq('id', submissionId)

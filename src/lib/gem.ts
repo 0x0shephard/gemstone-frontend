@@ -1,3 +1,4 @@
+import { formatUnits } from 'viem';
 import type { Gem, GemType, DecoratedGem } from '@/services/types';
 import { fmtUsd, fmtCarats } from './format';
 
@@ -48,9 +49,16 @@ export function decorate(g: Gem): DecoratedGem {
   };
 }
 
-/** USD shortfall needed to fully fund a gem's reserve (preview only). */
-export function reserveShortfallUsd(g: Gem, reserveRatioBps = 800): number {
-  const requiredReserve = (g.value * reserveRatioBps) / 10_000;
-  const fundedReserve = (requiredReserve * g.reserve) / 100;
-  return Math.max(0, requiredReserve - fundedReserve);
+/**
+ * USD shortfall needed to fully fund a gem's reserve.
+ *
+ * Reads the figure the chain reported (`ReserveManager.shortfallUsd`) rather
+ * than re-deriving it. This previously assumed a flat 800 bps reserve ratio,
+ * which matches no bracket in the deployed table — reserves are 1000 bps below
+ * $1,000 and 400 bps above it. Every quoted total was therefore wrong: understated
+ * by a fifth on small stones and doubled on large ones, while `FundReserveModal`
+ * displayed the guess and sent the real value, so the two disagreed on screen.
+ */
+export function reserveShortfallUsd(g: Gem): number {
+  return Number(formatUnits(g.reserveShortfallUsd, 18));
 }

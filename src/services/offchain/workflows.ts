@@ -158,14 +158,17 @@ export async function submitSellerGem(
       sellerWallet: input.sellerWallet,
     });
     /*
-     * `awaiting_grading` is the lab path's success state, not a failure. It was
-     * missing here when submissions stopped going straight through, which
-     * reported a correctly queued stone as rejected evidence.
+     * No allow-list of statuses here, deliberately. `invokeEdgeFunction` already
+     * throws on any non-2xx and on an inline `error`, so reaching this line means
+     * the server accepted the submission — whatever stage it routed it to.
+     *
+     * Enumerating the successful statuses instead broke twice in a row: once when
+     * the lab path introduced `awaiting_grading`, and again when custody intake
+     * introduced `awaiting_custody`. Each time a correctly queued stone was
+     * reported to the seller as rejected evidence. The client has no business
+     * knowing the server's workflow stages.
      */
-    const status = String(verification?.status);
-    if (!['awaiting_grading', 'approved', 'registered'].includes(status)) {
-      throw new Error(`The submission could not be verified (status: ${status})`);
-    }
+    const status = String(verification?.status ?? 'submitted');
     return { submissionId, status };
   } catch (uploadError) {
     if (!verificationStarted) {
@@ -185,7 +188,9 @@ export interface SellerSubmissionSummary {
   status:
     | 'submitted'
     | 'in_review'
-    /** Queued for a grading lab. Nothing is on-chain and nothing is published. */
+    /** Evidence accepted; waiting for the stone to physically arrive. */
+    | 'awaiting_custody'
+    /** In the vault and logged. Queued for a grading lab, nothing on-chain yet. */
     | 'awaiting_grading'
     | 'graded'
     | 'expert_review'

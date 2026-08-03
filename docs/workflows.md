@@ -41,13 +41,38 @@ SellerPage → invoke v1-seller-submit  action=verify
   ├─ requireLinkedWallet()             SIWE-verified primary wallet, else 403
   ├─ assertEvidenceComplete()          ≥1 certificate and ≥1 image, ≤10 images
   └─ verificationMode(admin)           protocol_settings.verification_mode
-       ├─ 'lab'  → status = 'awaiting_grading'   ← stops here, nothing on-chain
+       ├─ 'lab'  → status = 'awaiting_custody'   ← stops here, nothing on-chain
        └─ 'auto' → status = 'approved' → A4 with allowAutomaticValuation: true
 ```
 
 Only an `org_admin` of an `admin`-kind organisation can change the mode, through
 `v1-verification-settings`. `protocol_settings` has no client write policy, so a
 seller cannot route their own stone around a lab.
+
+### A2b. Custody intake — physical, off-chain
+
+```
+VerifyPage custody queue → v1-custody-confirm
+  ├─ canConfirmCustody()   kind = 'admin', or role = 'custodian'
+  ├─ records custody_received_at / _by / _organization,
+  │           custody_condition_notes, custody_matches_declared
+  └─ status = 'awaiting_custody' → 'awaiting_grading'
+```
+
+This is the step that makes grading meaningful. Without it the protocol asserted
+custody the instant a lab approved, with nobody having received anything — and
+the lab was assessing the seller's photographs, which is exactly what separating
+claimed attributes from graded ones exists to prevent.
+
+Note there are **two distinct things** called custody. This is the physical
+event. `GemRegistry.confirmCustody` in A4 is a mechanical state transition that
+cannot be moved out of the atomic sequence, because `verifyGem` requires
+`CustodyConfirmed` and `registerGem` cannot run before grading. The on-chain call
+attests to what was recorded here.
+
+A divergence between the received stone and the seller's declaration is flagged
+rather than rejected: the grader's own measurements are authoritative, and the
+note is surfaced to them.
 
 ### A3. Grading — the lab's decision
 
@@ -220,7 +245,8 @@ configuration report instead.
 | State                                    | Meaning                                  | On-chain? | Recoverable                                |
 | ---------------------------------------- | ---------------------------------------- | --------- | ------------------------------------------ |
 | `submitted`                              | Uploaded, not yet routed                 | no        | seller re-runs `action=verify`             |
-| `awaiting_grading`                       | In the lab queue                         | no        | a grader approves or rejects               |
+| `awaiting_custody`                       | Accepted; stone not yet received         | no        | a custodian records its arrival            |
+| `awaiting_grading`                       | In the vault, in the lab queue           | no        | a grader approves or rejects               |
 | `rejected`                               | Lab refused it, reason recorded          | no        | nothing to unwind                          |
 | `approved` + `activation_state='failed'` | Valuation durable, chain work incomplete | partly    | retry resumes from the last completed step |
 | `registered`                             | Listed, or auction live                  | yes       | terminal                                   |

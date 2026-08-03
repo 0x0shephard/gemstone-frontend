@@ -167,6 +167,19 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
  */
 export interface VerifyOptions {
   minimumConfirmations?: number;
+  /**
+   * How many confirmations must come from a gateway that is *not* the pinning
+   * provider.
+   *
+   * This is the check that carries the weight. IPFS is content-addressed, so a
+   * single gateway returning bytes that match what we published already
+   * disproves the one real risk — that the provider reported a CID describing
+   * different content. Additional confirmations are redundancy against a flaky
+   * gateway, which is why they may come from the provider's own endpoint.
+   */
+  minimumIndependentConfirmations?: number;
+  /** Gateways operated by the pinning provider. Excluded from the independence count. */
+  providerGateways?: readonly string[];
   label?: string;
   /** Passes over the gateway list. Each pass re-tries gateways that have not yet confirmed. */
   attempts?: number;
@@ -189,19 +202,30 @@ export async function verifyPublishedBytes(
 
   const {
     minimumConfirmations = 2,
+    minimumIndependentConfirmations = 1,
+    providerGateways = [],
     label = 'Content',
     /*
      * Read-back runs immediately after pinning, and content needs a moment to
      * propagate to gateways that have never seen it. Public gateways also
      * rate-limit datacenter egress, which is transient. A single pass turned
      * both into a permanent activation failure.
+     *
+     * The budget is sized against a measurement rather than a guess: a cold
+     * fetch of freshly pinned content took ~10s on its own, so the original
+     * 4s + 8s of waiting expired before propagation had a chance to finish.
      */
-    attempts = 3,
-    retryDelayMs = 4_000,
+    attempts = 4,
+    retryDelayMs = 5_000,
     sleep = defaultSleep,
   } = options;
 
+  const provider = new Set(providerGateways.map((gateway) => gateway.replace(/\/$/, '')));
+  const isIndependent = (gateway: string) => !provider.has(gateway.replace(/\/$/, ''));
   const confirmed = new Set<string>();
+  const independentCount = () => [...confirmed].filter(isIndependent).length;
+  const satisfied = () =>
+    confirmed.size >= minimumConfirmations && independentCount() >= minimumIndependentConfirmations;
   let failures: VerificationResult['failures'] = [];
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -212,7 +236,9 @@ export async function verifyPublishedBytes(
       if (confirmed.has(gateway)) continue;
       const url = `${gateway.replace(/\/$/, '')}/${cid}`;
       try {
-        const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
+        // 15s cut off cold DHT lookups, which were measured at ~10s and are
+        // precisely the case verification exists to wait for.
+        const response = await fetchImpl(url, { signal: AbortSignal.timeout(25_000) });
         if (!response.ok) {
           failures.push({ gateway, reason: `${response.status} ${response.statusText}` });
           continue;
@@ -226,9 +252,7 @@ export async function verifyPublishedBytes(
           );
         }
         confirmed.add(gateway);
-        if (confirmed.size >= minimumConfirmations) {
-          return { confirmedBy: [...confirmed], failures };
-        }
+        if (satisfied()) return { confirmedBy: [...confirmed], failures };
       } catch (error) {
         if (error instanceof Error && error.message.includes('Refusing to publish')) throw error;
         failures.push({
@@ -242,7 +266,8 @@ export async function verifyPublishedBytes(
   const detail = failures.map((failure) => `${failure.gateway}: ${failure.reason}`).join('; ');
   throw new Error(
     `${label} CID ${cid} confirmed by ${confirmed.size} of ${minimumConfirmations} required gateways ` +
-      `after ${attempts} attempts. ${detail}`,
+      `(${independentCount()} of ${minimumIndependentConfirmations} independent) after ${attempts} ` +
+      `attempts. ${detail}`,
   );
 }
 

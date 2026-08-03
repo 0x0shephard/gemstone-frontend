@@ -19,6 +19,25 @@ import {
   type SellerSubmissionSummary,
 } from '@/services/offchain/workflows';
 
+/**
+ * What each accepted status means to the seller. Falls back to a plain
+ * acknowledgement rather than an error, because reaching this point at all means
+ * the server accepted the submission.
+ */
+const SUBMIT_OUTCOME: Record<string, string> = {
+  awaiting_custody:
+    'was accepted. Send the stone to the custodian — grading begins once it arrives and is logged.',
+  awaiting_grading: 'is queued for gemological review. A grading lab will price it before listing.',
+  approved: 'passed automatic verification and entered Sepolia activation.',
+  registered: 'passed automatic verification and is now listed.',
+};
+
+/** Seller-facing label for each workflow stage. */
+const STATUS_LABEL: Record<string, string> = {
+  awaiting_custody: 'Awaiting arrival',
+  awaiting_grading: 'Awaiting lab review',
+};
+
 const EMPTY_ATTRIBUTES: SellerAttributes = {
   name: '',
   gemstoneType: '',
@@ -103,10 +122,7 @@ export default function SellerPage() {
         // Which path the submission took is the operator's setting, not the
         // seller's, so the confirmation has to follow the status rather than
         // assert one of them.
-        message:
-          status === 'awaiting_grading'
-            ? `Submission ${submissionId} is queued for gemological review. A grading lab will price it before it is listed.`
-            : `Submission ${submissionId} passed automatic verification and entered Sepolia activation.`,
+        message: `Submission ${submissionId} ${SUBMIT_OUTCOME[status] ?? 'was accepted.'}`,
       });
       setAttributes(EMPTY_ATTRIBUTES);
       setSaleMode('');
@@ -126,6 +142,17 @@ export default function SellerPage() {
 
   const intakeEnabled = Boolean(user && walletVerified);
 
+  /*
+   * The seller's own consigned stones, matched through their submissions.
+   * This previously rendered `gems.slice(0, 3)` — the first three gems in the
+   * protocol regardless of who consigned them, so every seller saw the same
+   * unrelated inventory presented as theirs.
+   */
+  const consignedGemIds = new Set(
+    submissions.map((submission) => submission.onchainGemId).filter(Boolean),
+  );
+  const consignedGems = gems.filter((gem) => consignedGemIds.has(gem.gemId.toString()));
+
   async function retryActivation(submissionId: string) {
     setActivationId(submissionId);
     setResult(undefined);
@@ -141,6 +168,10 @@ export default function SellerPage() {
         ok: false,
         message: error instanceof Error ? error.message : 'Activation retry failed',
       });
+      // A failed attempt still advances `activation_state` and `activation_error`.
+      // Without this the row keeps rendering the previous failure beside a banner
+      // describing the current one, which reads as two separate problems.
+      await reloadSubmissions();
     } finally {
       setActivationId(undefined);
     }
@@ -464,9 +495,8 @@ export default function SellerPage() {
                     >
                       {activated
                         ? `Gem #${submission.onchainGemId}`
-                        : submission.status === 'awaiting_grading'
-                          ? 'Awaiting lab review'
-                          : submission.status.replaceAll('_', ' ')}
+                        : (STATUS_LABEL[submission.status] ??
+                          submission.status.replaceAll('_', ' '))}
                     </StatusBadge>
                     {resumable && (
                       <Button
@@ -508,21 +538,34 @@ export default function SellerPage() {
 
       <div>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-[16px] font-semibold text-ink">Registered gems</h3>
+          <h3 className="text-[16px] font-semibold text-ink">Your registered gems</h3>
           {!onChainApproved && (
             <StatusBadge tone="warning">Activation starts on submission</StatusBadge>
           )}
         </div>
-        <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
-          {gems.slice(0, 3).map((gem) => (
-            <GemCard
-              key={gem.gemId.toString()}
-              gem={gem}
-              ctaLabel="Manage →"
-              href={`/gem/${gem.gemId}?manage=1`}
-            />
-          ))}
-        </div>
+        {consignedGems.length === 0 ? (
+          <Card className="p-6">
+            <p className="text-[13px] text-ink-muted">
+              Nothing registered yet. A stone appears here once a grading lab approves it and the
+              protocol registers it on-chain.
+            </p>
+          </Card>
+        ) : (
+          <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
+            {consignedGems.map((gem) => (
+              <GemCard
+                key={gem.gemId.toString()}
+                gem={gem}
+                ctaLabel="Manage →"
+                href={`/gem/${gem.gemId}?manage=1`}
+              />
+            ))}
+          </div>
+        )}
+        <p className="mt-3 text-[11.5px] text-ink-dim">
+          These are held by the protocol as primary inventory until they sell. No NFT exists yet, so
+          they do not appear in your portfolio — that lists tokens you own.
+        </p>
       </div>
     </div>
   );

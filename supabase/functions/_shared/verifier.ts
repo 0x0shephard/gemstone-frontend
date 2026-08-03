@@ -15,8 +15,29 @@ export interface VerifierMembership {
   organizationId: string;
   organizationName: string;
   kind: 'lab' | 'admin';
-  role: 'grader' | 'org_admin';
+  role: 'grader' | 'org_admin' | 'custodian';
   dailyValuationLimit: number;
+}
+
+/**
+ * Who may attest that a stone physically arrived.
+ *
+ * The operator address is `gem.custodian` on-chain, so an admin organisation is
+ * the party that actually holds the stone and can speak to its arrival. A
+ * dedicated `custodian` role exists alongside that so receiving and grading can
+ * be separate duties, and so a third-party vault can be onboarded later without
+ * granting it grading authority.
+ */
+export function canConfirmCustody(membership: VerifierMembership): boolean {
+  return membership.kind === 'admin' || membership.role === 'custodian';
+}
+
+/** Thrown when a member without custody authority tries to record an intake. */
+export class NotACustodianError extends Error {
+  constructor() {
+    super('Confirming custody requires an administrator or custodian membership');
+    this.name = 'NotACustodianError';
+  }
 }
 
 /** Thrown when the caller is not an active verifier. */
@@ -100,7 +121,11 @@ export async function assertWithinDailyLimit(
  * the seller's identity. Graders assess the stone and its evidence; knowing whose
  * stone it is serves no grading purpose and creates a conflict of interest.
  */
-export const QUEUE_COLUMNS = 'id,gem_name,carats,attributes,graded_attributes,status,created_at';
+export const QUEUE_COLUMNS =
+  'id,gem_name,carats,attributes,graded_attributes,status,created_at,' +
+  // Intake findings travel with the stone: a grader should know the received
+  // article diverged from what the seller declared before measuring it.
+  'custody_received_at,custody_condition_notes,custody_matches_declared';
 
 export interface QueueRow {
   id: string;
@@ -110,4 +135,7 @@ export interface QueueRow {
   graded_attributes: Record<string, unknown> | null;
   status: string;
   created_at: string;
+  custody_received_at: string | null;
+  custody_condition_notes: string | null;
+  custody_matches_declared: boolean | null;
 }

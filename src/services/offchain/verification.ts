@@ -1,3 +1,4 @@
+import { usdFromBaseUnits as usdFromBase } from '@/lib/format';
 import { invokeEdgeFunction } from './invoke';
 
 /**
@@ -18,6 +19,11 @@ export interface QueueItem {
   graded_attributes: Record<string, unknown> | null;
   status: string;
   created_at: string;
+  /** Null until a custodian logs the stone's physical arrival. */
+  custody_received_at: string | null;
+  custody_condition_notes: string | null;
+  /** False when the received stone diverged from what the seller declared. */
+  custody_matches_declared: boolean | null;
 }
 
 export interface EvidenceFile {
@@ -95,12 +101,17 @@ export type VerificationMode = 'lab' | 'auto';
 
 export interface QueueResponse {
   organization: string;
-  role: string;
+  role: 'grader' | 'org_admin' | 'custodian';
   kind: 'lab' | 'admin';
   verificationMode: VerificationMode;
   canManageSettings: boolean;
+  /** Admin organisations and members holding the `custodian` role. */
+  canConfirmCustody: boolean;
   matrix: MatrixOptions;
+  /** Stones physically received and awaiting grading. */
   queue: QueueItem[];
+  /** Stones not yet arrived. Empty for members without custody authority. */
+  custodyQueue: QueueItem[];
 }
 
 /** Returns null when the signed-in user is not an active verifier. */
@@ -160,6 +171,23 @@ export async function submitGrading(
   return invoke('v1-verification-grade', { submissionId, graded, primaryImageId });
 }
 
+/**
+ * Records that a stone physically arrived, releasing it to the grading queue.
+ *
+ * Nothing on-chain. `GemRegistry.confirmCustody` stays inside the atomic
+ * activation sequence; this is the physical event it later attests to.
+ */
+export async function confirmCustody(
+  submissionId: string,
+  input: { matchesDeclared: boolean; conditionNotes: string },
+): Promise<{ status: string }> {
+  return invoke('v1-custody-confirm', {
+    submissionId,
+    matchesDeclared: input.matchesDeclared,
+    conditionNotes: input.conditionNotes,
+  });
+}
+
 /** Refuses a stone. Writes nothing on-chain and pins nothing. */
 export async function rejectSubmission(
   submissionId: string,
@@ -169,4 +197,6 @@ export async function rejectSubmission(
 }
 
 export const ppmToNumber = (ppm: string): number => Number(ppm) / 1_000_000;
-export const usdFromBaseUnits = (value: string): number => Number(BigInt(value) / 10n ** 18n);
+// Delegates so the grading portal cannot drift from the rest of the UI; the
+// previous integer division floored every fractional dollar.
+export const usdFromBaseUnits = (value: string): number => usdFromBase(BigInt(value));

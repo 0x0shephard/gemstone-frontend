@@ -3,7 +3,12 @@ import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { matrixOptions } from '../_shared/valuationMatrix.ts';
 import { verificationMode } from '../_shared/settings.ts';
-import { NotAVerifierError, QUEUE_COLUMNS, requireVerifier } from '../_shared/verifier.ts';
+import {
+  canConfirmCustody,
+  NotAVerifierError,
+  QUEUE_COLUMNS,
+  requireVerifier,
+} from '../_shared/verifier.ts';
 
 /**
  * Submissions awaiting grading, plus the evidence for one of them.
@@ -101,6 +106,24 @@ Deno.serve(async (request) => {
       .limit(100);
     if (error) throw error;
 
+    /*
+     * Stones that have not physically arrived. Fetched only for members who can
+     * act on them — a grading lab has no use for an intake list it cannot clear,
+     * and showing it would imply an authority it does not have.
+     */
+    const custodyAuthorised = canConfirmCustody(membership);
+    let custodyQueue: unknown[] = [];
+    if (custodyAuthorised) {
+      const { data: awaiting, error: custodyError } = await admin
+        .from('seller_submissions')
+        .select(QUEUE_COLUMNS)
+        .eq('status', 'awaiting_custody')
+        .order('created_at', { ascending: true })
+        .limit(100);
+      if (custodyError) throw custodyError;
+      custodyQueue = awaiting ?? [];
+    }
+
     return json({
       organization: membership.organizationName,
       role: membership.role,
@@ -109,8 +132,10 @@ Deno.serve(async (request) => {
       // grader can tell whether an empty queue means idle or means auto mode.
       verificationMode: await verificationMode(admin),
       canManageSettings: membership.kind === 'admin' && membership.role === 'org_admin',
+      canConfirmCustody: custodyAuthorised,
       matrix: matrixOptions(),
       queue: data ?? [],
+      custodyQueue,
     });
   } catch (error) {
     if (error instanceof NotAVerifierError) return json({ error: 'Not found' }, 404);

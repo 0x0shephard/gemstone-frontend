@@ -8,10 +8,20 @@ import { groupForPath } from './navigation';
 import { ColorSchemeToggle } from '@/components/theme/ColorSchemeToggle';
 import { AccountMenu } from '@/components/auth/AccountMenu';
 import { MusdcFaucetButton } from '@/components/wallet/MusdcFaucetButton';
+import { useScrollReveal } from '@/hooks/useScrollReveal';
 
 /** App layout: hidden navigation drawer + sticky content header + routed <Outlet/>. */
 export function AppShell() {
   const { pathname } = useLocation();
+  /*
+   * Mounted here rather than per page. `[data-reveal]` is `opacity: 0` until
+   * revealed, so a routed page that forgot to call this rendered its gem cards
+   * permanently invisible — which is what happened to the profile and seller
+   * pages. Keyed on the path so each navigation re-observes.
+   *
+   * LandingPage sits outside this shell and keeps its own call.
+   */
+  useScrollReveal([pathname]);
   const { title, subtitle } = metaForPath(pathname);
   const group = groupForPath(pathname);
   const [sidebarOpen, setSidebarOpen] = useState(false);

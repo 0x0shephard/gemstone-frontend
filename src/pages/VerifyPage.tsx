@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Skeleton } from '@/components/ui/States';
 import { useAuth } from '@/providers/AuthProvider';
 import {
+  confirmCustody,
   loadQueue,
   loadSubmission,
   previewPrice,
@@ -61,7 +62,13 @@ export default function VerifyPage() {
   const [mode, setMode] = useState<VerificationMode>('lab');
   const [modePending, setModePending] = useState<VerificationMode>();
   const [canManage, setCanManage] = useState(false);
+  const [canCustody, setCanCustody] = useState(false);
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [custodyQueue, setCustodyQueue] = useState<QueueItem[]>([]);
+  const [intakeId, setIntakeId] = useState<string>();
+  const [intakeNotes, setIntakeNotes] = useState('');
+  const [intakeMatches, setIntakeMatches] = useState(true);
+  const [intakeBusy, setIntakeBusy] = useState(false);
   const [selected, setSelected] = useState<QueueItem>();
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
@@ -86,7 +93,9 @@ export default function VerifyPage() {
       setMatrix(data.matrix);
       setMode(data.verificationMode);
       setCanManage(data.canManageSettings);
+      setCanCustody(data.canConfirmCustody);
       setQueue(data.queue);
+      setCustodyQueue(data.custodyQueue ?? []);
     } finally {
       setRefreshing(false);
       setInitialising(false);
@@ -238,6 +247,44 @@ export default function VerifyPage() {
    * routed, so nothing already in the queue changes and the reload that used to
    * follow was pure latency — and it blanked the page while it ran.
    */
+  /*
+   * Records physical arrival, which is what releases a stone to the grading
+   * queue. Nothing on-chain: `confirmCustody()` stays inside the atomic
+   * activation sequence and attests to this event afterwards.
+   */
+  async function recordIntake(submissionId: string) {
+    setIntakeBusy(true);
+    setResult(undefined);
+    try {
+      await confirmCustody(submissionId, {
+        matchesDeclared: intakeMatches,
+        conditionNotes: intakeNotes.trim(),
+      });
+      setResult({
+        tone: 'ok',
+        message: 'Custody recorded. The stone is now available for grading.',
+      });
+      setIntakeId(undefined);
+      setIntakeNotes('');
+      setIntakeMatches(true);
+      await refresh();
+    } catch (error) {
+      setResult({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'Custody confirmation failed',
+      });
+    } finally {
+      setIntakeBusy(false);
+    }
+  }
+
+  function openIntake(item: QueueItem) {
+    setIntakeId(item.id);
+    setIntakeNotes('');
+    setIntakeMatches(true);
+    setResult(undefined);
+  }
+
   async function changeMode(next: VerificationMode) {
     if (next === mode || modePending) return;
     setResult(undefined);
@@ -319,10 +366,25 @@ export default function VerifyPage() {
         </div>
       )}
 
+      {canCustody && (
+        <CustodyQueue
+          items={custodyQueue}
+          openId={intakeId}
+          notes={intakeNotes}
+          matches={intakeMatches}
+          busy={intakeBusy}
+          onOpen={openIntake}
+          onCancel={() => setIntakeId(undefined)}
+          onNotes={setIntakeNotes}
+          onMatches={setIntakeMatches}
+          onConfirm={recordIntake}
+        />
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
         <Card className="p-0">
           <div className="border-b border-line/[0.08] px-4 py-3 text-[12px] font-semibold text-ink-soft">
-            Queue
+            Awaiting grading
           </div>
           {queue.length === 0 ? (
             <p className="px-4 py-6 text-[13px] text-ink-muted">Nothing awaiting review.</p>
@@ -359,6 +421,30 @@ export default function VerifyPage() {
                   Seller claims below are unverified. Your grades are what price the stone.
                 </p>
               </div>
+
+              {/* Intake findings travel with the stone: a divergence noted on arrival
+                  is something the grader should know before measuring. */}
+              {selected.custody_received_at && (
+                <div
+                  className={`rounded-[4px] border px-3 py-2.5 text-[12.5px] ${
+                    selected.custody_matches_declared === false
+                      ? 'border-amber/25 bg-amber/[0.06] text-amber'
+                      : 'border-line/[0.08] bg-line/[0.02] text-ink-muted'
+                  }`}
+                >
+                  <span className="font-semibold">
+                    {selected.custody_matches_declared === false
+                      ? 'Received — diverges from the seller’s declaration'
+                      : 'Received and matches the declaration'}
+                  </span>
+                  <span className="ml-1.5 text-ink-dim">
+                    {new Date(selected.custody_received_at).toLocaleDateString()}
+                  </span>
+                  {selected.custody_condition_notes && (
+                    <p className="mt-1 text-ink-soft">{selected.custody_condition_notes}</p>
+                  )}
+                </div>
+              )}
 
               <dl className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-[4px] bg-line/[0.03] p-3 text-[12.5px] sm:grid-cols-3">
                 {Object.entries(selected.attributes ?? {})
@@ -550,6 +636,126 @@ export default function VerifyPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Stones that have not physically arrived yet.
+ *
+ * Rendered only for members who can clear it. A grading lab seeing an intake
+ * list it cannot act on would imply an authority it does not hold, and the
+ * stones in it are precisely the ones nobody can assess yet.
+ */
+function CustodyQueue({
+  items,
+  openId,
+  notes,
+  matches,
+  busy,
+  onOpen,
+  onCancel,
+  onNotes,
+  onMatches,
+  onConfirm,
+}: {
+  items: QueueItem[];
+  openId?: string;
+  notes: string;
+  matches: boolean;
+  busy: boolean;
+  onOpen: (item: QueueItem) => void;
+  onCancel: () => void;
+  onNotes: (value: string) => void;
+  onMatches: (value: boolean) => void;
+  onConfirm: (submissionId: string) => void | Promise<void>;
+}) {
+  return (
+    <Card className="p-0">
+      <div className="flex items-center justify-between border-b border-line/[0.08] px-4 py-3">
+        <div>
+          <h2 className="text-[13px] font-semibold text-ink">Awaiting custody</h2>
+          <p className="mt-0.5 text-[11.5px] text-ink-muted">
+            Log a stone once it physically arrives. Grading cannot start until it does.
+          </p>
+        </div>
+        <StatusBadge tone={items.length > 0 ? 'warning' : 'neutral'} dot>
+          {items.length} in transit
+        </StatusBadge>
+      </div>
+
+      {items.length === 0 ? (
+        <p className="px-4 py-5 text-[13px] text-ink-muted">Nothing awaiting arrival.</p>
+      ) : (
+        <ul>
+          {items.map((item) => (
+            <li key={item.id} className="border-b border-line/[0.06] px-4 py-3 last:border-b-0">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13.5px] font-medium text-ink">{item.gem_name}</div>
+                  <div className="mt-0.5 font-mono text-[11px] text-ink-dim">
+                    {item.carats ?? '—'} ct declared · submitted{' '}
+                    {new Date(item.created_at).toLocaleDateString()}
+                  </div>
+                </div>
+                {openId === item.id ? (
+                  <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+                    Cancel
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="secondary" onClick={() => onOpen(item)}>
+                    Record arrival
+                  </Button>
+                )}
+              </div>
+
+              {openId === item.id && (
+                <div className="mt-3 space-y-3 rounded-[4px] bg-line/[0.03] p-3">
+                  <label className="flex items-start gap-2.5 text-[12.5px] text-ink-soft">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={matches}
+                      onChange={(event) => onMatches(event.target.checked)}
+                    />
+                    <span>
+                      The stone that arrived matches the declared carat and dimensions.
+                      <span className="mt-0.5 block text-[11px] text-ink-dim">
+                        Unchecking does not reject it — the grader’s measurements are authoritative
+                        either way. It flags the divergence for them.
+                      </span>
+                    </span>
+                  </label>
+
+                  <Labeled
+                    label="Condition on arrival"
+                    hint={
+                      matches
+                        ? 'Optional. Operational record only, never published.'
+                        : 'Required — describe the divergence.'
+                    }
+                  >
+                    <textarea
+                      className={`${inputClass} min-h-[68px]`}
+                      value={notes}
+                      onChange={(event) => onNotes(event.target.value)}
+                    />
+                  </Labeled>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy || (!matches && notes.trim().length < 10)}
+                    onClick={() => void onConfirm(item.id)}
+                  >
+                    {busy ? 'Recording…' : 'Confirm custody'}
+                  </Button>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

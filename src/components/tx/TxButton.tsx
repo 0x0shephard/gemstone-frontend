@@ -17,7 +17,15 @@ interface TxButtonProps {
   size?: ButtonSize;
   block?: boolean;
   disabled?: boolean;
+  /**
+   * Called when the user dismisses a *confirmed* transaction, not the moment it
+   * confirms. Callers pass their modal's `onClose`; firing it automatically
+   * closed the dialog in the same frame the confirmation appeared, so nobody
+   * ever saw the hash or the explorer link.
+   */
   onDone?: (result: TxResult) => void;
+  /** Label for the dismissal button shown after success. */
+  doneLabel?: string;
   telemetryFlow?: string;
 }
 
@@ -34,11 +42,13 @@ export function TxButton({
   block,
   disabled,
   onDone,
+  doneLabel = 'Done',
   telemetryFlow = 'transaction',
 }: TxButtonProps) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<TxState>('idle');
   const [hash, setHash] = useState<string | null>(null);
+  const [result, setResult] = useState<TxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function run() {
@@ -48,10 +58,10 @@ export function TxButton({
     try {
       const res = await action();
       setHash(res.hash);
+      setResult(res);
       setState('success');
       captureProductEvent('transaction_confirmed', { flow: telemetryFlow, result: 'success' });
       await queryClient.invalidateQueries();
-      onDone?.(res);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Transaction failed');
       setState('error');
@@ -61,22 +71,29 @@ export function TxButton({
 
   return (
     <div className={block ? 'w-full space-y-2.5' : 'space-y-2.5'}>
-      <Button
-        variant={variant}
-        size={size}
-        block={block}
-        disabled={disabled || state === 'pending'}
-        onClick={run}
-      >
-        {state === 'pending' ? (
-          <>
-            <Spinner />
-            {pendingLabel}
-          </>
-        ) : (
-          children
-        )}
-      </Button>
+      {/*
+        Withdrawn entirely once confirmed. Leaving it mounted only re-enabled it,
+        so a second click would have run the same purchase or listing again
+        against a wallet that had already paid.
+      */}
+      {state !== 'success' && (
+        <Button
+          variant={variant}
+          size={size}
+          block={block}
+          disabled={disabled || state === 'pending'}
+          onClick={run}
+        >
+          {state === 'pending' ? (
+            <>
+              <Spinner />
+              {pendingLabel}
+            </>
+          ) : (
+            children
+          )}
+        </Button>
+      )}
 
       <div aria-live="polite">
         {state === 'pending' && (
@@ -87,18 +104,25 @@ export function TxButton({
           </div>
         )}
         {state === 'success' && hash && (
-          <a
-            href={explorerTxUrl(hash)}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center justify-between gap-3 rounded-[4px] border border-emerald/20 bg-emerald/[0.055] px-3 py-2.5 text-[11.5px] text-emerald"
-          >
-            <span className="flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-              Transaction confirmed
-            </span>
-            <span className="font-mono">{shortenAddress(hash, 6)} ↗</span>
-          </a>
+          <div className="space-y-2.5">
+            <a
+              href={explorerTxUrl(hash)}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center justify-between gap-3 rounded-[4px] border border-emerald/20 bg-emerald/[0.055] px-3 py-2.5 text-[11.5px] text-emerald"
+            >
+              <span className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
+                Transaction confirmed
+              </span>
+              <span className="font-mono">{shortenAddress(hash, 6)} ↗</span>
+            </a>
+            {onDone && (
+              <Button variant="secondary" size={size} block={block} onClick={() => onDone(result!)}>
+                {doneLabel}
+              </Button>
+            )}
+          </div>
         )}
       </div>
       {state === 'error' && (

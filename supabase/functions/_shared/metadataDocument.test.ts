@@ -282,3 +282,44 @@ describe('read-back retries', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('independent-confirmation requirement', () => {
+  const PROVIDER = 'https://provider.example';
+  const gateways = ['https://a.example', 'https://b.example', PROVIDER];
+  const document = '{"name":"Ruby Horizon"}';
+
+  it('accepts the provider as the second confirmation once one independent gateway agrees', async () => {
+    // The production case: public gateways 401 datacenter egress, so only one
+    // independent confirmation is reachable no matter how often we retry.
+    const result = await verifyPublishedDocument(
+      CID,
+      document,
+      gateways,
+      gatewayServing({ 'https://a.example': document, [PROVIDER]: document }),
+      { providerGateways: [PROVIDER], ...NO_WAIT },
+    );
+    expect(result.confirmedBy).toEqual(['https://a.example', PROVIDER]);
+  });
+
+  it('refuses when only the provider confirms, however many times it is asked', async () => {
+    // The provider echoing its own upload proves nothing about retrievability.
+    await expect(
+      verifyPublishedDocument(CID, document, gateways, gatewayServing({ [PROVIDER]: document }), {
+        providerGateways: [PROVIDER],
+        ...NO_WAIT,
+      }),
+    ).rejects.toThrow(/0 of 1 independent/i);
+  });
+
+  it('ignores a trailing slash when deciding what counts as the provider', async () => {
+    await expect(
+      verifyPublishedDocument(
+        CID,
+        document,
+        [`${PROVIDER}/`],
+        gatewayServing({ [PROVIDER]: document }),
+        { providerGateways: [PROVIDER], ...NO_WAIT },
+      ),
+    ).rejects.toThrow(/0 of 1 independent/i);
+  });
+});
