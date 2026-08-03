@@ -11,6 +11,14 @@ import {
   writeAndConfirm,
 } from './chain.ts';
 import { createMvpValuation } from './mvpPricing.ts';
+import {
+  pinningConfigured,
+  publishImage,
+  publishMetadata,
+  type PublishedImage,
+  type PublishedMetadata,
+} from './ipfs.ts';
+import { isDataUri, type PublicAttributes } from './metadataDocument.ts';
 
 type AdminClient = SupabaseClient;
 
@@ -21,6 +29,9 @@ interface SellerSubmission {
   attributes: Record<string, unknown> & { caratWeight: number };
   sale_mode: 'buy_now' | 'auction';
   metadata_uri: string;
+  metadata_cid: string | null;
+  primary_image_evidence_id: string | null;
+  primary_image_cid: string | null;
   status: string;
   approved_at: string;
   certificate_hash: Hash | null;
@@ -38,7 +49,7 @@ interface SellerSubmission {
 }
 
 const sellerColumns =
-  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at';
+  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at';
 
 async function loadSubmission(admin: AdminClient, submissionId: string): Promise<SellerSubmission> {
   const { data, error } = await admin
@@ -50,9 +61,53 @@ async function loadSubmission(admin: AdminClient, submissionId: string): Promise
   return data as SellerSubmission;
 }
 
+/**
+ * The `gem_media` row whose photograph becomes the public NFT image.
+ *
+ * The grader's choice wins; the earliest upload is the fallback for the
+ * automated path, which has no grader. Certificates are never eligible — they
+ * carry the seller's name and appraisal history, and pinning cannot be undone.
+ */
+async function resolvePrimaryImage(
+  admin: AdminClient,
+  submission: SellerSubmission,
+): Promise<{ bytes: Uint8Array; contentType: string; evidenceId: string } | undefined> {
+  const query = admin
+    .from('evidence_files')
+    .select('id,bucket,object_path,mime_type')
+    .eq('submission_id', submission.id)
+    .eq('category', 'gem_media');
+
+  const { data: media, error } = submission.primary_image_evidence_id
+    ? await query.eq('id', submission.primary_image_evidence_id).maybeSingle()
+    : await query.order('created_at').limit(1).maybeSingle();
+  if (error) throw error;
+  if (!media) {
+    // An explicit choice that cannot be found is a mismatch worth failing on; a
+    // submission with no media at all simply publishes without an image.
+    if (submission.primary_image_evidence_id) {
+      throw new Error('The selected primary image is not gemstone media for this submission');
+    }
+    return undefined;
+  }
+
+  const { data: blob, error: downloadError } = await admin.storage
+    .from(media.bucket)
+    .download(media.object_path);
+  if (downloadError || !blob) {
+    throw new Error(`Primary image could not be read from private storage: ${media.object_path}`);
+  }
+  return {
+    bytes: new Uint8Array(await blob.arrayBuffer()),
+    contentType: media.mime_type,
+    evidenceId: media.id,
+  };
+}
+
 export async function prepareSellerSubmission(
   admin: AdminClient,
   submissionId: string,
+  options: { allowAutomaticValuation?: boolean } = {},
 ): Promise<SellerSubmission> {
   let submission = await loadSubmission(admin, submissionId);
   if (!['approved', 'registered'].includes(submission.status)) {
@@ -60,6 +115,9 @@ export async function prepareSellerSubmission(
   }
 
   let evidence: { hash: Hash; canonicalPayload: string; nonce: `0x${string}` } | undefined;
+  let publication: PublishedMetadata | undefined;
+  let image: PublishedImage | undefined;
+  let imageEvidenceId: string | undefined;
   if (!submission.certificate_hash || !submission.canonical_payload) {
     const { data: files, error } = await admin
       .from('evidence_files')
@@ -73,28 +131,73 @@ export async function prepareSellerSubmission(
     if (certificateDigests.length === 0 || !submission.metadata_uri) {
       throw new Error('Approved certificates and metadata URI are required');
     }
+
+    /*
+     * Publish before committing. The commitment binds `metadataUri`, and
+     * `registerGem` writes that same URI to a field with no setter, so this is
+     * the last point at which the published document can still change.
+     *
+     * Image first, then the document that references its CID, then the
+     * commitment over the document's URI. Each step is verified against
+     * independent gateways before the next depends on it.
+     *
+     * Only inline URIs are replaced: once a submission carries a CID the
+     * document is already public and immutable. Without pinning credentials the
+     * inline document is kept, which is the Sepolia MVP path — and that path has
+     * no image, because there is nowhere public to host one.
+     */
+    let metadataUri = submission.metadata_uri;
+    if (pinningConfigured() && isDataUri(metadataUri)) {
+      const primary = await resolvePrimaryImage(admin, submission);
+      if (primary) {
+        image = await publishImage(
+          primary.bytes,
+          primary.contentType,
+          `digital-carat-gem-${submissionId}`,
+        );
+        imageEvidenceId = primary.evidenceId;
+      }
+      publication = await publishMetadata(submission.attributes as unknown as PublicAttributes, {
+        name: `digital-carat-submission-${submissionId}`,
+        image: image?.uri,
+      });
+      metadataUri = publication.uri;
+    }
+
     evidence = createCommitment({
       submissionId,
       sellerWallet: submission.seller_wallet,
       approvedAttributes: submission.attributes,
       saleMode: submission.sale_mode,
       certificateDigests,
-      metadataUri: submission.metadata_uri,
+      metadataUri,
       timestamp: new Date().toISOString(),
     });
   }
 
-  const valuation =
+  const valuationMissing =
     !submission.valuation_hash ||
     !submission.valuation_matrix_hash ||
-    !submission.approved_valuation_usd
-      ? createMvpValuation({
-          submissionId,
-          sellerWallet: submission.seller_wallet,
-          attributes: submission.attributes,
-          saleMode: submission.sale_mode,
-        })
-      : undefined;
+    !submission.approved_valuation_usd;
+
+  /*
+   * The automated figure is a test-only $500/ct rule and `approvedValuationUsd`
+   * has no setter. Under lab gating a missing valuation means the grading step
+   * did not run, so this fails loudly rather than quietly writing the fallback
+   * price a lab was supposed to replace.
+   */
+  if (valuationMissing && !options.allowAutomaticValuation) {
+    throw new Error('This submission has no graded valuation; it cannot be activated');
+  }
+
+  const valuation = valuationMissing
+    ? createMvpValuation({
+        submissionId,
+        sellerWallet: submission.seller_wallet,
+        attributes: submission.attributes,
+        saleMode: submission.sale_mode,
+      })
+    : undefined;
 
   if (evidence || valuation) {
     const { error } = await admin
@@ -105,6 +208,21 @@ export async function prepareSellerSubmission(
               certificate_hash: evidence.hash,
               canonical_payload: evidence.canonicalPayload,
               commitment_nonce: evidence.nonce,
+            }
+          : {}),
+        ...(publication
+          ? {
+              metadata_uri: publication.uri,
+              metadata_cid: publication.cid,
+              metadata_document: publication.document,
+              metadata_published_at: new Date().toISOString(),
+            }
+          : {}),
+        ...(image
+          ? {
+              primary_image_evidence_id: imageEvidenceId,
+              primary_image_cid: image.cid,
+              primary_image_published_at: new Date().toISOString(),
             }
           : {}),
         ...(valuation
@@ -131,6 +249,10 @@ export async function prepareSellerSubmission(
       {
         valuationMethod: submission.valuation_method,
         approvedValuationUsd: submission.approved_valuation_usd,
+        metadataCid: publication?.cid ?? null,
+        metadataConfirmedBy: publication?.confirmedBy ?? null,
+        imageCid: image?.cid ?? null,
+        imageConfirmedBy: image?.confirmedBy ?? null,
       },
     );
   }
@@ -227,15 +349,45 @@ async function releaseOperatorLease(admin: AdminClient, submissionId: string): P
     .eq('holder_id', submissionId);
 }
 
-export async function activateSellerSubmission(admin: AdminClient, submissionId: string) {
-  let submission = await prepareSellerSubmission(admin, submissionId);
-  if (
-    !submission.certificate_hash ||
-    !submission.valuation_hash ||
-    !submission.valuation_matrix_hash ||
-    !submission.approved_valuation_usd
-  ) {
-    throw new Error('Seller activation package is incomplete');
+/**
+ * Registers, custodies, verifies and lists a submission on-chain.
+ *
+ * Every step is idempotent and its transaction hash recorded, so a partial run
+ * can be retried without registering a second gem. `allowAutomaticValuation` is
+ * the `mvp-auto` path's opt-in to the test-only $500/ct fallback; lab-graded
+ * submissions arrive with a valuation already written and must never reach it.
+ */
+export async function activateSellerSubmission(
+  admin: AdminClient,
+  submissionId: string,
+  options: { allowAutomaticValuation?: boolean } = {},
+) {
+  /*
+   * Preparation runs inside the failure handling, not before it. It pins to IPFS
+   * and verifies read-back, which is the step most likely to fail on a bad day —
+   * and when it threw from outside this guard the row kept `activation_state =
+   * 'pending'` with a null `activation_error`, so the stall was invisible and the
+   * seller's retry button never appeared.
+   */
+  let submission: SellerSubmission;
+  try {
+    submission = await prepareSellerSubmission(admin, submissionId, options);
+    if (
+      !submission.certificate_hash ||
+      !submission.valuation_hash ||
+      !submission.valuation_matrix_hash ||
+      !submission.approved_valuation_usd
+    ) {
+      throw new Error('Seller activation package is incomplete');
+    }
+  } catch (error) {
+    const message = safeErrorMessage(error, 'Seller activation could not be prepared');
+    await persistStep(admin, submissionId, {
+      activation_state: 'failed',
+      activation_error: message.slice(0, 2_000),
+      activation_started_at: null,
+    });
+    throw error;
   }
   const chain = operatorChain();
   await assertOperatorChain(chain);

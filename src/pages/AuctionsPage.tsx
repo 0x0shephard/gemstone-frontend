@@ -9,11 +9,13 @@ import { CardGridSkeleton, ErrorState, EmptyState } from '@/components/ui/States
 import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
-import { fmtUsd } from '@/lib/format';
+import { fmtUsdBaseUnits } from '@/lib/format';
 import type { Auction, DecoratedGem } from '@/services/types';
 import { useAccount } from 'wagmi';
 
-const usdFromWad = (v: bigint) => fmtUsd(Number(v / 10n ** 18n));
+// Was `Number(v / 10n ** 18n)` — integer division, so every floor and bid was
+// rounded down to whole dollars and anything under $1 showed as $0.
+const usdFromWad = (v: bigint) => fmtUsdBaseUnits(v);
 
 interface RowProps {
   auction: Auction;

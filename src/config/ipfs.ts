@@ -6,7 +6,8 @@
 export const PUBLIC_IPFS_GATEWAYS = [
   'https://ipfs.io/ipfs/',
   'https://dweb.link/ipfs/',
-  'https://cloudflare-ipfs.com/ipfs/',
+  // `cloudflare-ipfs.com` was retired by Cloudflare and no longer resolves.
+  'https://w3s.link/ipfs/',
 ] as const;
 
 const trimTrailingSlash = (gateway: string): string => gateway.replace(/\/+$/, '');

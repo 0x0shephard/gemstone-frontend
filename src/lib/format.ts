@@ -1,4 +1,5 @@
 /** Formatting helpers shared across the UI. */
+import { formatUnits } from 'viem';
 
 export function fmtUsd(n: number, opts?: { compact?: boolean }): string {
   if (opts?.compact && Math.abs(n) >= 1000) {
@@ -12,6 +13,37 @@ export function fmtUsd(n: number, opts?: { compact?: boolean }): string {
 
 export function fmtCarats(n: number): string {
   return n.toFixed(2) + ' ct';
+}
+
+/**
+ * Converts an 18-decimal USD base-unit amount to a number, keeping the cents.
+ *
+ * Dividing a `bigint` by `10n ** 18n` is integer division, so it silently floors
+ * every fractional dollar — a $3,672.75 bid renders as $3,672 and anything under
+ * a dollar renders as $0. `formatUnits` keeps the fraction.
+ */
+export function usdFromBaseUnits(value: bigint): number {
+  return Number(formatUnits(value, 18));
+}
+
+/**
+ * Renders an 18-decimal USD base-unit amount, tolerating exponential input.
+ *
+ * `numeric` columns arrive from PostgREST unquoted, so any that escape a
+ * `::text` cast reach the browser as JS numbers. Above 1e21 their `toString()`
+ * is exponential, and `BigInt()` throws on that — which took down the whole
+ * seller page rather than one table cell. Queries should still cast; this makes
+ * the failure a dash instead of a white screen.
+ */
+export function fmtUsdBaseUnits(value: string | number | bigint | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const text = String(value);
+  try {
+    return fmtUsd(usdFromBaseUnits(BigInt(text)));
+  } catch {
+    const asNumber = Number(text);
+    return Number.isFinite(asNumber) ? fmtUsd(asNumber / 1e18) : '—';
+  }
 }
 
 export function fmtPct(n: number): string {

@@ -183,6 +183,7 @@ export function BuyModal({
         }
         pendingLabel="Processing purchase…"
         onDone={onClose}
+        doneLabel="Done — view in your portfolio"
       >
         Pay {fmtUsd(total)}
       </TxButton>
