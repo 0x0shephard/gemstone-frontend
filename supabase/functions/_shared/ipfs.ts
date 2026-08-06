@@ -63,9 +63,11 @@ function allGateways(): string[] {
  * to demonstrate *liveness*, which any one of them — including the provider's —
  * can do.
  *
- * Only when the CID cannot be derived (content past the single-block limit) does
- * the original rule apply, where an independent gateway has to vouch for bytes
- * we could not verify ourselves.
+ * The fallback — an independent gateway vouching for bytes we could not verify
+ * ourselves — now applies only to empty content, which nothing here publishes.
+ * It used to apply to anything over one 262144-byte chunk, which is every real
+ * seller photograph, so in practice the strict path was the normal one and it
+ * failed against gateways that refuse datacenter egress.
  */
 async function provePublished(
   cid: string,

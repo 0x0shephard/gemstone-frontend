@@ -65,3 +65,26 @@ describe('invokeEdgeFunction', () => {
     ).resolves.toMatchObject({ error: 'Daily valuation limit reached' });
   });
 });
+
+describe('network failures', () => {
+  beforeEach(() => invokeMock.mockReset());
+
+  it('replaces the SDK transport message with something actionable', async () => {
+    // FunctionsFetchError: the request never reached the server. Its own wording
+    // reads like an application bug rather than a connectivity problem.
+    invokeMock.mockResolvedValue({
+      data: null,
+      error: new Error('Failed to send a request to the Edge Function'),
+    });
+    await expect(invokeEdgeFunction('v1-custody-confirm')).rejects.toThrow(
+      /could not reach the server/i,
+    );
+  });
+
+  it('still prefers a real server message when there is one', async () => {
+    invokeMock.mockResolvedValue(
+      httpError({ error: 'This submission is not awaiting custody intake' }),
+    );
+    await expect(invokeEdgeFunction('v1-custody-confirm')).rejects.toThrow(/awaiting custody/i);
+  });
+});
