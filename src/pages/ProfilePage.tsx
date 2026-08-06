@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { usePendingTreasuryPayout, useProfile } from '@/hooks/useData';
 import { useAuth } from '@/providers/AuthProvider';
@@ -21,7 +21,8 @@ import { PendingRefunds } from '@/components/wallet/PendingRefunds';
 import { TxButton } from '@/components/tx/TxButton';
 import { dataService } from '@/services';
 
-type Tab = 'owned' | 'bids' | 'offers' | 'swaps' | 'redeem' | 'history';
+const TABS = ['owned', 'bids', 'offers', 'swaps', 'redeem', 'history'] as const;
+type Tab = (typeof TABS)[number];
 
 export default function ProfilePage() {
   const { address } = useAccount();
@@ -30,15 +31,29 @@ export default function ProfilePage() {
   const { data: profile, isLoading } = useProfile(address);
   const { data: pendingProceeds, refetch: refetchPendingProceeds } =
     usePendingTreasuryPayout(address);
-  const [tab, setTab] = useState<Tab>('owned');
+  /*
+   * Deep-linkable so the mobile dock's "Token Bids" can land directly on that
+   * tab. Kept in the URL rather than local state alone, otherwise the dock entry
+   * and the Portfolio entry would be indistinguishable destinations.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requested = searchParams.get('tab');
+  const tab: Tab = TABS.includes(requested as Tab) ? (requested as Tab) : 'owned';
+  const setTab = (next: Tab) =>
+    setSearchParams(next === 'owned' ? {} : { tab: next }, { replace: true });
 
   const name = (user?.user_metadata?.full_name as string) || user?.email || 'Guest';
 
+  /*
+   * "Bids" means two different things in this protocol and the old labels did
+   * not distinguish them: `bids` are auction bids placed while a stone is still
+   * unminted, and `offers` are bids on an already-minted token.
+   */
   const tabs: TabDef<Tab>[] = [
-    { key: 'owned', label: 'Owned NFTs', count: profile?.owned.length ?? 0 },
-    { key: 'bids', label: 'Active bids', count: profile?.bids.length ?? 0 },
-    { key: 'offers', label: 'Offers', count: profile?.offers.length ?? 0 },
-    { key: 'swaps', label: 'Swap requests', count: profile?.swaps.length ?? 0 },
+    { key: 'owned', label: 'Owned Tokens', count: profile?.owned.length ?? 0 },
+    { key: 'bids', label: 'Minting Bids', count: profile?.bids.length ?? 0 },
+    { key: 'offers', label: 'Token Bids', count: profile?.offers.length ?? 0 },
+    { key: 'swaps', label: 'Swaps', count: profile?.swaps.length ?? 0 },
     { key: 'redeem', label: 'Redemption', count: profile?.redemptions.length ?? 0 },
     { key: 'history', label: 'History', count: '—' },
   ];
@@ -99,10 +114,13 @@ export default function ProfilePage() {
       )}
 
       {/* KPIs */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatTile label="Portfolio value" value={fmtUsd(profile?.stats.portfolioValueUsd ?? 0)} />
-        <StatTile label="Owned NFTs" value={profile?.stats.ownedCount ?? 0} />
-        <StatTile label="Active bids" value={profile?.stats.activeBids ?? 0} />
+        <StatTile label="Owned Tokens" value={profile?.stats.ownedCount ?? 0} />
+        <StatTile label="Minting Bids" value={profile?.stats.activeBids ?? 0} />
+        {/* Counted from the lists themselves; `stats` carries no offer or swap total. */}
+        <StatTile label="Token Bids" value={profile?.offers.length ?? 0} />
+        <StatTile label="Swaps" value={profile?.swaps.length ?? 0} />
         <StatTile
           label="Reserve shortfall"
           value={fmtUsd(profile?.stats.reserveShortfallUsd ?? 0)}

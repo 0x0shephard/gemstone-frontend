@@ -6,8 +6,22 @@ import { navigationGroups, primaryMobileItems } from './navigation';
 import { cn } from '@/lib/cn';
 
 export function MobileDock() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [open, setOpen] = useState(false);
+
+  /*
+   * "Token Bids" and "Portfolio" are both `/profile`, differing only by `?tab`.
+   * `NavLink` compares pathnames alone, so it would light both up at once.
+   * A tab-bearing entry is active only for its own tab; the plain entry only
+   * when no tab is selected.
+   */
+  const isItemActive = (to: string) => {
+    const [path, query] = to.split('?');
+    if (pathname !== path) return false;
+    const currentTab = new URLSearchParams(search).get('tab');
+    if (!query) return !currentTab;
+    return new URLSearchParams(query).get('tab') === currentTab;
+  };
 
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
@@ -88,12 +102,10 @@ export function MobileDock() {
           <NavLink
             key={item.to}
             to={item.to}
-            className={({ isActive }) =>
-              cn(
-                'flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-[4px] text-[10.5px] font-medium transition-colors',
-                isActive ? 'bg-line/[0.075] text-ink' : 'text-ink-dim',
-              )
-            }
+            className={cn(
+              'flex min-h-[52px] flex-col items-center justify-center gap-1 rounded-[4px] text-[10.5px] font-medium transition-colors',
+              isItemActive(item.to) ? 'bg-line/[0.075] text-ink' : 'text-ink-dim',
+            )}
           >
             {item.icon}
             <span>{item.shortLabel ?? item.label}</span>

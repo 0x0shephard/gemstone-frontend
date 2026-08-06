@@ -29,7 +29,7 @@ export const navigationGroups: Array<{ label: string; items: NavItem[] }> = [
     label: 'Discover',
     items: [
       {
-        label: 'Marketplace',
+        label: 'Token Marketplace',
         shortLabel: 'Market',
         to: '/marketplace',
         icon: (
@@ -40,7 +40,8 @@ export const navigationGroups: Array<{ label: string; items: NavItem[] }> = [
         ),
       },
       {
-        label: 'Auctions',
+        label: 'Gemstone Auctions',
+        shortLabel: 'Auctions',
         to: '/auctions',
         icon: (
           <Icon>
@@ -76,7 +77,6 @@ export const navigationGroups: Array<{ label: string; items: NavItem[] }> = [
       },
       {
         label: 'Portfolio',
-        shortLabel: 'Vault',
         to: '/profile',
         icon: (
           <Icon>
@@ -118,10 +118,29 @@ export const navigationGroups: Array<{ label: string; items: NavItem[] }> = [
   },
 ];
 
+/**
+ * Bids placed on an already-minted token — the Portfolio's "Token Bids" tab.
+ *
+ * Not a group entry: it is a view of Portfolio rather than a separate
+ * destination, and duplicating it in the sidebar would imply otherwise. Swaps
+ * moves to the dock's "More" sheet, where the sidebar still lists it.
+ */
+export const tokenBidsItem: NavItem = {
+  label: 'Token Bids',
+  shortLabel: 'Bids',
+  to: '/profile?tab=offers',
+  icon: (
+    <Icon>
+      <path d="M4 18h16M7 18v-5M12 18V8M17 18v-8" />
+      <path d="m5 9 4-3 4 2 6-4" />
+    </Icon>
+  ),
+};
+
 export const primaryMobileItems = [
   navigationGroups[0].items[0],
   navigationGroups[0].items[1],
-  navigationGroups[1].items[0],
+  tokenBidsItem,
   navigationGroups[1].items[2],
 ];
 

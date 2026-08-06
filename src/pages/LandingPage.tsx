@@ -56,7 +56,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link to="/marketplace">
-              <Button size="lg">Are you an investor? Discover our Marketplace</Button>
+              <Button size="lg">Are you a buyer? Discover our Marketplace</Button>
             </Link>
             <Link to="/seller">
               <Button variant="ghost" size="lg">
