@@ -1,9 +1,28 @@
 import { z } from 'zod';
 
+/**
+ * Absolute-URL check that works on browsers this app still supports.
+ *
+ * `URL.canParse` needs Chrome 120 / Safari 17 / Firefox 115, all from late 2023,
+ * while the build targets Safari 16 — and transpilation rewrites syntax, never
+ * polyfills APIs. On an older browser it was `undefined`, and because this
+ * module is evaluated on import by nearly the whole app, the `TypeError` fired
+ * before React mounted. The `Sentry.ErrorBoundary` in `App.tsx` cannot catch
+ * that, so the page rendered blank with nothing in the DOM and no report.
+ */
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const optionalUrl = z
   .string()
   .trim()
-  .refine((value) => value === '' || URL.canParse(value), 'Must be an absolute URL');
+  .refine((value) => value === '' || isAbsoluteUrl(value), 'Must be an absolute URL');
 
 const supabaseUrl = z
   .string()

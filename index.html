@@ -25,5 +25,46 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      /*
+       * Boot guard. Deliberately ES5 and inline, because it has to run on the
+       * browsers that fail to run the app bundle at all.
+       *
+       * `Sentry.ErrorBoundary` only catches errors thrown once React is
+       * rendering. A module that throws while evaluating — an API the browser
+       * lacks, a failed chunk fetch — kills the bundle before any of that
+       * mounts, leaving a blank page with nothing in the DOM. That happened on
+       * older browsers via `URL.canParse` and was invisible to reporting.
+       */
+      (function () {
+        var reported = false;
+        function report(detail) {
+          var root = document.getElementById('root');
+          if (reported || !root || root.firstChild) return;
+          reported = true;
+          root.setAttribute('role', 'alert');
+          root.style.cssText =
+            'font:15px/1.6 system-ui,sans-serif;max-width:34rem;margin:14vh auto;padding:0 1.5rem;color:#2A2622';
+          root.innerHTML =
+            '<h1 style="font-size:19px;margin:0 0 .6rem">This browser cannot run Digital Carat</h1>' +
+            '<p style="margin:0 0 .9rem;color:#6B635C">The application failed to start. This is usually an out-of-date browser — updating it, or opening the site in the latest Chrome, Safari, Firefox or Edge, should resolve it.</p>' +
+            '<p style="font:12px/1.5 ui-monospace,monospace;color:#8A817A;word-break:break-word">' +
+            String(detail).slice(0, 300) +
+            '</p>';
+        }
+        window.addEventListener('error', function (event) {
+          report((event && event.message) || 'Script error');
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+          report((event && event.reason && event.reason.message) || 'Unhandled rejection');
+        });
+        // Nothing mounted well after load: the entry module never ran.
+        window.addEventListener('load', function () {
+          setTimeout(function () {
+            report('The application bundle did not start.');
+          }, 8000);
+        });
+      })();
+    </script>
   </body>
 </html>
