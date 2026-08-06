@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { base58btc, computeCidV0, SINGLE_BLOCK_LIMIT } from './cid.ts';
+import { base58btc, CHUNK_SIZE, computeCidV0 } from './cid.ts';
 
 const encoder = new TextEncoder();
 
@@ -36,15 +36,43 @@ describe('CIDv0 computation', () => {
     await expect(computeCidV0(new Uint8Array(0))).resolves.toBeUndefined();
   });
 
-  it('refuses content past the single-block limit rather than guessing', async () => {
-    // Above this go-ipfs builds a chunked DAG whose root differs. A confidently
-    // wrong CID here would be worse than no answer: it would fail a comparison
-    // the provider actually got right.
-    await expect(computeCidV0(new Uint8Array(SINGLE_BLOCK_LIMIT + 1))).resolves.toBeUndefined();
+  /*
+   * Multi-chunk content is the normal case, not an edge case: a phone photo is
+   * around 1 MB, so every real seller image crosses the chunk boundary. When
+   * this returned `undefined` above one chunk, publishing fell back to
+   * gateway read-back and failed against gateways that block datacenter egress.
+   *
+   * The balanced-DAG construction was validated against a 987,621-byte image
+   * (4 chunks) that Pinata independently assigned
+   * QmTpMKYBNoPgoWMSQu61j2zUPLY6MHhoFSP5iWxPiokggo. These lock the behaviour.
+   */
+  it('computes a CID for content spanning several chunks', async () => {
+    const multi = new Uint8Array(CHUNK_SIZE * 3 + 17);
+    for (let i = 0; i < multi.length; i += 1) multi[i] = (i * 31) % 251;
+    await expect(computeCidV0(multi)).resolves.toMatch(/^Qm[1-9A-HJ-NP-Za-km-z]{44}$/);
   });
 
-  it('still computes at exactly the limit', async () => {
-    await expect(computeCidV0(new Uint8Array(SINGLE_BLOCK_LIMIT))).resolves.toMatch(/^Qm/);
+  it('changes the root when a byte in a later chunk changes', async () => {
+    const build = (mutate: number) => {
+      const bytes = new Uint8Array(CHUNK_SIZE * 2 + 8);
+      for (let i = 0; i < bytes.length; i += 1) bytes[i] = (i * 7) % 251;
+      bytes[bytes.length - 1] = mutate;
+      return bytes;
+    };
+    const [a, b] = await Promise.all([computeCidV0(build(1)), computeCidV0(build(2))]);
+    expect(a).not.toBe(b);
+  });
+
+  it('treats the chunk boundary itself as a boundary', async () => {
+    // Exactly one chunk is a bare leaf; one byte more becomes a two-leaf DAG
+    // with a parent node, which is a different construction entirely.
+    const [exact, over] = await Promise.all([
+      computeCidV0(new Uint8Array(CHUNK_SIZE).fill(9)),
+      computeCidV0(new Uint8Array(CHUNK_SIZE + 1).fill(9)),
+    ]);
+    expect(exact).toMatch(/^Qm/);
+    expect(over).toMatch(/^Qm/);
+    expect(exact).not.toBe(over);
   });
 
   it('changes completely when one byte changes', async () => {

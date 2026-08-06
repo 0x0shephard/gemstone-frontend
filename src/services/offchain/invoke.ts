@@ -45,10 +45,21 @@ export async function invokeEdgeFunction<T>(
 
   if (!error && !inlineError) return data as T;
 
+  const transport = error instanceof Error ? error.message : undefined;
+  /*
+   * `FunctionsFetchError` means the request never reached the server — a dropped
+   * mobile connection, a captive portal, a cold start that timed out. Its own
+   * message ("Failed to send a request to the Edge Function") reads like a bug
+   * in the app, so it is replaced with something the user can act on.
+   */
+  const networkFailure = transport?.includes('Failed to send a request');
+
   const message =
     (typeof inlineError === 'string' ? inlineError : undefined) ??
     (await bodyMessage(error)) ??
-    (error instanceof Error ? error.message : undefined) ??
+    (networkFailure
+      ? 'Could not reach the server. Check your connection and try again.'
+      : transport) ??
     `${name} failed`;
   throw new Error(message);
 }

@@ -1,7 +1,7 @@
 /** Header title + subtitle per app route (mirrors the mockup `titles` map). */
 export const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   '/marketplace': {
-    title: 'Marketplace',
+    title: 'Tokens Marketplace',
     subtitle: 'Buy verified gemstone NFTs, directly or on the secondary market',
   },
   '/auctions': {
