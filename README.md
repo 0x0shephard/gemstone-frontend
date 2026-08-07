@@ -223,8 +223,23 @@ UI. Without `IPFS_PINNING_JWT` the inline `data:` document is kept and no image 
 is the degraded Sepolia MVP path.
 
 `DEMAND_REFRESH_SECRET` gates `v1-demand-refresh`, which ingests `BidPlaced` events into the demand
-counts behind the pricing engine's market multipliers. It is a scheduled job, not a user-facing
-endpoint: callers present the secret in `x-demand-refresh-secret` rather than a Supabase session.
+counts behind the pricing engine's market multipliers. `AUCTION_REFRESH_SECRET` gates
+`v1-auction-refresh`, which re-opens the 24-hour auction for stones that drew no bid, up to 60
+rounds. Both are scheduled jobs, not user-facing endpoints: callers present the secret in
+`x-demand-refresh-secret` or `x-auction-refresh-secret` rather than a Supabase session.
+
+Both are listed with `verify_jwt = false` in [`supabase/config.toml`](./supabase/config.toml).
+Without that the platform rejects a scheduler with `401` *before* the function runs, which is
+indistinguishable from a working cron that does nothing — the secret each function checks itself is
+the actual authorization. A scheduler therefore needs only:
+
+```sh
+curl -X POST "https://<project-ref>.supabase.co/functions/v1/v1-auction-refresh" \
+  -H "x-auction-refresh-secret: $AUCTION_REFRESH_SECRET"
+```
+
+Running the auction sweep more often than daily is harmless: an auction that has not expired is
+skipped untouched, and one with a winning bid is left for settlement rather than cancelled.
 Running it is idempotent — bids are keyed by transaction hash and log index, so replayed ranges
 cannot double count. Until it runs, every market multiplier resolves to a neutral 1.0 and stones are
 priced on base value alone, which is correct behaviour rather than a failure.

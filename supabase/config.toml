@@ -20,3 +20,13 @@ verify_jwt = false
 
 [functions.v1-private-file-url]
 verify_jwt = false
+
+# Machine-called sweeps. They carry no user session, so the platform's JWT gate
+# would reject a scheduler outright — a 401 from the gateway, before the function
+# runs, which looks exactly like a working cron that quietly does nothing.
+# Authorization is the secret each one checks itself, returning 403 without it.
+[functions.v1-demand-refresh]
+verify_jwt = false
+
+[functions.v1-auction-refresh]
+verify_jwt = false
