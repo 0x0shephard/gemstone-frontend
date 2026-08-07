@@ -28,6 +28,7 @@ export const gemRegistryAbi = parseAbi([
   'function confirmCustody(uint256 gemId)',
   'function verifyGem(uint256 gemId, bytes32 valuationHash, bytes32 valuationMatrixHash, uint256 approvedValuationUsd)',
   'function listGem(uint256 gemId, uint256 priceUsd, uint8 saleMode)',
+  'function primarySaleMode(uint256 gemId) view returns (uint8)',
   'event GemRegistered(uint256 indexed gemId, address indexed seller, address indexed custodian)',
 ]);
 

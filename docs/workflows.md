@@ -154,7 +154,8 @@ Failure at any step sets `activation_state = 'failed'` and is resumable:
 
 ```
 v1-auction-refresh          scheduled, gated by x-auction-refresh-secret
-  for each registered, unminted, auction-mode stone:
+  candidates enumerated from the registry, not from seller_submissions
+  for each Listed, unminted, auction-mode gem:
     auction still running          → skip
     expired with a winning bid     → skip, settlement mints to the winner
     expired with no bid            → cancelAuction → createDailyAuction
@@ -165,9 +166,16 @@ v1-auction-refresh          scheduled, gated by x-auction-refresh-secret
 unsettled, and a no-bid auction is never settled — so re-opening requires
 `cancelAuction` first. Both calls are `LISTER_ROLE`, held by the operator key.
 
-The round count lives in Postgres because the contract stores one `Auction` per
-gem and overwrites it. That makes the column bookkeeping rather than truth: a
-direct `createDailyAuction` with the lister key will not advance it.
+Candidates come from the **chain**. A database-driven sweep only sees gems that
+arrived through the seller flow, and gem 4 — registered by a seeding script with
+no submission row — sat with an auction twelve days expired while the sweep
+reported success. Probing the registry covers every gem it knows about, however
+it got there.
+
+The round count lives in `auction_cycles`, keyed by gem id, because the contract
+stores one `Auction` per gem and overwrites it. That makes the table bookkeeping
+rather than truth: a direct `createDailyAuction` with the lister key will not
+advance it. A gem with no row counts as round zero rather than being skipped.
 
 **There is no unlist.** After the ceiling, `cancelAuction` clears the auction but
 the gem stays `Listed` forever — `GemRegistry` has no withdraw path and the only
