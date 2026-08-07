@@ -9,7 +9,7 @@ import { ModalGemHeader, SummaryRow, assetAmountPreview } from './parts';
 import { dataService } from '@/services';
 import { reserveShortfallUsd } from '@/lib/gem';
 import { fmtUsd } from '@/lib/format';
-import { useGems } from '@/hooks/useData';
+import { useGems, useProfile } from '@/hooks/useData';
 import { NATIVE_ASSET } from '@/config/contracts';
 import { zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
@@ -295,14 +295,37 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
 }
 
 /* ------------------------------ Swap ----------------------------- */
-export function SwapModal({ gem, open, onClose }: BaseModalProps) {
+/**
+ * `direction` decides which side of the trade the viewed gem sits on.
+ *
+ * `offer` is the owner's view: this token is what they give. `request` is
+ * everyone else's — the token belongs to someone else, so it is what they want,
+ * and they choose one of their own to offer. Getting this backwards would build
+ * a swap offering a token the proposer does not hold, which `SwapEscrow`
+ * rejects.
+ */
+export function SwapModal({
+  gem,
+  open,
+  onClose,
+  direction = 'offer',
+}: BaseModalProps & { direction?: 'offer' | 'request' }) {
+  const { address } = useAccount();
   const { data: gems = [] } = useGems();
+  const { data: profile } = useProfile(address);
+  const requesting = direction === 'request';
+  // Offering someone else's token is impossible, so the picker lists only what
+  // the connected wallet actually owns.
+  const choices = requesting ? (profile?.owned ?? []) : gems;
   const [requestedId, setRequestedId] = useState('');
   const [delta, setDelta] = useState('');
   const [asset, setAsset] = useState<PaymentAsset>();
   const [proposerPays, setProposerPays] = useState(true);
-  const requested = gems.find((g) => g.gemId.toString() === requestedId);
-  const reservesReady = gem.funded && Boolean(requested?.funded);
+  const counterpart = choices.find((g) => g.gemId.toString() === requestedId);
+  // `offered` is what leaves the proposer's wallet; `requested` is what arrives.
+  const offered = requesting ? counterpart : gem;
+  const requested = requesting ? gem : counterpart;
+  const reservesReady = Boolean(offered?.funded) && Boolean(requested?.funded);
   const usd = Number(delta) || 0;
   return (
     <Modal
@@ -312,18 +335,22 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
       subtitle="Trade one gem NFT for another, with an optional cash delta."
     >
       <div>
-        <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">You give</span>
+        <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
+          {requesting ? 'You receive' : 'You give'}
+        </span>
         <ModalGemHeader gem={gem} />
       </div>
       <div>
-        <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">You receive</span>
+        <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
+          {requesting ? 'You give' : 'You receive'}
+        </span>
         <select
           className={inputClass}
           value={requestedId}
           onChange={(e) => setRequestedId(e.target.value)}
         >
-          <option value="">Select a gem…</option>
-          {gems
+          <option value="">{requesting ? 'Select one of your tokens…' : 'Select a gem…'}</option>
+          {choices
             .filter((g) => g.gemId !== gem.gemId && g.tokenId)
             .map((g) => (
               <option key={g.gemId.toString()} value={g.gemId.toString()}>
@@ -331,10 +358,15 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
               </option>
             ))}
         </select>
+        {requesting && choices.length === 0 && (
+          <p className="mt-1.5 text-[11.5px] text-amber">
+            You hold no tokens to trade. Win one at auction first.
+          </p>
+        )}
       </div>
       <ReserveStatus gem={gem} />
-      {requested && <ReserveStatus gem={requested} />}
-      {requested && !reservesReady && (
+      {counterpart && <ReserveStatus gem={counterpart} />}
+      {counterpart && !reservesReady && (
         <p className="rounded-[4px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
           Both NFTs must be fully reserve-funded before this swap can settle.
         </p>
@@ -401,10 +433,10 @@ export function SwapModal({ gem, open, onClose }: BaseModalProps) {
       </p>
       <TxButton
         block
-        disabled={!gem.tokenId || !requested?.tokenId || !reservesReady || (usd > 0 && !asset)}
+        disabled={!offered?.tokenId || !requested?.tokenId || !reservesReady || (usd > 0 && !asset)}
         action={() =>
           dataService.createSwap({
-            offeredTokenId: gem.tokenId!,
+            offeredTokenId: offered!.tokenId!,
             requestedTokenId: requested!.tokenId!,
             paymentAsset: asset?.address ?? NATIVE_ASSET,
             cashAmountUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,

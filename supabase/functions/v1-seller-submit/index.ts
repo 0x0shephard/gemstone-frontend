@@ -307,9 +307,14 @@ Deno.serve(async (request) => {
       return json({ error: 'Client submission ID must be a UUID' }, 400);
     }
     const attributes = parseAttributes(body.attributes);
-    if (!['buy_now', 'auction'].includes(String(body.saleMode))) {
-      return json({ error: 'Sale mode must be buy_now or auction' }, 400);
-    }
+    /*
+     * Auction is the only primary sale route: a gemstone becomes a token only by
+     * being won at auction. Forced here rather than validated, so a direct API
+     * call cannot request buy-now and skip price discovery. The contract agrees
+     * — `buyNow` reverts `WrongPrimarySaleMode` unless the gem was listed in
+     * BuyNow mode, which nothing does any more.
+     */
+    const saleMode = 'auction';
     if (
       !['protocol_custodian', 'approved_existing_custodian'].includes(
         String(body.custodyPreference),
@@ -340,7 +345,7 @@ Deno.serve(async (request) => {
         gem_name: attributes.name,
         carats: attributes.caratWeight,
         attributes,
-        sale_mode: body.saleMode,
+        sale_mode: saleMode,
         custody_preference: body.custodyPreference,
         notes,
         status: 'submitted',

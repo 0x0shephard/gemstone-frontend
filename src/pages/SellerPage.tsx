@@ -57,7 +57,13 @@ export default function SellerPage() {
   const { linkedWallet, user } = useAuth();
   const { data: gems = [] } = useGems();
   const [attributes, setAttributes] = useState(EMPTY_ATTRIBUTES);
-  const [saleMode, setSaleMode] = useState<'' | 'buy_now' | 'auction'>('');
+  /*
+   * Not a choice any more. A gemstone becomes a token only by being won at
+   * auction, and `PrimarySaleAuction.buyNow` reverts `WrongPrimarySaleMode` for
+   * anything not listed in BuyNow mode — so the contract enforces this too,
+   * rather than the UI merely hiding the alternative.
+   */
+  const saleMode = 'auction' as const;
   const [custodyPreference, setCustodyPreference] = useState<
     'protocol_custodian' | 'approved_existing_custodian'
   >('protocol_custodian');
@@ -101,10 +107,6 @@ export default function SellerPage() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!address) return;
-    if (!saleMode) {
-      setResult({ ok: false, message: 'Choose buy now or auction before continuing.' });
-      return;
-    }
     setSubmitting(true);
     setResult(undefined);
     try {
@@ -125,7 +127,6 @@ export default function SellerPage() {
         message: `Submission ${submissionId} ${SUBMIT_OUTCOME[status] ?? 'was accepted.'}`,
       });
       setAttributes(EMPTY_ATTRIBUTES);
-      setSaleMode('');
       setNotes('');
       setCertificates([]);
       setMedia([]);
@@ -318,67 +319,17 @@ export default function SellerPage() {
                 </option>
               </select>
             </label>
-            <fieldset className="sm:col-span-2">
-              <legend className="mb-2 text-[12px] font-medium text-ink-muted">
-                Preferred first sale
-              </legend>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {[
-                  {
-                    value: 'buy_now' as const,
-                    eyebrow: 'Immediate',
-                    title: 'Buy now',
-                    body: 'List at the temporary MVP valuation after automated custody activation.',
-                  },
-                  {
-                    value: 'auction' as const,
-                    eyebrow: '24 hours',
-                    title: 'Auction',
-                    body: 'Open bidding at no less than the temporary MVP valuation.',
-                  },
-                ].map((option) => {
-                  const selected = saleMode === option.value;
-                  return (
-                    <label
-                      key={option.value}
-                      className={`relative cursor-pointer rounded-[4px] border p-4 transition-colors focus-within:ring-2 focus-within:ring-atelier/60 ${
-                        selected
-                          ? 'border-atelier/45 bg-atelier/[0.08]'
-                          : 'border-line/[0.09] bg-inset hover:border-line/[0.16]'
-                      }`}
-                    >
-                      <input
-                        className="sr-only"
-                        type="radio"
-                        name="sale-mode"
-                        value={option.value}
-                        checked={selected}
-                        onChange={() => setSaleMode(option.value)}
-                      />
-                      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-atelier">
-                        {option.eyebrow}
-                      </span>
-                      <span className="mt-1 block text-[14px] font-semibold text-ink">
-                        {option.title}
-                      </span>
-                      <span className="mt-1 block text-[11.5px] leading-relaxed text-ink-muted">
-                        {option.body}
-                      </span>
-                      <span
-                        aria-hidden="true"
-                        className={`absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ${
-                          selected
-                            ? 'border-atelier bg-atelier text-[var(--dc-button-ink)]'
-                            : 'border-line/[0.14] text-transparent'
-                        }`}
-                      >
-                        ✓
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </fieldset>
+            <div className="rounded-[4px] border border-line/[0.09] bg-inset p-4 sm:col-span-2">
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-atelier">
+                24 hours
+              </span>
+              <span className="mt-1 block text-[14px] font-semibold text-ink">Sold at auction</span>
+              <span className="mt-1 block text-[11.5px] leading-relaxed text-ink-muted">
+                Every stone opens a 24-hour auction once a lab grades it, with a floor at the
+                approved valuation. The winning bidder mints the token and you receive the proceeds.
+                A stone that draws no bid re-opens the next day.
+              </span>
+            </div>
             <label>
               <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
                 Certificates · PDF/JPEG/PNG · 20 MB each
@@ -418,7 +369,7 @@ export default function SellerPage() {
           </fieldset>
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button type="submit" disabled={!intakeEnabled || submitting || !saleMode}>
+            <Button type="submit" disabled={!intakeEnabled || submitting}>
               {submitting ? 'Uploading & submitting…' : 'Submit for verification'}
             </Button>
             <span className="text-[12px] text-ink-dim">

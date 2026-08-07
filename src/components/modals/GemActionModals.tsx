@@ -10,7 +10,16 @@ import {
 } from './index';
 
 export type GemModalType =
-  'bid' | 'buyNow' | 'buy' | 'reserve' | 'offer' | 'list' | 'swap' | 'redeem';
+  | 'bid'
+  | 'buyNow'
+  | 'buy'
+  | 'reserve'
+  | 'offer'
+  | 'list'
+  | 'swap'
+  /** Swap proposed *for* someone else's token: they receive, you give. */
+  | 'swapFor'
+  | 'redeem';
 
 export interface GemModalState {
   type: GemModalType;
@@ -42,7 +51,9 @@ export function GemActionModals({
     case 'list':
       return <ListModal gem={gem} open={open} onClose={onClose} />;
     case 'swap':
-      return <SwapModal gem={gem} open={open} onClose={onClose} />;
+      return <SwapModal gem={gem} open={open} onClose={onClose} direction="offer" />;
+    case 'swapFor':
+      return <SwapModal gem={gem} open={open} onClose={onClose} direction="request" />;
     case 'redeem':
       return <RedeemModal gem={gem} open={open} onClose={onClose} />;
     default:

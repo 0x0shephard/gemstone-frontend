@@ -225,9 +225,49 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
       ? 100
       : Math.min(100, Number((reserveBalanceUsd * 10_000n) / requiredReserveUsd) / 100);
   const value = Number(formatUnits(registryGem.priceUsd, 18));
+
+  /*
+   * Ownership and listing state travel with every gem, so a caller never has to
+   * infer them from the URL. `GemDetailPage` previously decided between Buy and
+   * Make an offer from a `?market=` query parameter, which is a guess about the
+   * chain rather than a reading of it.
+   */
+  let owner: Address | undefined;
+  let listingSeller: Address | undefined;
+  let listedPriceUsd: bigint | undefined;
+  if (registryGem.tokenId > 0n) {
+    owner = (await client
+      .readContract({
+        ...contract('DGENFT'),
+        functionName: 'ownerOf',
+        args: [registryGem.tokenId],
+      })
+      .catch(() => undefined)) as Address | undefined;
+    const listing = (await client
+      .readContract({
+        ...contract('Marketplace'),
+        functionName: 'listings',
+        args: [registryGem.tokenId],
+      })
+      .catch(() => undefined)) as readonly [Address, bigint] | undefined;
+    if (listing && listing[0] !== zeroAddress) {
+      listingSeller = listing[0];
+      listedPriceUsd = listing[1];
+    }
+  }
+
   const gem: Gem = {
     gemId,
     tokenId: registryGem.tokenId > 0n ? registryGem.tokenId : undefined,
+    owner,
+    ...(listingSeller
+      ? {
+          market: 'secondary' as const,
+          listingSeller,
+          valueUsd: listedPriceUsd!,
+          value: Number(formatUnits(listedPriceUsd!, 18)),
+        }
+      : {}),
     displayId: trait(details, 'Display ID') ?? details.displayId ?? `DGE-${gemId}`,
     name:
       details.name ?? `${gemType.replace(/^\w/, (character) => character.toUpperCase())} #${gemId}`,
@@ -406,58 +446,23 @@ async function getAuctions(): Promise<Auction[]> {
   return auctions.filter(Boolean) as Auction[];
 }
 
+/**
+ * Every token that currently exists, listed for sale or not.
+ *
+ * The marketplace is a catalogue rather than a for-sale list: a gemstone becomes
+ * a token only by being won at auction, so every token has an owner, and hiding
+ * the unlisted ones would hide most of the collection. Unminted stones do not
+ * belong here at all — they live in the auction, which is the only way to mint.
+ *
+ * A token whose NFT has been burned by redemption is dropped: `ownerOf` reverts,
+ * which is the only reliable signal, since the registry keeps the record.
+ */
 async function getListings(): Promise<DecoratedGem[]> {
   const ids = await gemIds();
-  const registryGems = await Promise.all(
-    ids.map(async (gemId) => [gemId, await readRegistryGem(gemId)] as const),
-  );
-
-  const primaryResults = await Promise.all(
-    registryGems.map(async ([gemId, registryGem]) => {
-      if (Number(registryGem.status) !== 4) return;
-      const mode = (await client.readContract({
-        ...contract('GemRegistry'),
-        functionName: 'primarySaleMode',
-        args: [gemId],
-      })) as number;
-      if (Number(mode) !== 1) return;
-      const gem = await readGem(gemId);
-      return gem ? { ...gem, market: 'primary' as const } : undefined;
-    }),
-  );
-
-  // Minted gems carry their token id in the registry record, so escrowed secondary
-  // listings resolve from contract state instead of replayed `Listed` logs.
-  const tokenIds = registryGems
-    .map(([, registryGem]) => registryGem.tokenId)
-    .filter((tokenId) => tokenId !== 0n);
-  const secondaryResults = await Promise.all(
-    tokenIds.map(async (tokenId) => {
-      const listing = (await client.readContract({
-        ...contract('Marketplace'),
-        functionName: 'listings',
-        args: [tokenId],
-      })) as readonly [Address, bigint];
-      if (listing[0] === zeroAddress) return;
-      const gemId = (await client.readContract({
-        ...contract('DGENFT'),
-        functionName: 'tokenGem',
-        args: [tokenId],
-      })) as bigint;
-      const gem = await readGem(gemId);
-      if (!gem) return;
-      const value = Number(formatUnits(listing[1], 18));
-      return {
-        ...gem,
-        market: 'secondary' as const,
-        listingSeller: listing[0],
-        valueUsd: listing[1],
-        value,
-        valueFmt: `$${value.toLocaleString('en-US')}`,
-      };
-    }),
-  );
-  return [...primaryResults, ...secondaryResults].filter((gem) => gem !== undefined);
+  const gems = await Promise.all(ids.map((gemId) => readGem(gemId)));
+  // `readGem` resolves ownership and listing state, and returns no owner for a
+  // token whose NFT was burned by redemption.
+  return gems.filter((gem): gem is DecoratedGem => Boolean(gem?.owner));
 }
 
 async function getOffers(): Promise<Offer[]> {

@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom';
+import { useAccount } from 'wagmi';
 import type { DecoratedGem } from '@/services/types';
 import { Card } from '@/components/ui/Card';
 import { GemThumb } from './GemThumb';
 import { ProgressBar } from '@/components/ui/ProgressBar';
+import { explorerAddressUrl } from '@/config/chains';
+import { shortenAddress } from '@/lib/format';
 
 interface GemCardProps {
   gem: DecoratedGem;
@@ -15,14 +18,24 @@ interface GemCardProps {
 }
 
 /** The primary gem card used across marketplace, auctions and featured grids. */
-export function GemCard({
-  gem,
-  thumbOverlay,
-  ctaLabel = 'View →',
-  href,
-  revealDelay,
-}: GemCardProps) {
+export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay }: GemCardProps) {
   const to = href ?? `/gem/${gem.gemId}`;
+  const { address } = useAccount();
+  const isOwn = Boolean(address && gem.owner && address.toLowerCase() === gem.owner.toLowerCase());
+  /*
+   * A token is purchasable only while escrowed in a live Marketplace listing.
+   * Every other token still appears here — the marketplace is a catalogue — so
+   * the label has to say what is actually possible rather than promise a
+   * purchase the contract would reject.
+   */
+  const forSale = Boolean(gem.listingSeller);
+  const defaultCta = !gem.owner
+    ? 'View →'
+    : forSale
+      ? 'Buy now →'
+      : isOwn
+        ? 'Manage →'
+        : 'Make an offer →';
   return (
     <Card
       hoverLift
@@ -60,17 +73,40 @@ export function GemCard({
           <ProgressBar value={gem.reserve} funded={gem.funded} height={6} />
         </div>
 
+        {gem.owner && (
+          <div className="flex items-baseline justify-between gap-3 text-[11px]">
+            <span className="text-ink-dim">Owner</span>
+            {isOwn ? (
+              <span className="font-medium text-atelier">You</span>
+            ) : (
+              /*
+                Sits above the card's full-surface overlay link so it opens the
+                explorer instead of the gem page.
+              */
+              <a
+                href={explorerAddressUrl(gem.owner)}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => event.stopPropagation()}
+                className="relative z-20 font-mono text-ink-muted underline decoration-line/30 underline-offset-2 hover:text-ink"
+              >
+                {shortenAddress(gem.owner)}
+              </a>
+            )}
+          </div>
+        )}
+
         <div className="flex items-end justify-between border-t border-line/[0.06] pt-3">
           <div>
             <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
-              Approved value
+              {forSale ? 'Listed price' : 'Approved value'}
             </div>
             <div className="mt-0.5 font-mono text-[18px] font-semibold tracking-[-0.03em] text-ink">
               {gem.valueFmt}
             </div>
           </div>
           <span className="text-[12px] font-semibold text-ink-muted transition-all group-hover:translate-x-0.5 group-hover:text-ink">
-            {ctaLabel}
+            {ctaLabel ?? defaultCta}
           </span>
         </div>
       </div>

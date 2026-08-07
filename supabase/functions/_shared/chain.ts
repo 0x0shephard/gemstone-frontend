@@ -33,6 +33,12 @@ export const gemRegistryAbi = parseAbi([
 
 export const primarySaleAbi = parseAbi([
   'function createDailyAuction(uint256 gemId, uint256 floorUsd)',
+  // Clears an expired auction so a fresh one can be opened. `_createAuction`
+  // rejects a gem whose previous auction still `exists` and is unsettled, and an
+  // auction that drew no bid is never settled — so re-opening requires this
+  // first. It reverts `AuctionActive` while a real bid is live, which is what
+  // stops the sweep from cancelling an auction someone is winning.
+  'function cancelAuction(uint256 gemId)',
   'function auctions(uint256 gemId) view returns (bool exists,bool settled,uint64 startTime,uint64 endTime,uint256 floorUsd,address highestBidder,address paymentAsset,uint256 amount,uint256 usdValue,uint256 reserveUsd)',
   'event BidPlaced(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount, uint256 usdValue)',
 ]);

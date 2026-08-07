@@ -155,7 +155,8 @@ npx supabase secrets set \
   PRIMARY_SALE_AUCTION_ADDRESS=0x... \
   DEPLOYMENT_BLOCK=... \
   IPFS_PINNING_JWT=... \
-  DEMAND_REFRESH_SECRET=...
+  DEMAND_REFRESH_SECRET=... \
+  AUCTION_REFRESH_SECRET=...
 npx supabase functions deploy v1-siwe-nonce
 npx supabase functions deploy v1-siwe-verify
 npx supabase functions deploy v1-seller-submit
@@ -165,6 +166,8 @@ npx supabase functions deploy v1-verification-queue
 npx supabase functions deploy v1-verification-grade
 npx supabase functions deploy v1-verification-settings
 npx supabase functions deploy v1-demand-refresh
+npx supabase functions deploy v1-auction-refresh
+npx supabase functions deploy v1-custody-confirm
 npx supabase functions deploy v1-private-file-url
 npx supabase functions deploy v1-redemption-commitment
 ```

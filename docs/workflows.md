@@ -43,7 +43,16 @@ SellerPage → invoke v1-seller-submit  action=verify
   └─ verificationMode(admin)           protocol_settings.verification_mode
        ├─ 'lab'  → status = 'awaiting_custody'   ← stops here, nothing on-chain
        └─ 'auto' → status = 'approved' → A4 with allowAutomaticValuation: true
+
+  sale_mode is forced to 'auction' server-side, never read from the request.
 ```
+
+**Auction is the only route to a token.** A gemstone cannot be minted directly:
+`PrimarySaleAuction.buyNow` reverts `WrongPrimarySaleMode` unless the gem was
+listed in BuyNow mode, and nothing lists that way any more. So the restriction
+is enforced on-chain, not merely hidden in the UI. Settlement mints to
+`auction.highestBidder` and pays `gem.seller` — the seller receives proceeds,
+never the token.
 
 Only an `org_admin` of an `admin`-kind organisation can change the mode, through
 `v1-verification-settings`. `protocol_settings` has no client write policy, so a
@@ -141,6 +150,30 @@ Failure at any step sets `activation_state = 'failed'` and is resumable:
 `recoverRegisteredGem()` re-derives `gemId` from `GemRegistered` logs by matching
 `metadataURI` + `certificateHash`, so a retry never registers a second gem.
 
+### A5. Unsold stones re-auction daily
+
+```
+v1-auction-refresh          scheduled, gated by x-auction-refresh-secret
+  for each registered, unminted, auction-mode stone:
+    auction still running          → skip
+    expired with a winning bid     → skip, settlement mints to the winner
+    expired with no bid            → cancelAuction → createDailyAuction
+    auction_rounds >= 60           → mark auction_exhausted_at, leave for an operator
+```
+
+`_createAuction` rejects a gem whose previous auction still `exists` and is
+unsettled, and a no-bid auction is never settled — so re-opening requires
+`cancelAuction` first. Both calls are `LISTER_ROLE`, held by the operator key.
+
+The round count lives in Postgres because the contract stores one `Auction` per
+gem and overwrites it. That makes the column bookkeeping rather than truth: a
+direct `createDailyAuction` with the lister key will not advance it.
+
+**There is no unlist.** After the ceiling, `cancelAuction` clears the auction but
+the gem stays `Listed` forever — `GemRegistry` has no withdraw path and the only
+exit is being minted. Exhaustion is therefore a flag for a human, not an
+automatic cancellation.
+
 ---
 
 ## B. Pricing engine
@@ -218,7 +251,35 @@ unbuilt) must check coverage and revert **itself** rather than succeed.
 
 ---
 
-## D. Read path
+## D. What the marketplace shows
+
+The Token Marketplace is a **catalogue of every token that exists**, not a
+for-sale list. Every token was minted by winning an auction, so every one has an
+owner, and hiding the unlisted majority would hide the collection.
+
+```
+getListings() → readGem() per gem
+    owner        = DGENFT.ownerOf(tokenId)     absent ⇒ burned by redemption, dropped
+    listingSeller = Marketplace.listings(tokenId)   present ⇒ escrowed and for sale
+```
+
+Unminted stones never appear here — they are in the auction, which is the only
+way to mint. The card action follows the token's real state rather than a URL
+parameter:
+
+| State                      | Action                                 |
+| -------------------------- | -------------------------------------- |
+| Escrowed in a live listing | **Buy now** at the listed price        |
+| Held, not listed           | **Make an offer** · **Propose a swap** |
+| Owned by the viewer        | **Manage**                             |
+
+"Offer" rather than "bid" deliberately: bidding already means auction bidding on
+an unminted stone, and the Portfolio separates **Minting Bids** from **Token
+Bids** for the same reason.
+
+---
+
+## E. Read path
 
 ```
 contracts ──multicall──► chainService.readGem()      authoritative for current state
@@ -240,7 +301,7 @@ configuration report instead.
 
 ---
 
-## E. Where a stone can stop
+## F. Where a stone can stop
 
 | State                                    | Meaning                                  | On-chain? | Recoverable                                |
 | ---------------------------------------- | ---------------------------------------- | --------- | ------------------------------------------ |

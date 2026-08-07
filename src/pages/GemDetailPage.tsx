@@ -19,10 +19,7 @@ export default function GemDetailPage() {
   const [searchParams] = useSearchParams();
   const { data: gem, isLoading, isError } = useGem(gemId);
   const modals = useGemModals();
-  const isSecondaryListing = searchParams.get('market') === 'secondary';
-  const isAuction = searchParams.get('market') === 'auction';
   const isManageView = searchParams.get('manage') === '1';
-  const isActiveListing = isManageView && searchParams.get('listed') === '1';
 
   if (isLoading) {
     return (
@@ -33,6 +30,15 @@ export default function GemDetailPage() {
     );
   }
   if (isError || !gem) return <ErrorState message="Gem not found." />;
+
+  /*
+   * Read from the chain rather than the URL. These were previously derived from
+   * `?market=` query parameters, so a link that omitted them — every marketplace
+   * card now does — offered the wrong actions for the token's real state.
+   */
+  const isAuction = !gem.tokenId;
+  const isSecondaryListing = Boolean(gem.listingSeller);
+  const isActiveListing = isManageView && isSecondaryListing;
 
   const specs: [string, React.ReactNode][] = [
     ['Gem ID', <span className="font-mono">{gem.displayId}</span>],
@@ -149,21 +155,46 @@ export default function GemDetailPage() {
               ) : (
                 <div className="grid grid-cols-2 gap-2.5">
                   {isAuction ? (
-                    <Button variant="secondary" onClick={() => modals.open('bid', gem)}>
-                      Place bid
-                    </Button>
+                    <>
+                      <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                        Not yet a token. Winning this 24-hour auction mints it to you — it is the
+                        only way this gemstone becomes a token.
+                      </p>
+                      <Button className="col-span-2" onClick={() => modals.open('bid', gem)}>
+                        Place bid
+                      </Button>
+                    </>
+                  ) : isSecondaryListing ? (
+                    <>
+                      <Button onClick={() => modals.open('buy', gem)} disabled={!gem.tokenId}>
+                        Buy now
+                      </Button>
+                      <Button variant="secondary" onClick={() => modals.open('offer', gem)}>
+                        Make an offer
+                      </Button>
+                    </>
                   ) : (
-                    <Button
-                      onClick={() => modals.open(isSecondaryListing ? 'buy' : 'buyNow', gem)}
-                      disabled={isSecondaryListing && !gem.tokenId}
-                    >
-                      {isSecondaryListing ? 'Purchase listing' : 'Buy now'}
-                    </Button>
-                  )}
-                  {isSecondaryListing && (
-                    <Button variant="secondary" onClick={() => modals.open('offer', gem)}>
-                      Make offer
-                    </Button>
+                    /*
+                     * Held by someone who has not listed it. There is nothing to
+                     * buy, so the two ways to acquire it are an offer the owner
+                     * can accept, or a swap of one token for another.
+                     */
+                    <>
+                      <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                        This token is not listed for sale. You can offer to buy it, or propose
+                        trading one of your own tokens for it.
+                      </p>
+                      <Button onClick={() => modals.open('offer', gem)} disabled={!gem.tokenId}>
+                        Make an offer
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => modals.open('swapFor', gem)}
+                        disabled={!gem.tokenId}
+                      >
+                        Propose a swap
+                      </Button>
+                    </>
                   )}
                   {!gem.funded && (
                     <Button

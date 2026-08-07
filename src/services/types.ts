@@ -7,6 +7,12 @@ export interface Gem {
   gemId: bigint;
   tokenId?: bigint;
   market?: 'primary' | 'secondary';
+  /**
+   * Current holder of the minted token. Absent until a stone is won at auction,
+   * which is the only way a token comes into existence.
+   */
+  owner?: Address;
+  /** Set only while the token is escrowed in an active Marketplace listing. */
   listingSeller?: Address;
   displayId: string;
   name: string;
