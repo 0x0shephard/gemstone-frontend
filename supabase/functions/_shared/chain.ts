@@ -40,6 +40,10 @@ export const primarySaleAbi = parseAbi([
   // first. It reverts `AuctionActive` while a real bid is live, which is what
   // stops the sweep from cancelling an auction someone is winning.
   'function cancelAuction(uint256 gemId)',
+  // Permissionless and self-terminating: it either mints to the winner, or
+  // refunds them and marks the auction settled. Either outcome unblocks
+  // `_createAuction`, so the sweep can drive it without needing a role.
+  'function settleAuction(uint256 gemId) returns (uint256 tokenId)',
   'function auctions(uint256 gemId) view returns (bool exists,bool settled,uint64 startTime,uint64 endTime,uint256 floorUsd,address highestBidder,address paymentAsset,uint256 amount,uint256 usdValue,uint256 reserveUsd)',
   'event BidPlaced(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount, uint256 usdValue)',
 ]);

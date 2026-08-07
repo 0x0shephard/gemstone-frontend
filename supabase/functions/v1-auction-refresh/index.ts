@@ -91,6 +91,7 @@ Deno.serve(async (request) => {
     const gemIds = await discoverGemIds(chain);
     const now = BigInt(Math.floor(Date.now() / 1_000));
     const reopened: string[] = [];
+    const settledNow: string[] = [];
     const exhausted: string[] = [];
     const skipped: Array<{ gemId: string; reason: string }> = [];
     let examined = 0;
@@ -137,13 +138,34 @@ Deno.serve(async (request) => {
           continue;
         }
         /*
-         * Someone won it. Settlement mints to them and is permissionless, so the
-         * sweep must not cancel: an expired won auction *is* cancellable, and
-         * cancelling would refund the winner and lose the sale.
+         * Someone won it. Settle rather than cancel: an expired won auction *is*
+         * cancellable, and cancelling would refund the winner and destroy the
+         * sale. `settleAuction` is permissionless and self-terminating — it
+         * either mints to the winner or refunds them and marks the auction
+         * settled — so it always leaves the gem in a state the sweep can act on.
          */
+        let wasSettled = false;
         if (exists && !settled && highestBidder !== ZERO) {
-          skipped.push({ gemId: String(gemId), reason: 'awaiting settlement for a winning bid' });
-          continue;
+          await writeAndConfirm(chain, {
+            address: chain.addresses.primarySale,
+            abi: primarySaleAbi,
+            functionName: 'settleAuction',
+            args: [gemId],
+          });
+          settledNow.push(String(gemId));
+          await audit(null, 'auction.settled', 'gem', String(gemId), {});
+
+          // Minted means the stone is sold and this gem is finished with.
+          const after = (await chain.publicClient.readContract({
+            address: chain.addresses.registry,
+            abi: gemRegistryAbi,
+            functionName: 'getGem',
+            args: [gemId],
+          })) as { tokenId: bigint };
+          if (after.tokenId > 0n) continue;
+          // Otherwise settlement refunded the bidder — reserve shortfall, a
+          // stale quote — and the stone still needs a fresh auction below.
+          wasSettled = true;
         }
 
         const { data: cycle } = await admin
@@ -172,7 +194,9 @@ Deno.serve(async (request) => {
         }
 
         // Clear the stale auction, then open the next round at the same floor.
-        if (exists && !settled) {
+        // A settlement that refunded has already marked it settled, so there is
+        // nothing left to cancel.
+        if (exists && !settled && !wasSettled) {
           await writeAndConfirm(chain, {
             address: chain.addresses.primarySale,
             abi: primarySaleAbi,
@@ -210,7 +234,14 @@ Deno.serve(async (request) => {
       }
     }
 
-    return json({ registryGems: gemIds.length, examined, reopened, exhausted, skipped });
+    return json({
+      registryGems: gemIds.length,
+      examined,
+      settled: settledNow,
+      reopened,
+      exhausted,
+      skipped,
+    });
   } catch (error) {
     return json({ error: safeErrorMessage(error, 'Auction refresh failed') }, 500);
   }

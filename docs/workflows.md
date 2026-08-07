@@ -157,7 +157,7 @@ v1-auction-refresh          scheduled, gated by x-auction-refresh-secret
   candidates enumerated from the registry, not from seller_submissions
   for each Listed, unminted, auction-mode gem:
     auction still running          → skip
-    expired with a winning bid     → skip, settlement mints to the winner
+    expired with a winning bid     → settleAuction, minting to the winner
     expired with no bid            → cancelAuction → createDailyAuction
     auction_rounds >= 60           → mark auction_exhausted_at, leave for an operator
 ```
@@ -165,6 +165,13 @@ v1-auction-refresh          scheduled, gated by x-auction-refresh-secret
 `_createAuction` rejects a gem whose previous auction still `exists` and is
 unsettled, and a no-bid auction is never settled — so re-opening requires
 `cancelAuction` first. Both calls are `LISTER_ROLE`, held by the operator key.
+
+Settlement is driven by the sweep too. It is permissionless and
+self-terminating: `settleAuction` either mints to the winner, or refunds them
+and marks the auction settled via `_refundHighestBid`. Either outcome leaves a
+state the sweep can act on, so a won auction never waits on someone noticing it.
+Cancelling one instead would refund the winner and destroy the sale, which is why
+the winning-bid branch settles rather than cancels.
 
 Candidates come from the **chain**. A database-driven sweep only sees gems that
 arrived through the seller flow, and gem 4 — registered by a seeding script with

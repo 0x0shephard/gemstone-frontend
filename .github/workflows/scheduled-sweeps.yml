@@ -1,0 +1,72 @@
+name: Scheduled sweeps
+
+# Two operator jobs that keep the protocol moving without anyone watching:
+#
+#   v1-auction-refresh  settles won auctions, re-opens unsold ones for another
+#                       24 hours, and stops at the round ceiling.
+#   v1-demand-refresh   ingests BidPlaced events into the demand counts behind
+#                       the pricing engine's market multipliers.
+#
+# Both authorise by a secret header rather than a Supabase session, and both are
+# exempt from JWT verification in supabase/config.toml — without that the
+# platform answers 401 before the function runs, which looks exactly like a
+# working schedule that quietly does nothing.
+#
+# Required repository secrets:
+#   SUPABASE_FUNCTIONS_URL   https://<project-ref>.supabase.co/functions/v1
+#   AUCTION_REFRESH_SECRET
+#   DEMAND_REFRESH_SECRET
+
+on:
+  schedule:
+    # 01:15 UTC daily. Auctions run 24 hours, so one pass a day is enough; the
+    # offset keeps it clear of the top of the hour when GitHub's queue is busiest.
+    - cron: '15 1 * * *'
+  workflow_dispatch:
+
+concurrency:
+  # Never overlap. Both functions drive the same operator key, and a second run
+  # starting mid-flight would contend for its nonce.
+  group: scheduled-sweeps
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Settle and re-open auctions
+        env:
+          URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          SECRET: ${{ secrets.AUCTION_REFRESH_SECRET }}
+        run: |
+          if [ -z "$URL" ] || [ -z "$SECRET" ]; then
+            echo "::error::SUPABASE_FUNCTIONS_URL or AUCTION_REFRESH_SECRET is not set"
+            exit 1
+          fi
+          # Capture the body and status separately so a non-2xx fails the job
+          # loudly instead of being swallowed as a successful curl.
+          BODY=$(curl -sS --fail-with-body --max-time 600 \
+            -X POST "$URL/v1-auction-refresh" \
+            -H "x-auction-refresh-secret: $SECRET") || {
+              echo "::error::auction refresh failed: $BODY"
+              exit 1
+            }
+          echo "$BODY"
+
+      - name: Ingest bid demand
+        env:
+          URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          SECRET: ${{ secrets.DEMAND_REFRESH_SECRET }}
+        run: |
+          if [ -z "$SECRET" ]; then
+            echo "::notice::DEMAND_REFRESH_SECRET is not set; skipping demand ingest"
+            exit 0
+          fi
+          BODY=$(curl -sS --fail-with-body --max-time 600 \
+            -X POST "$URL/v1-demand-refresh" \
+            -H "x-demand-refresh-secret: $SECRET") || {
+              echo "::error::demand refresh failed: $BODY"
+              exit 1
+            }
+          echo "$BODY"
