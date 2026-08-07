@@ -12,6 +12,49 @@ vi.mock('@wagmi/core', () => ({
   getPublicClient: () => ({ readContract: mocks.readContract }),
 }));
 vi.mock('@/providers/wagmi', () => ({ wagmiConfig: {} }));
+/*
+ * A synthetic manifest, so this suite does not depend on a `.env` that only
+ * exists on a configured machine. `chainService` calls
+ * `requireDeploymentManifest()` at module scope and it throws when addresses are
+ * missing, so without this the file cannot even be imported in CI or on a fresh
+ * clone — it was failing on every run for exactly that reason.
+ *
+ * Every assertion below compares against `manifest.addresses.X` rather than a
+ * literal, so the suite stays self-consistent whatever the values are.
+ */
+vi.mock('@/config/contracts', () => {
+  const address = (byte: number) => `0x${byte.toString(16).padStart(2, '0').repeat(20)}` as const;
+  const modules = [
+    'DGENFT',
+    'GemRegistry',
+    'PaymentTokenRegistry',
+    'ReserveManager',
+    'Treasury',
+    'PrimarySaleAuction',
+    'Marketplace',
+    'SwapEscrow',
+    'RedemptionManager',
+    'ComplianceRegistry',
+  ] as const;
+  const manifest = {
+    schemaVersion: 1 as const,
+    chainId: 11155111,
+    deploymentBlock: 1n,
+    addresses: Object.fromEntries(modules.map((name, index) => [name, address(index + 1)])),
+    nativeAsset: '0x0000000000000000000000000000000000000000',
+    usdc: address(0xaa),
+  };
+  return {
+    NATIVE_ASSET: '0x0000000000000000000000000000000000000000',
+    contractModules: modules,
+    contractAddresses: manifest.addresses,
+    getContractAddress: (name: (typeof modules)[number]) => manifest.addresses[name],
+    deploymentErrors: [] as string[],
+    deploymentManifest: manifest,
+    deploymentManifestHash: `0x${'ab'.repeat(32)}`,
+    requireDeploymentManifest: () => manifest,
+  };
+});
 vi.mock('./transactionPipeline', () => ({
   runContractTransaction: mocks.runContractTransaction,
 }));
