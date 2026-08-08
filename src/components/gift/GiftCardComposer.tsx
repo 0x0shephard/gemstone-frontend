@@ -15,7 +15,12 @@ import {
 } from './GiftCardArt';
 import { giftOperatorAddress } from '@/config/contracts';
 import { dataService } from '@/services';
-import { createGiftCard, giftClaimUrl, type CreatedGiftCard } from '@/services/offchain/gift';
+import {
+  createGiftCard,
+  emailGiftCard,
+  giftClaimUrl,
+  type CreatedGiftCard,
+} from '@/services/offchain/gift';
 import { downloadCardPng, downloadCardSvg, inlineImage, printCard } from '@/lib/cardExport';
 import { cn } from '@/lib/cn';
 
@@ -253,6 +258,20 @@ function IssuedCard({
   // countdown that shifts as the component re-renders is worse than one fixed
   // at the moment the card was issued.
   const [issuedAt] = useState(() => Date.now());
+  const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent'>('idle');
+
+  async function email() {
+    setEmailState('sending');
+    setNotice(undefined);
+    try {
+      const { to } = await emailGiftCard(card.code);
+      setEmailState('sent');
+      setNotice(`Card sent to ${to}.`);
+    } catch (sendError) {
+      setEmailState('idle');
+      setNotice(sendError instanceof Error ? sendError.message : 'The card could not be emailed.');
+    }
+  }
 
   const claimUrl = giftClaimUrl(card.code);
   const expires = new Date(card.expiresAt);
@@ -386,12 +405,18 @@ function IssuedCard({
         >
           Copy claim link
         </Button>
-        <a
-          className="dc-btn-anim inline-flex h-11 items-center justify-center rounded-[4px] border border-line/[0.08] px-5 text-[13.5px] font-medium text-ink-faint hover:border-line/[0.16] hover:text-ink"
-          href={`mailto:?subject=${encodeURIComponent(`A gemstone for you — ${gem.name}`)}&body=${encodeURIComponent(`${message.trim() || 'A little something.'}\n\nClaim it here: ${claimUrl}\n\nCode: ${card.displayCode}\n${expiresLabel}.`)}`}
-        >
-          Send by email
-        </a>
+        {/*
+          Sent by the server, not handed to a `mailto:` link. A machine with no
+          default mail client swallows a `mailto:` entirely — no window, no
+          error — so the sender is left believing a card went out that never did.
+        */}
+        <Button variant="ghost" disabled={emailState === 'sending'} onClick={() => void email()}>
+          {emailState === 'sending'
+            ? 'Sending…'
+            : emailState === 'sent'
+              ? 'Email sent ✓'
+              : 'Email the recipient'}
+        </Button>
         <a
           className="dc-btn-anim inline-flex h-11 items-center justify-center rounded-[4px] border border-line/[0.08] px-5 text-[13.5px] font-medium text-ink-faint hover:border-line/[0.16] hover:text-ink"
           href={`https://wa.me/?text=${encodeURIComponent(`${claimUrl}\n\nCode: ${card.displayCode}`)}`}

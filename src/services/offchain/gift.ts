@@ -65,6 +65,17 @@ export function claimGiftCard(code: string): Promise<GiftCardSummary> {
   return invokeEdgeFunction<GiftCardSummary>('v1-gift-claim', { action: 'claim', code });
 }
 
+/**
+ * Emails the claim link to the recipient.
+ *
+ * Takes the code because the server does not have it — only its hash is stored.
+ * The sender holds it for as long as the issuing screen is open, which is the
+ * whole window in which this can be called.
+ */
+export function emailGiftCard(code: string): Promise<{ sent: boolean; to: string }> {
+  return invokeEdgeFunction('v1-gift-notify', { code });
+}
+
 export function cancelGiftCard(giftId: string): Promise<{ giftId: string; tokenId: string }> {
   return invokeEdgeFunction('v1-gift-cancel', { giftId });
 }
