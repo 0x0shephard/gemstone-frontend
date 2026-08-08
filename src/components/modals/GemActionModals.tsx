@@ -8,6 +8,7 @@ import {
   SwapModal,
   RedeemModal,
 } from './index';
+import { SendTokenModal } from './SendTokenModal';
 
 export type GemModalType =
   | 'bid'
@@ -19,7 +20,9 @@ export type GemModalType =
   | 'swap'
   /** Swap proposed *for* someone else's token: they receive, you give. */
   | 'swapFor'
-  | 'redeem';
+  | 'redeem'
+  /** Transfer out: to a wallet address, or as a claimable gift card. */
+  | 'send';
 
 export interface GemModalState {
   type: GemModalType;
@@ -56,6 +59,8 @@ export function GemActionModals({
       return <SwapModal gem={gem} open={open} onClose={onClose} direction="request" />;
     case 'redeem':
       return <RedeemModal gem={gem} open={open} onClose={onClose} />;
+    case 'send':
+      return <SendTokenModal gem={gem} open={open} onClose={onClose} />;
     default:
       return null;
   }

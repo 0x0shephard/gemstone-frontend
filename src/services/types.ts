@@ -184,6 +184,41 @@ export interface CancelListingRequest {
   tokenId: bigint;
 }
 
+/**
+ * A plain ERC-721 transfer of a minted token to another wallet.
+ *
+ * `DGENFT._update` gates only `transferLocked[tokenId]`, which is set while a
+ * redemption is in flight — there is no compliance check on transfers, so the
+ * recipient needs no KYC and no account here.
+ */
+export interface TransferTokenRequest {
+  tokenId: bigint;
+  to: Address;
+}
+
+/**
+ * Grants one address permission to move one token, once.
+ *
+ * This is what a gift card rests on: the sender keeps the token, and the
+ * operator holds a single-use permission it spends only when someone claims
+ * the card.
+ */
+export interface ApproveTransferRequest {
+  tokenId: bigint;
+  operator: Address;
+}
+
+/**
+ * Clears the standing per-token approval a gift card leaves behind.
+ *
+ * ERC-721 `approve` may only be called by the owner or an approved-for-all
+ * operator, so the gift operator cannot revoke its own single-token approval
+ * when a card expires. Only the owner can, and only from here.
+ */
+export interface RevokeApprovalRequest {
+  tokenId: bigint;
+}
+
 export interface BidRequest {
   gemId: bigint;
   paymentAsset: Address;

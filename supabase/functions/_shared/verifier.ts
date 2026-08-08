@@ -125,7 +125,9 @@ export const QUEUE_COLUMNS =
   'id,gem_name,carats,attributes,graded_attributes,status,created_at,' +
   // Intake findings travel with the stone: a grader should know the received
   // article diverged from what the seller declared before measuring it.
-  'custody_received_at,custody_condition_notes,custody_matches_declared';
+  'custody_received_at,custody_condition_notes,custody_matches_declared,' +
+  // Upper bound on any gift card later issued over this stone's token.
+  'reserve_escrow_ends_at';
 
 export interface QueueRow {
   id: string;
@@ -138,4 +140,5 @@ export interface QueueRow {
   custody_received_at: string | null;
   custody_condition_notes: string | null;
   custody_matches_declared: boolean | null;
+  reserve_escrow_ends_at: string | null;
 }

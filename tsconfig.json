@@ -6,6 +6,10 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    // `qrcode-generator` is CommonJS and declares `export =`. Vite's interop
+    // hands it back as the default export at runtime, so the type system has to
+    // agree or the import that works is the one that will not compile.
+    "esModuleInterop": true,
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,
     "isolatedModules": true,

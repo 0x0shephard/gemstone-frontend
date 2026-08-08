@@ -21,6 +21,18 @@ verify_jwt = false
 [functions.v1-private-file-url]
 verify_jwt = false
 
+[functions.v1-gift-create]
+verify_jwt = false
+
+[functions.v1-gift-cancel]
+verify_jwt = false
+
+# `inspect` has to answer before the recipient has an account — the claim page
+# shows what the card is for, then asks for the email. The `claim` action calls
+# `requireUser` itself.
+[functions.v1-gift-claim]
+verify_jwt = false
+
 # Machine-called sweeps. They carry no user session, so the platform's JWT gate
 # would reject a scheduler outright — a 401 from the gateway, before the function
 # runs, which looks exactly like a working cron that quietly does nothing.

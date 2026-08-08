@@ -22,6 +22,7 @@ import { contracts } from '@/contracts';
 import { decorate } from '@/lib/gem';
 import type { IDataService, LandingData, ProfileData } from '../IDataService';
 import type {
+  ApproveTransferRequest,
   Auction,
   Bid,
   BidRequest,
@@ -44,9 +45,11 @@ import type {
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
+  RevokeApprovalRequest,
   SettleAuctionRequest,
   SwapRequest,
   SwapRequestAction,
+  TransferTokenRequest,
   TreasurySplitItem,
   TxResult,
   ListRequest,
@@ -1020,6 +1023,74 @@ export const chainService: IDataService = {
       ...contract('Marketplace'),
       functionName: 'cancel',
       args: [request.tokenId],
+    }),
+  getTokenApprovals: async (tokenIds: bigint[]): Promise<Record<string, Address>> => {
+    const approvals = await Promise.all(
+      tokenIds.map(
+        (tokenId) =>
+          client
+            .readContract({
+              ...contract('DGENFT'),
+              functionName: 'getApproved',
+              args: [tokenId],
+            })
+            // A burned or never-minted id reverts. Reporting "nothing approved"
+            // is both true and the answer that makes the caller do nothing.
+            .catch(() => zeroAddress) as Promise<Address>,
+      ),
+    );
+    return Object.fromEntries(
+      tokenIds.map((tokenId, index) => [tokenId.toString(), approvals[index]]),
+    );
+  },
+  transferToken: async (request: TransferTokenRequest): Promise<TxResult> => {
+    /*
+     * `from` is read rather than assumed. A listed token is owned by the
+     * Marketplace escrow, not by the seller, and passing the connected wallet
+     * would produce an `ERC721IncorrectOwner` revert that says nothing useful.
+     */
+    const [owner, locked] = (await Promise.all([
+      client.readContract({
+        ...contract('DGENFT'),
+        functionName: 'ownerOf',
+        args: [request.tokenId],
+      }),
+      client.readContract({
+        ...contract('DGENFT'),
+        functionName: 'transferLocked',
+        args: [request.tokenId],
+      }),
+    ])) as [Address, boolean];
+
+    if (locked) {
+      throw new Error(
+        'This token is locked while its redemption is in progress. Cancel the redemption to transfer it.',
+      );
+    }
+    if (isAddressEqual(owner, manifest.addresses.Marketplace)) {
+      throw new Error('This token is escrowed by an active listing. Cancel the listing first.');
+    }
+
+    const result = await runContractTransaction({
+      ...contract('DGENFT'),
+      functionName: 'safeTransferFrom',
+      args: [owner, request.to, request.tokenId],
+    });
+    await refresh();
+    return result;
+  },
+  approveTransfer: (request: ApproveTransferRequest) =>
+    runContractTransaction({
+      ...contract('DGENFT'),
+      functionName: 'approve',
+      args: [request.operator, request.tokenId],
+    }),
+  /** Clears a standing approval by approving the zero address. */
+  revokeApproval: (request: RevokeApprovalRequest) =>
+    runContractTransaction({
+      ...contract('DGENFT'),
+      functionName: 'approve',
+      args: [zeroAddress, request.tokenId],
     }),
   bid: async (request: BidRequest) => {
     const gem = await readRegistryGem(request.gemId);

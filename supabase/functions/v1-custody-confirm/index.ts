@@ -57,6 +57,22 @@ Deno.serve(async (request) => {
       );
     }
 
+    /*
+     * The escrow term is recorded here because here is where it is known: it
+     * comes from the arrangement this custodian entered into for this stone.
+     * Nothing on chain carries it — `ReserveManager` has no timestamps — and a
+     * gift card issued over the token may not outlive it, so a missing date
+     * later becomes a refusal to issue rather than a card with an invented
+     * expiry.
+     */
+    const escrowEndsAt = new Date(String(body.reserveEscrowEndsAt ?? ''));
+    if (Number.isNaN(escrowEndsAt.getTime())) {
+      return json({ error: 'Record the date this stone’s reserve escrow ends' }, 400);
+    }
+    if (escrowEndsAt.getTime() <= Date.now()) {
+      return json({ error: 'The reserve escrow end date must be in the future' }, 400);
+    }
+
     const { data: confirmed, error } = await admin
       .from('seller_submissions')
       .update({
@@ -66,6 +82,7 @@ Deno.serve(async (request) => {
         custody_organization: membership.organizationId,
         custody_condition_notes: notes || null,
         custody_matches_declared: body.matchesDeclared,
+        reserve_escrow_ends_at: escrowEndsAt.toISOString(),
       })
       .eq('id', submissionId)
       // Guarded so a second confirmation cannot overwrite the first intake
@@ -84,9 +101,14 @@ Deno.serve(async (request) => {
       role: membership.role,
       matchesDeclared: body.matchesDeclared,
       conditionNotes: notes || null,
+      reserveEscrowEndsAt: escrowEndsAt.toISOString(),
     });
 
-    return json({ submissionId, status: 'awaiting_grading' });
+    return json({
+      submissionId,
+      status: 'awaiting_grading',
+      reserveEscrowEndsAt: escrowEndsAt.toISOString(),
+    });
   } catch (error) {
     if (error instanceof NotAVerifierError) return json({ error: 'Not found' }, 404);
     if (error instanceof NotACustodianError) return json({ error: error.message }, 403);

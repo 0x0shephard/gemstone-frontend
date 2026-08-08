@@ -1,5 +1,7 @@
+import type { Address } from 'viem';
 import type {
   ActivityItem,
+  ApproveTransferRequest,
   Auction,
   Bid,
   BuyListingRequest,
@@ -22,10 +24,12 @@ import type {
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
+  RevokeApprovalRequest,
   SettleAuctionRequest,
   SwapRequest,
   SwapRequestAction,
   TreasurySplitItem,
+  TransferTokenRequest,
   TrustSignal,
   TxResult,
   BidRequest,
@@ -71,11 +75,22 @@ export interface IDataService {
   getPaymentAssets(): Promise<PaymentAsset[]>;
   getPendingAuctionRefunds(address?: string): Promise<PendingRefund[]>;
   getPendingTreasuryPayout(address?: string): Promise<PendingTreasuryPayout | undefined>;
+  /**
+   * Who, if anyone, may move each of these tokens on the owner's behalf.
+   *
+   * Keyed by token id as a string, and zero-address where nothing is approved.
+   * A gift card leaves this set, and only the owner can clear it — so the only
+   * way to tell them it is still outstanding is to read it.
+   */
+  getTokenApprovals(tokenIds: bigint[]): Promise<Record<string, Address>>;
 
   buyNow(request: BuyNowRequest): Promise<TxResult>;
   buy(request: BuyListingRequest): Promise<TxResult>;
   list(request: ListRequest): Promise<TxResult>;
   cancelListing(request: CancelListingRequest): Promise<TxResult>;
+  transferToken(request: TransferTokenRequest): Promise<TxResult>;
+  approveTransfer(request: ApproveTransferRequest): Promise<TxResult>;
+  revokeApproval(request: RevokeApprovalRequest): Promise<TxResult>;
   bid(request: BidRequest): Promise<TxResult>;
   settleAuction(request: SettleAuctionRequest): Promise<TxResult>;
   claimRefund(request: ClaimRefundRequest): Promise<TxResult>;

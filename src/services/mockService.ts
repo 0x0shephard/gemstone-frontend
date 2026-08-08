@@ -174,12 +174,17 @@ export const mockService: IDataService = {
       amount: 400000000000000000n,
       amountFmt: '0.4 ETH',
     }),
+  getTokenApprovals: (tokenIds: bigint[]) =>
+    delay(Object.fromEntries(tokenIds.map((tokenId) => [tokenId.toString(), zeroAddress]))),
 
   // writes — resolve a mock tx hash after simulated confirmation latency
   buyNow: ok,
   buy: ok,
   list: ok,
   cancelListing: ok,
+  transferToken: ok,
+  approveTransfer: ok,
+  revokeApproval: ok,
   bid: ok,
   settleAuction: ok,
   claimRefund: ok,

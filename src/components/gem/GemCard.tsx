@@ -15,10 +15,16 @@ interface GemCardProps {
   ctaLabel?: string;
   href?: string;
   revealDelay?: number;
+  /**
+   * Controls rendered below the price row. The card's whole surface is a link,
+   * so anything interactive here has to sit above that overlay — this slot is
+   * stacked for you.
+   */
+  footer?: React.ReactNode;
 }
 
 /** The primary gem card used across marketplace, auctions and featured grids. */
-export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay }: GemCardProps) {
+export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay, footer }: GemCardProps) {
   const to = href ?? `/gem/${gem.gemId}`;
   const { address } = useAccount();
   const isOwn = Boolean(address && gem.owner && address.toLowerCase() === gem.owner.toLowerCase());
@@ -109,6 +115,8 @@ export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay }: GemC
             {ctaLabel ?? defaultCta}
           </span>
         </div>
+
+        {footer && <div className="relative z-20">{footer}</div>}
       </div>
     </Card>
   );

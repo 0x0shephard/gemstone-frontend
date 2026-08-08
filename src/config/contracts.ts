@@ -42,6 +42,16 @@ export const contractAddresses = Object.fromEntries(
 export const usdcAddress = parseAddress('VITE_USDC_ADDRESS');
 export const musdcFaucetAddress = parseAddress('VITE_MUSDC_FAUCET_ADDRESS');
 
+/**
+ * The operator account that spends a gift card's single-token approval.
+ *
+ * Not part of {@link deploymentManifest}: it is an EOA rather than a deployed
+ * contract, and the rest of the app works without it. Gift cards are the only
+ * feature that needs it, and they say so themselves when it is missing rather
+ * than taking the whole configuration down.
+ */
+export const giftOperatorAddress = parseAddress('VITE_GIFT_OPERATOR_ADDRESS');
+
 export interface DeploymentManifest {
   schemaVersion: 1;
   chainId: number;

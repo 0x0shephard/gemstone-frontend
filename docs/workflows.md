@@ -64,7 +64,8 @@ seller cannot route their own stone around a lab.
 VerifyPage custody queue → v1-custody-confirm
   ├─ canConfirmCustody()   kind = 'admin', or role = 'custodian'
   ├─ records custody_received_at / _by / _organization,
-  │           custody_condition_notes, custody_matches_declared
+  │           custody_condition_notes, custody_matches_declared,
+  │           reserve_escrow_ends_at        ← required, must be in the future
   └─ status = 'awaiting_custody' → 'awaiting_grading'
 ```
 
@@ -82,6 +83,14 @@ attests to what was recorded here.
 A divergence between the received stone and the seller's declaration is flagged
 rather than rejected: the grader's own measurements are authoritative, and the
 note is surfaced to them.
+
+**`reserve_escrow_ends_at` is captured here and nowhere else.** It is a property
+of the escrow arrangement this custodian entered into for this stone, and
+nothing on chain records it — `ReserveManager` holds balances and coverage
+ratios with no timestamps whatever. It later bounds the claim window of any gift
+card issued over the stone's token (D2). The constraint enforcing it is
+`NOT VALID`, so stones that entered custody before this existed keep a null and
+simply cannot carry a gift card until a custodian records one.
 
 ### A3. Grading — the lab's decision
 
@@ -256,6 +265,9 @@ custom error rather than surfaced raw.
 | Fund the reserve                | GemDetail   | `ReserveManager.fundNative` / `fundToken`                 |
 | Request redemption              | Redeem      | `RedemptionManager.requestRedemption`                     |
 | Cancel a redemption             | Redeem      | `RedemptionManager.cancelRedemption`                      |
+| Send a token to an address      | Portfolio   | `DGENFT.safeTransferFrom`                                 |
+| Issue a gift card               | Portfolio   | `DGENFT.approve` (operator, one token)                    |
+| Clear a stale gift approval     | Portfolio   | `DGENFT.approve(0x0, tokenId)`                            |
 
 **Solvency couples all of these.** `requireSolvent()` guards seven entry points —
 `buyNow`, `bid`, `Marketplace.buy`/`createOffer`/`acceptOffer`,
@@ -291,6 +303,74 @@ parameter:
 "Offer" rather than "bid" deliberately: bidding already means auction bidding on
 an unminted stone, and the Portfolio separates **Minting Bids** from **Token
 Bids** for the same reason.
+
+---
+
+## D2. Gift cards — a claimable handover
+
+A gift card is **not** a transfer and **not** an escrow. The sender keeps the
+token the whole time; all they part with is a single-token `approve`, which the
+operator spends exactly once when someone claims.
+
+```
+Portfolio → Owned Tokens → Send Token
+  ├─ Send to wallet address ──► DGENFT.safeTransferFrom          immediate, final
+  └─ Make a gift card
+       │  DGENFT.approve(operator, tokenId)     ← the only signature
+       ├─ v1-gift-create   re-reads ownerOf / getApproved / transferLocked
+       │                   from the chain, stores SHA-256 of the code
+       └─ card renders to SVG → print · PNG · SVG · link · WhatsApp
+
+QR ──► /gift/:code
+  v1-gift-claim {action:'inspect'}   public: shows the gift before asking for anything
+  1. email OTP or Google  ─ session email must equal recipient_email
+  2. connect + SIWE       ─ writes wallet_links
+  3. v1-gift-claim {action:'claim'}
+        re-reads owner / approval / lock, takes the row conditionally,
+        then operator DGENFT.safeTransferFrom(sender → recipient)
+```
+
+**The claim window is the stone's reserve escrow term, and forfeits nothing.**
+`v1-gift-create` reads `seller_submissions.reserve_escrow_ends_at` for the gem
+behind the token and uses it verbatim as `expires_at`. A voucher over a
+tokenised gemstone cannot outlive the escrow backing the gemstone, and a
+duration the protocol picked for itself would be exactly the kind of unilateral
+term a voucher may not carry.
+
+`ReserveManager` has **no time dimension at all** — no term, no maturity, not one
+timestamp — so this date cannot be read from the chain. It is recorded by the
+custodian at intake, alongside the arrival record, because that is where it is
+actually known. A gem with no recorded term cannot carry a gift card:
+`v1-gift-create` returns 409 rather than inventing an expiry, since a wrong date
+on a printed voucher is the one thing that cannot be corrected afterwards.
+
+A lapsed card is simply not claimable; the sender still holds the stone and can
+issue another. There is no sweep, because a sweep would have nothing to do — see
+below.
+
+**The approval outlives the card, and only the owner can clear it.** ERC-721
+`approve` may be called only by the token's owner or an approved-for-all
+operator. A per-token approval grants neither, so the gift operator cannot
+revoke its own permission when a card expires or is cancelled. `expires_at` is
+enforced on the claim path, so an expired card is inert — but the on-chain
+permission stays until the sender withdraws it. Portfolio → **Gift Cards**
+surfaces exactly those cases and offers **Revoke approval**.
+
+Three things void a card without anyone touching it, and the claim path re-reads
+all three rather than trusting what was true at issue time:
+
+| Sender does this        | Effect on the card                              |
+| ----------------------- | ----------------------------------------------- |
+| Sells or swaps the token | Transfer clears the approval — claim refuses     |
+| Requests redemption      | `transferLocked` set — claim refuses             |
+| Cancels the card         | Row is `cancelled` — claim refuses immediately   |
+
+**Why the email is mandatory.** Without it the printed code is a bearer
+instrument: whoever photographs the card takes the gemstone, including anyone
+who handles it in the post. Binding the claim to an address the sender chose is
+the entire security model, and it is why the code is stored hashed — a database
+leak yields nothing claimable.
+
 
 ---
 

@@ -26,8 +26,16 @@ export interface AuthState {
   authError: string | null;
   /** Server-verified primary wallet. */
   linkedWallet: string | null;
-  signInWithGoogle: () => Promise<AuthActionResult>;
-  signInWithEmail: (email: string) => Promise<{ ok: boolean; message: string }>;
+  /**
+   * `redirectTo` lets a page that is itself the destination — the gift claim
+   * page, say — bring the user back to where they were rather than dropping
+   * them at onboarding with no way to find the link they arrived on.
+   */
+  signInWithGoogle: (redirectTo?: string) => Promise<AuthActionResult>;
+  signInWithEmail: (
+    email: string,
+    redirectTo?: string,
+  ) => Promise<{ ok: boolean; message: string }>;
   signUpWithEmail: (email: string, fullName: string) => Promise<{ ok: boolean; message: string }>;
   signOut: () => Promise<void>;
   linkWallet: (
@@ -108,37 +116,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
-    if (!supabase) return { ok: false, message: 'Auth is not configured.' };
-    if (googleAuthAvailable === false) {
-      const message = friendlyAuthError('Unsupported provider: provider is not enabled');
-      setAuthError(message);
-      return { ok: false, message };
-    }
-    try {
-      setAuthError(null);
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: `${window.location.origin}/onboarding` },
-      });
-      if (error) {
+  const signInWithGoogle = useCallback(
+    async (redirectTo?: string) => {
+      if (!supabase) return { ok: false, message: 'Auth is not configured.' };
+      if (googleAuthAvailable === false) {
+        const message = friendlyAuthError('Unsupported provider: provider is not enabled');
+        setAuthError(message);
+        return { ok: false, message };
+      }
+      try {
+        setAuthError(null);
+        const { error } = await supabase.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: redirectTo ?? `${window.location.origin}/onboarding` },
+        });
+        if (error) {
+          const message = friendlyAuthError(error);
+          setAuthError(message);
+          return { ok: false, message };
+        }
+        return { ok: true, message: 'Redirecting to Google…' };
+      } catch (error) {
         const message = friendlyAuthError(error);
         setAuthError(message);
         return { ok: false, message };
       }
-      return { ok: true, message: 'Redirecting to Google…' };
-    } catch (error) {
-      const message = friendlyAuthError(error);
-      setAuthError(message);
-      return { ok: false, message };
-    }
-  }, [googleAuthAvailable]);
+    },
+    [googleAuthAvailable],
+  );
 
-  const signInWithEmail = useCallback(async (email: string) => {
+  const signInWithEmail = useCallback(async (email: string, redirectTo?: string) => {
     if (!supabase) return { ok: false, message: 'Auth is not configured.' };
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/onboarding` },
+      options: { emailRedirectTo: redirectTo ?? `${window.location.origin}/onboarding` },
     });
     return error
       ? { ok: false, message: error.message }

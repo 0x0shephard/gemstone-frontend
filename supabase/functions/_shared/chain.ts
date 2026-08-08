@@ -48,6 +48,27 @@ export const primarySaleAbi = parseAbi([
   'event BidPlaced(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount, uint256 usdValue)',
 ]);
 
+export const dgeNftAbi = parseAbi([
+  'function ownerOf(uint256 tokenId) view returns (address)',
+  'function getApproved(uint256 tokenId) view returns (address)',
+  // Set while a redemption is in flight. `_update` reverts on a locked token,
+  // so a gift card over one would fail at claim time rather than at issue time.
+  'function transferLocked(uint256 tokenId) view returns (bool)',
+  'function tokenGem(uint256 tokenId) view returns (uint256)',
+  'function safeTransferFrom(address from, address to, uint256 tokenId)',
+]);
+
+/**
+ * The DGE NFT address.
+ *
+ * Resolved on demand rather than in {@link operatorChain}, so functions that
+ * predate the gift-card flow do not start failing on a secret they never
+ * needed.
+ */
+export function dgeNftAddress(): Address {
+  return requiredAddress('DGE_NFT_ADDRESS');
+}
+
 export interface OperatorChain {
   account: ReturnType<typeof privateKeyToAccount>;
   publicClient: ReturnType<typeof createPublicClient>;

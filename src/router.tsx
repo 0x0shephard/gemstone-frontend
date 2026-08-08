@@ -18,6 +18,7 @@ const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const SellerPage = lazy(() => import('@/pages/SellerPage'));
 const VerifyPage = lazy(() => import('@/pages/VerifyPage'));
 const AboutPage = lazy(() => import('@/pages/AboutPage'));
+const GiftClaimPage = lazy(() => import('@/pages/GiftClaimPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
 function route(element: ReactNode) {
@@ -53,6 +54,10 @@ export const router = createBrowserRouter([
       // "not found" the API returns rather than a sign-in prompt.
       { path: '/verify', element: route(<VerifyPage />) },
       { path: '/about', element: route(<AboutPage />) },
+      // Where a printed gift card's QR code points. Public: the recipient may
+      // have no account at all when they arrive, and the page's job is to show
+      // them what the gift is before it asks them for anything.
+      { path: '/gift/:code', element: route(<GiftClaimPage />) },
     ],
   },
   { path: '/app', element: <Navigate to="/marketplace" replace /> },

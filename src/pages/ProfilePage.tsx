@@ -19,9 +19,13 @@ import type { Bid, Offer } from '@/services/types';
 import { AnalyticsConsent } from '@/components/privacy/AnalyticsConsent';
 import { PendingRefunds } from '@/components/wallet/PendingRefunds';
 import { TxButton } from '@/components/tx/TxButton';
+import { Button } from '@/components/ui/Button';
+import { GemActionModals } from '@/components/modals/GemActionModals';
+import { GiftCardList } from '@/components/gift/GiftCardList';
+import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
 
-const TABS = ['owned', 'bids', 'offers', 'swaps', 'redeem', 'history'] as const;
+const TABS = ['owned', 'bids', 'offers', 'swaps', 'gifts', 'redeem', 'history'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function ProfilePage() {
@@ -31,6 +35,7 @@ export default function ProfilePage() {
   const { data: profile, isLoading } = useProfile(address);
   const { data: pendingProceeds, refetch: refetchPendingProceeds } =
     usePendingTreasuryPayout(address);
+  const modals = useGemModals();
   /*
    * Deep-linkable so the mobile dock's "Token Bids" can land directly on that
    * tab. Kept in the URL rather than local state alone, otherwise the dock entry
@@ -54,6 +59,7 @@ export default function ProfilePage() {
     { key: 'bids', label: 'Minting Bids', count: profile?.bids.length ?? 0 },
     { key: 'offers', label: 'Token Bids', count: profile?.offers.length ?? 0 },
     { key: 'swaps', label: 'Swaps', count: profile?.swaps.length ?? 0 },
+    { key: 'gifts', label: 'Gift Cards', count: '—' },
     { key: 'redeem', label: 'Redemption', count: profile?.redemptions.length ?? 0 },
     { key: 'history', label: 'History', count: '—' },
   ];
@@ -148,6 +154,22 @@ export default function ProfilePage() {
                     gem={g}
                     ctaLabel={g.listingSeller ? 'Manage listing →' : 'Manage →'}
                     href={`/gem/${g.gemId}?manage=1${g.listingSeller ? '&listed=1' : ''}`}
+                    footer={
+                      /*
+                       * A listed token is escrowed by the Marketplace, so there
+                       * is nothing here to send until the listing is cancelled.
+                       */
+                      g.tokenId && !g.listingSeller ? (
+                        <Button
+                          block
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => modals.open('send', g)}
+                        >
+                          Send token
+                        </Button>
+                      ) : null
+                    }
                   />
                 ))}
               </div>
@@ -187,6 +209,8 @@ export default function ProfilePage() {
               <EmptyState title="No swap requests" />
             ))}
 
+          {tab === 'gifts' && <GiftCardList owned={profile.owned} />}
+
           {tab === 'redeem' &&
             (profile.redemptions.length ? (
               <div className="space-y-3">
@@ -219,6 +243,7 @@ export default function ProfilePage() {
       )}
 
       <AnalyticsConsent />
+      <GemActionModals state={modals.state} onClose={modals.close} />
     </div>
   );
 }

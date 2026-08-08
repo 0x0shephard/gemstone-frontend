@@ -137,6 +137,13 @@ export default function GemDetailPage() {
                       <Button variant="secondary" onClick={() => modals.open('swap', gem)}>
                         Propose swap
                       </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => modals.open('send', gem)}
+                        disabled={!gem.tokenId}
+                      >
+                        Send token
+                      </Button>
                       {!gem.funded && (
                         <Button variant="secondary" onClick={() => modals.open('reserve', gem)}>
                           Fund reserve

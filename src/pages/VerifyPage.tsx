@@ -68,6 +68,7 @@ export default function VerifyPage() {
   const [intakeId, setIntakeId] = useState<string>();
   const [intakeNotes, setIntakeNotes] = useState('');
   const [intakeMatches, setIntakeMatches] = useState(true);
+  const [intakeEscrowEnds, setIntakeEscrowEnds] = useState('');
   const [intakeBusy, setIntakeBusy] = useState(false);
   const [selected, setSelected] = useState<QueueItem>();
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
@@ -259,6 +260,9 @@ export default function VerifyPage() {
       await confirmCustody(submissionId, {
         matchesDeclared: intakeMatches,
         conditionNotes: intakeNotes.trim(),
+        // Date-only input, taken as end of day so a term recorded for today's
+        // date does not lapse at midnight this morning.
+        reserveEscrowEndsAt: new Date(`${intakeEscrowEnds}T23:59:59`).toISOString(),
       });
       setResult({
         tone: 'ok',
@@ -267,6 +271,7 @@ export default function VerifyPage() {
       setIntakeId(undefined);
       setIntakeNotes('');
       setIntakeMatches(true);
+      setIntakeEscrowEnds('');
       await refresh();
     } catch (error) {
       setResult({
@@ -282,6 +287,7 @@ export default function VerifyPage() {
     setIntakeId(item.id);
     setIntakeNotes('');
     setIntakeMatches(true);
+    setIntakeEscrowEnds('');
     setResult(undefined);
   }
 
@@ -372,11 +378,13 @@ export default function VerifyPage() {
           openId={intakeId}
           notes={intakeNotes}
           matches={intakeMatches}
+          escrowEnds={intakeEscrowEnds}
           busy={intakeBusy}
           onOpen={openIntake}
           onCancel={() => setIntakeId(undefined)}
           onNotes={setIntakeNotes}
           onMatches={setIntakeMatches}
+          onEscrowEnds={setIntakeEscrowEnds}
           onConfirm={recordIntake}
         />
       )}
@@ -651,24 +659,33 @@ function CustodyQueue({
   openId,
   notes,
   matches,
+  escrowEnds,
   busy,
   onOpen,
   onCancel,
   onNotes,
   onMatches,
+  onEscrowEnds,
   onConfirm,
 }: {
   items: QueueItem[];
   openId?: string;
   notes: string;
   matches: boolean;
+  escrowEnds: string;
   busy: boolean;
   onOpen: (item: QueueItem) => void;
   onCancel: () => void;
   onNotes: (value: string) => void;
   onMatches: (value: boolean) => void;
+  onEscrowEnds: (value: string) => void;
   onConfirm: (submissionId: string) => void | Promise<void>;
 }) {
+  // Read once on mount: the clock is impure, and this only needs to stop a
+  // custodian back-dating the term, not to tick.
+  const [earliestEscrowEnd] = useState(() =>
+    new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+  );
   return (
     <Card className="p-0">
       <div className="flex items-center justify-between border-b border-line/[0.08] px-4 py-3">
@@ -741,10 +758,23 @@ function CustodyQueue({
                     />
                   </Labeled>
 
+                  <Labeled
+                    label="Reserve escrow ends"
+                    hint="From this stone's escrow arrangement. A gift card issued over its token cannot be claimed after this date, so it cannot be left blank."
+                  >
+                    <input
+                      type="date"
+                      className={inputClass}
+                      min={earliestEscrowEnd}
+                      value={escrowEnds}
+                      onChange={(event) => onEscrowEnds(event.target.value)}
+                    />
+                  </Labeled>
+
                   <Button
                     type="button"
                     size="sm"
-                    disabled={busy || (!matches && notes.trim().length < 10)}
+                    disabled={busy || !escrowEnds || (!matches && notes.trim().length < 10)}
                     onClick={() => void onConfirm(item.id)}
                   >
                     {busy ? 'Recording…' : 'Confirm custody'}

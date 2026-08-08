@@ -24,6 +24,11 @@ export interface QueueItem {
   custody_condition_notes: string | null;
   /** False when the received stone diverged from what the seller declared. */
   custody_matches_declared: boolean | null;
+  /**
+   * End of this stone's reserve escrow term. Caps the claim window of any gift
+   * card issued over its token, so a stone without one cannot carry a card.
+   */
+  reserve_escrow_ends_at: string | null;
 }
 
 export interface EvidenceFile {
@@ -179,12 +184,13 @@ export async function submitGrading(
  */
 export async function confirmCustody(
   submissionId: string,
-  input: { matchesDeclared: boolean; conditionNotes: string },
+  input: { matchesDeclared: boolean; conditionNotes: string; reserveEscrowEndsAt: string },
 ): Promise<{ status: string }> {
   return invoke('v1-custody-confirm', {
     submissionId,
     matchesDeclared: input.matchesDeclared,
     conditionNotes: input.conditionNotes,
+    reserveEscrowEndsAt: input.reserveEscrowEndsAt,
   });
 }
 
