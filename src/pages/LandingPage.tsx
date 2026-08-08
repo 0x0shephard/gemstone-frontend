@@ -119,13 +119,11 @@ export default function LandingPage() {
       <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-10">
           <h2 className="max-w-[20ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            Lifecycle of the NFT
+            Lifecycle of Token
           </h2>
           <p className="mt-3 max-w-[72ch] text-[14px] leading-relaxed text-ink-muted">
             Before becoming an NFT, a gemstone goes through our KYC of sellers and a professional
-            gemological review before being listed for minting. Once minted, part of the minted
-            value is escrowed to be used as monthly vault fees. Once redeemed, the escrowed amount
-            is credited back to the Digital Wallet of the owner.
+            gemological review before being listed for minting.
           </p>
         </div>
         <div
@@ -154,11 +152,13 @@ export default function LandingPage() {
       <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-9">
           <h2 className="max-w-[26ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            How the escrow at minting works and what it covers
+            How the escrow at minting works
           </h2>
           <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
-            Every NFT escrows at minting a reserve that covers vault, insurance and logistics fees.
-            This reserve is taken proportionally to the stone Value.
+            Once minted, part of the minted value is escrowed to be used as monthly vault fees. Once
+            redeemed, the escrowed amount is credited back to the Digital Wallet of the owner. Every
+            NFT escrows at minting a reserve that covers vault, insurance and logistics fees. This
+            reserve is taken proportionally to the stone Value.
           </p>
         </div>
         <div

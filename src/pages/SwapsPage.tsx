@@ -10,7 +10,65 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
 import { inputClass } from '@/components/ui/Field';
+import { explorerAddressUrl } from '@/config/chains';
+import { shortenAddress } from '@/lib/format';
+import type { SwapRequest } from '@/services/types';
 import { useAccount } from 'wagmi';
+import type { Address } from 'viem';
+
+/*
+ * Named for what the swap is waiting on rather than for the contract's internal
+ * flag. "Active" told a reader nothing about whose move it was; a swap sits
+ * unaccepted until the requested owner acts, and that is the whole state.
+ *
+ * "Rejected" is only ever reached by the proposer withdrawing: `SwapEscrow`
+ * gives the counterparty no reject call, only `cancelOffer`, which is
+ * proposer-only. Ignoring an offer until it expires is the only refusal
+ * available to them.
+ */
+const SWAP_STATUS_LABEL: Record<SwapRequest['status'], string> = {
+  Active: 'Pending confirmation',
+  Accepted: 'Confirmed',
+  Cancelled: 'Rejected',
+  Expired: 'Expired',
+};
+
+/**
+ * One half of a swap, attributed to the account that holds it.
+ *
+ * The previous labels were "You receive" and "You give", which are only true
+ * for one of the two parties and were shown to everyone — a proposer reading
+ * their own offer was told they would receive the token they were giving away.
+ */
+function SwapSide({
+  role,
+  account,
+  name,
+  displayId,
+}: {
+  role: string;
+  account: Address;
+  name: string;
+  displayId: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
+        {role}{' '}
+        <a
+          href={explorerAddressUrl(account)}
+          target="_blank"
+          rel="noreferrer"
+          className="font-mono normal-case tracking-normal text-ink-muted underline decoration-line/30 underline-offset-2 hover:text-ink"
+        >
+          {shortenAddress(account)}
+        </a>
+      </div>
+      <div className="mt-0.5 truncate text-[14px] font-semibold text-ink">{name}</div>
+      <div className="font-mono text-[11.5px] text-ink-dim">{displayId}</div>
+    </div>
+  );
+}
 
 export default function SwapsPage() {
   const { data: swaps, isLoading, isError } = useSwaps();
@@ -81,36 +139,34 @@ export default function SwapsPage() {
             return (
               <Card key={s.offerId.toString()} className="p-4 sm:p-5">
                 <div className="grid gap-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                  <div className="flex min-w-0 items-center gap-3">
+                  <SwapSide
+                    role="Offered by"
+                    account={s.proposer}
+                    name={s.giveName}
+                    displayId={s.giveDisplayId}
+                  />
+                  <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
+                  <div className="flex min-w-0 items-center gap-3 border-l border-line/[0.07] pl-4 sm:border-0 sm:pl-0">
                     <GemThumb
                       gem={s.gem}
                       height={52}
                       rounded="rounded-[4px]"
                       showTag={false}
                       showCarat={false}
-                      className="w-[52px]"
+                      className="w-[52px] shrink-0"
                     />
-                    <div>
-                      <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
-                        You receive
-                      </div>
-                      <div className="text-[14px] font-semibold text-ink">{s.gem.name}</div>
-                      <div className="font-mono text-[11.5px] text-ink-dim">{s.gem.displayId}</div>
-                    </div>
-                  </div>
-                  <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
-                  <div className="min-w-0 border-l border-line/[0.07] pl-4 sm:border-0 sm:pl-0">
-                    <div className="text-[10.5px] uppercase tracking-[0.12em] text-ink-dim">
-                      You give
-                    </div>
-                    <div className="text-[14px] font-semibold text-ink">{s.giveName}</div>
-                    <div className="font-mono text-[11.5px] text-ink-dim">{s.giveDisplayId}</div>
+                    <SwapSide
+                      role="Requested from"
+                      account={s.requestedOwner}
+                      name={s.gem.name}
+                      displayId={s.gem.displayId}
+                    />
                   </div>
                 </div>
                 <div className="mt-4 flex flex-col gap-3 border-t border-line/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-3">
-                    <StatusBadge color={s.statusColor} dot>
-                      {s.status}
+                    <StatusBadge color={s.statusColor} dot={s.status === 'Active'}>
+                      {SWAP_STATUS_LABEL[s.status]}
                     </StatusBadge>
                     <span className="text-[13px] font-medium text-emerald">{s.diff}</span>
                   </div>

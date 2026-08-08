@@ -179,6 +179,25 @@ export default function GemDetailPage() {
                       <Button variant="secondary" onClick={() => modals.open('offer', gem)}>
                         Make an offer
                       </Button>
+                      <Button
+                        variant="secondary"
+                        className="col-span-2"
+                        onClick={() => modals.open('swapFor', gem)}
+                        disabled={!gem.tokenId}
+                      >
+                        Propose a swap
+                      </Button>
+                      {/*
+                        Worth saying up front rather than after they have escrowed
+                        a token. `SwapEscrow.acceptOffer` transfers the requested
+                        token from whoever accepts, and a listed token is held by
+                        the Marketplace — so the seller has to cancel first.
+                      */}
+                      <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                        Buying is immediate. An offer or a swap has to be accepted by the seller,
+                        who must cancel this listing first — the Marketplace holds the token in
+                        escrow while it is listed.
+                      </p>
                     </>
                   ) : (
                     /*
