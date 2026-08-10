@@ -53,16 +53,32 @@ Deno.serve(async (request) => {
     // scheduled job for a table whose rows are worthless after ten minutes.
     await admin.from('canva_oauth_states').delete().lt('expires_at', new Date().toISOString());
 
-    const url = new URL(CANVA_AUTHORIZE_URL);
-    url.searchParams.set('code_challenge', await codeChallenge(verifier));
-    url.searchParams.set('code_challenge_method', 'S256');
-    url.searchParams.set('scope', CANVA_SCOPES);
-    url.searchParams.set('response_type', 'code');
-    url.searchParams.set('client_id', Deno.env.get('CANVA_CLIENT_ID')!.trim());
-    url.searchParams.set('state', state);
-    url.searchParams.set('redirect_uri', redirectUri);
+    /*
+     * Built by hand rather than with `URLSearchParams`, which encodes a space as
+     * `+`. That is legal `application/x-www-form-urlencoded`, but `scope` is a
+     * space-delimited OAuth string and a server that percent-decodes without
+     * form-decoding would read one nonsense scope with plus signs in it. Canva's
+     * own example encodes the separators as `%20`, which is what
+     * `encodeURIComponent` produces.
+     */
+    const query = Object.entries({
+      code_challenge: await codeChallenge(verifier),
+      // RFC 7636 registers this value as uppercase and every standard OAuth
+      // client sends it that way. Canva's prose agrees — "must be set to S256" —
+      // while its example URL shows lowercase, so the server is evidently
+      // case-insensitive. If authorisation ever fails as an invalid request,
+      // this is the first thing to try in lower case.
+      code_challenge_method: 'S256',
+      scope: CANVA_SCOPES,
+      response_type: 'code',
+      client_id: Deno.env.get('CANVA_CLIENT_ID')!.trim(),
+      state,
+      redirect_uri: redirectUri,
+    })
+      .map(([key, value]) => `${key}=${encodeURIComponent(value)}`)
+      .join('&');
 
-    return json({ authorizeUrl: url.toString(), redirectUri });
+    return json({ authorizeUrl: `${CANVA_AUTHORIZE_URL}?${query}`, redirectUri });
   } catch (error) {
     if (error instanceof CanvaNotConfiguredError) {
       return json({ error: 'Canva is not configured for this deployment' }, 503);
