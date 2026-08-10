@@ -14,6 +14,16 @@ export interface Gem {
   owner?: Address;
   /** Set only while the token is escrowed in an active Marketplace listing. */
   listingSeller?: Address;
+  /**
+   * What the owner is asking, when listed.
+   *
+   * Kept apart from `valueUsd`/`value`, which always carry the expert-approved
+   * valuation. These were previously the same field, so listing a token
+   * silently replaced its approved value on screen and the two could never be
+   * shown together — the token appeared unchanged by the listing.
+   */
+  listedPriceUsd?: bigint;
+  listedPrice?: number;
   displayId: string;
   name: string;
   type: GemType;
@@ -37,6 +47,8 @@ export interface Gem {
 export interface DecoratedGem extends Gem {
   color: string;
   valueFmt: string;
+  /** Formatted ask, present only while listed. */
+  listedPriceFmt?: string;
   caratsFmt: string;
   thumb: string;
   reserveLabel: string;

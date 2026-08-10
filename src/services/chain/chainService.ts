@@ -263,12 +263,19 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
     gemId,
     tokenId: registryGem.tokenId > 0n ? registryGem.tokenId : undefined,
     owner,
+    /*
+     * The ask, never the valuation. This block previously overwrote `valueUsd`
+     * and `value` — and then the approved figures were assigned again further
+     * down the same object literal, so the listed price was computed and
+     * discarded on every read. Listing a token changed nothing visible, which
+     * is exactly what it looked like from the outside: nothing happening.
+     */
     ...(listingSeller
       ? {
           market: 'secondary' as const,
           listingSeller,
-          valueUsd: listedPriceUsd!,
-          value: Number(formatUnits(listedPriceUsd!, 18)),
+          listedPriceUsd,
+          listedPrice: Number(formatUnits(listedPriceUsd!, 18)),
         }
       : {}),
     displayId: trait(details, 'Display ID') ?? details.displayId ?? `DGE-${gemId}`,
@@ -1004,8 +1011,10 @@ export const chainService: IDataService = {
     await refresh();
     return result;
   },
-  list: async (request: ListRequest): Promise<TxResult> =>
-    runContractTransaction({
+  // Both refresh: a listing changes ownership to the Marketplace escrow and adds
+  // an ask, and neither shows up until the gem is re-read.
+  list: async (request: ListRequest): Promise<TxResult> => {
+    const result = await runContractTransaction({
       ...contract('Marketplace'),
       functionName: 'list',
       args: [request.tokenId, request.priceUsd],
@@ -1017,13 +1026,19 @@ export const chainService: IDataService = {
           amountOrTokenId: request.tokenId,
         },
       ],
-    }),
-  cancelListing: (request: CancelListingRequest) =>
-    runContractTransaction({
+    });
+    await refresh();
+    return result;
+  },
+  cancelListing: async (request: CancelListingRequest): Promise<TxResult> => {
+    const result = await runContractTransaction({
       ...contract('Marketplace'),
       functionName: 'cancel',
       args: [request.tokenId],
-    }),
+    });
+    await refresh();
+    return result;
+  },
   getTokenApprovals: async (tokenIds: bigint[]): Promise<Record<string, Address>> => {
     const approvals = await Promise.all(
       tokenIds.map(

@@ -253,10 +253,31 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
 }
 
 /* ------------------------------ List ----------------------------- */
+/** Ceiling on the ask, as a multiple of the approved value. */
+const MAX_LISTING_MULTIPLE = 1.5;
+
 export function ListModal({ gem, open, onClose }: BaseModalProps) {
+  // Defaults to the approved value, so an owner who has no view on price can
+  // list without inventing one. `Marketplace.list` rejects anything below it
+  // anyway, which makes it the only safe default.
   const [price, setPrice] = useState(String(gem.value));
   const usd = Number(price) || 0;
-  const validPrice = usd >= gem.value;
+  const ceiling = gem.value * MAX_LISTING_MULTIPLE;
+
+  /*
+   * The floor is the contract's — `list` reverts under the approved value. The
+   * ceiling is this platform's: an ask far above an expert valuation is
+   * speculation against a figure the protocol itself published, so it is capped
+   * here rather than left to the market.
+   */
+  const tooLow = price.trim() !== '' && usd < gem.value;
+  const tooHigh = usd > ceiling;
+  const error = tooLow
+    ? `Cannot be below the approved value of ${gem.valueFmt}.`
+    : tooHigh
+      ? `Cannot exceed ${fmtUsd(ceiling)} — ${MAX_LISTING_MULTIPLE}× the approved value.`
+      : undefined;
+
   return (
     <Modal
       open={open}
@@ -271,14 +292,25 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
         placeholder="0"
         value={price}
         onChange={(e) => setPrice(e.target.value)}
+        error={error}
       />
-      <p className="text-[11.5px] text-ink-dim">
-        Listing approves the token to the Marketplace contract, then records the price on-chain. The
-        secondary price cannot be below the expert-approved primary value of {gem.valueFmt}.
+      <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3">
+        <SummaryRow label="Expert-approved value" value={gem.valueFmt} />
+        <SummaryRow label={`Ceiling (${MAX_LISTING_MULTIPLE}×)`} value={fmtUsd(ceiling)} />
+        <div className="my-1 h-px bg-line/[0.06]" />
+        <SummaryRow
+          label="Your listed price"
+          value={usd > 0 ? fmtUsd(usd) : '—'}
+          accent={usd > gem.value ? 'var(--dc-atelier)' : undefined}
+        />
+      </div>
+      <p className="text-[11.5px] leading-relaxed text-ink-dim">
+        Listing escrows the token in the Marketplace contract and records the price on-chain. Both
+        figures stay visible on the token — buyers see the approved value alongside your ask.
       </p>
       <TxButton
         block
-        disabled={!gem.tokenId || !validPrice}
+        disabled={!gem.tokenId || !!error || usd <= 0}
         action={() =>
           dataService.list({
             tokenId: gem.tokenId!,
@@ -286,6 +318,7 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
           })
         }
         pendingLabel="Listing…"
+        telemetryFlow="list_token"
         onDone={onClose}
       >
         List at {usd > 0 ? fmtUsd(usd) : '—'}

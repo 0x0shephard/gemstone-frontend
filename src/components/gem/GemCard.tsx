@@ -102,15 +102,33 @@ export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay, footer
           </div>
         )}
 
-        <div className="flex items-end justify-between border-t border-line/[0.06] pt-3">
+        {/*
+          Both figures, side by side, when the token is listed. They answer
+          different questions — what a lab said it is worth, and what its owner
+          is asking — and showing only one leaves a buyer unable to tell a fair
+          ask from an optimistic one.
+        */}
+        <div className="flex items-end justify-between gap-4 border-t border-line/[0.06] pt-3">
           <div>
             <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
-              {forSale ? 'Listed price' : 'Approved value'}
+              Approved value
             </div>
             <div className="mt-0.5 font-mono text-[18px] font-semibold tracking-[-0.03em] text-ink">
               {gem.valueFmt}
             </div>
           </div>
+          {forSale && gem.listedPriceFmt && (
+            <div className="text-right">
+              <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-atelier">
+                Listed price
+              </div>
+              <div className="mt-0.5 font-mono text-[18px] font-semibold tracking-[-0.03em] text-ink">
+                {gem.listedPriceFmt}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end">
           <span className="text-[12px] font-semibold text-ink-muted transition-all group-hover:translate-x-0.5 group-hover:text-ink">
             {ctaLabel ?? defaultCta}
           </span>

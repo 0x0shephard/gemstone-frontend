@@ -39,6 +39,7 @@ export function decorate(g: Gem): DecoratedGem {
     ...g,
     color,
     valueFmt: fmtUsd(g.value),
+    listedPriceFmt: g.listedPrice === undefined ? undefined : fmtUsd(g.listedPrice),
     caratsFmt: fmtCarats(g.carats),
     thumb: thumbFor(g.type),
     reserveLabel: funded ? 'Funded 100%' : `Short ${g.reserve}%`,

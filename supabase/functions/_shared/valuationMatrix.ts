@@ -14,6 +14,8 @@
  * inputs hash differently between runs.
  */
 
+import { VALUATION_MATRIX_V1 } from './valuationMatrixV1.ts';
+
 export const PPM = 1_000_000n;
 
 /** A point on the carat curve: weight in micro-carats, multiplier in ppm. */
@@ -55,9 +57,9 @@ export interface ValuationMatrix {
  * a one-line change here, and any change is a pricing change requiring a version
  * bump.
  *
- *  1. Tourmaline and Aquamarine are deliberately absent: these varieties are not
- *     being listed. The engine refuses them rather than pricing an unlisted
- *     variety by accident.
+ *  1. Tourmaline and Aquamarine were absent in v1 and are listed from v2, at
+ *     $200 and $150 per carat. Any variety not named here is still refused
+ *     rather than priced by accident.
  *  2. The multiplier table is authoritative where the source document's worked
  *     example disagrees with it — 2ct is 2.4, not the 2.24 the example computes.
  *     The tests record the difference so the choice stays visible.
@@ -82,7 +84,7 @@ export interface ValuationMatrix {
  *    following the source note that most gemstone colours have three gradings.
  */
 export const VALUATION_MATRIX: ValuationMatrix = {
-  version: 'digital-carat-matrix-v1',
+  version: 'digital-carat-matrix-v2',
 
   varieties: {
     emerald: {
@@ -116,7 +118,35 @@ export const VALUATION_MATRIX: ValuationMatrix = {
       colors: ['green'],
       colorGrades: ['dark', 'medium', 'light'],
     },
-    // tourmaline and aquamarine intentionally absent — not being listed.
+    /*
+     * Added in v2. Both carry several colours, which is a pricing decision and
+     * not a labelling one: with N = 1 the colour multiplier is pinned at exactly
+     * 1.0, while N > 1 makes colour a demand-driven variable that moves the
+     * final figure. Tourmaline's eight-colour range therefore gives colour real
+     * weight in its price, as sapphire's ten already do.
+     *
+     * Colour grades were not specified for either, so both take the generic
+     * dark/medium/light triple used everywhere except emerald.
+     */
+    tourmaline: {
+      basePricePerCaratUsd: 200n,
+      colors: [
+        'blue',
+        'bluish green',
+        'greenish blue',
+        'orangey red',
+        'pink',
+        'pinkish red',
+        'red',
+        'watermelon',
+      ],
+      colorGrades: ['dark', 'medium', 'light'],
+    },
+    aquamarine: {
+      basePricePerCaratUsd: 150n,
+      colors: ['blue', 'deep blue', 'greenish blue'],
+      colorGrades: ['dark', 'medium', 'light'],
+    },
   },
 
   // 0.5 -> 0.55, 1 -> 1.00, 2 -> 2.40, 3 -> 4.20, 5 -> 9.00
@@ -185,6 +215,39 @@ export interface MatrixOptions {
  * stone. Serving the options from the same document that prices them makes an
  * unpriceable selection unreachable.
  */
+/*
+ * Every version ever used to price a gem, newest first.
+ *
+ * `GemRegistry.verifyGem` writes a hash of the matrix into a field with no
+ * setter, so a gem's commitment is permanent. Replacing the matrix in place
+ * would leave those hashes pointing at a document that exists only in git
+ * history — the commitment would still be recorded and no longer checkable.
+ * Keeping the superseded versions here is what makes "resolvable to the rules
+ * that produced it" true rather than aspirational.
+ */
+const MATRIX_VERSIONS: readonly ValuationMatrix[] = [VALUATION_MATRIX, VALUATION_MATRIX_V1];
+
+/** Thrown when a stored valuation names a matrix this build does not carry. */
+export class UnknownMatrixVersionError extends Error {
+  constructor(version: string) {
+    super(`Unknown valuation matrix version: ${version}`);
+    this.name = 'UnknownMatrixVersionError';
+  }
+}
+
+/**
+ * The matrix a given valuation was priced under.
+ *
+ * Refuses rather than falling back to the current version: silently re-pricing
+ * a historical gem under today's rules would produce a figure that disagrees
+ * with the immutable one on-chain, and look authoritative doing it.
+ */
+export function matrixForVersion(version: string): ValuationMatrix {
+  const matrix = MATRIX_VERSIONS.find((candidate) => candidate.version === version);
+  if (!matrix) throw new UnknownMatrixVersionError(version);
+  return matrix;
+}
+
 export function matrixOptions(matrix: ValuationMatrix = VALUATION_MATRIX): MatrixOptions {
   const anchors = matrix.caratAnchors;
   return {

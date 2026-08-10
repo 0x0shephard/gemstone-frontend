@@ -176,9 +176,31 @@ describe('full valuation', () => {
 
 describe('refusal paths', () => {
   it('refuses a variety with no agreed base price', () => {
-    for (const variety of ['tourmaline', 'aquamarine']) {
+    // Tourmaline and aquamarine used to stand here, as varieties the protocol
+    // had decided not to list. They are priced from matrix v2, so the guard is
+    // now demonstrated with varieties that genuinely have no agreed price.
+    for (const variety of ['diamond', 'opal', 'spinel']) {
       expect(() => calculateValuation({ ...EXAMPLE, variety })).toThrow(/no base price per carat/i);
     }
+  });
+
+  it('prices the varieties added in v2', () => {
+    expect(
+      calculateValuation({
+        ...EXAMPLE,
+        variety: 'tourmaline',
+        color: 'watermelon',
+        colorGrade: 'medium',
+      }).priceUsd,
+    ).toBeGreaterThan(0n);
+    expect(
+      calculateValuation({
+        ...EXAMPLE,
+        variety: 'aquamarine',
+        color: 'deep blue',
+        colorGrade: 'medium',
+      }).priceUsd,
+    ).toBeGreaterThan(0n);
   });
 
   it('refuses unknown clarity and treatment', () => {

@@ -17,21 +17,35 @@ interface PriceBreakdownProps {
  */
 export function PriceBreakdown({ gem, label = 'Expert-approved value' }: PriceBreakdownProps) {
   const shortfall = reserveShortfallUsd(gem);
-  const total = gem.value + shortfall;
+  /*
+   * A listed token is bought at its ask, not at its valuation. The headline has
+   * to be the figure the buyer will actually be charged, with the approved
+   * value kept in view beneath it so the premium is visible rather than
+   * inferred.
+   */
+  const listed = gem.listedPrice;
+  const salePrice = listed ?? gem.value;
+  const total = salePrice + shortfall;
 
   return (
     <div>
       <div className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
-        {label}
+        {listed === undefined ? label : 'Listed price'}
       </div>
       <div className="mt-1 font-mono text-[28px] font-semibold tracking-[-0.04em] text-ink sm:text-[32px]">
-        {gem.valueFmt}
+        {listed === undefined ? gem.valueFmt : gem.listedPriceFmt}
       </div>
 
       <dl className="mt-4 space-y-2 border-t border-line/[0.06] pt-4">
+        {listed !== undefined && (
+          <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
+            <dt className="text-ink-muted">Expert-approved value</dt>
+            <dd className="font-mono text-ink-soft">{gem.valueFmt}</dd>
+          </div>
+        )}
         <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
           <dt className="text-ink-muted">Gemstone</dt>
-          <dd className="font-mono text-ink-soft">{fmtUsd(gem.value)}</dd>
+          <dd className="font-mono text-ink-soft">{fmtUsd(salePrice)}</dd>
         </div>
         <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
           <dt className="text-ink-muted">Vault reserve top-up</dt>
