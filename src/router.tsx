@@ -19,6 +19,7 @@ const SellerPage = lazy(() => import('@/pages/SellerPage'));
 const VerifyPage = lazy(() => import('@/pages/VerifyPage'));
 const AboutPage = lazy(() => import('@/pages/AboutPage'));
 const GiftClaimPage = lazy(() => import('@/pages/GiftClaimPage'));
+const CanvaCallbackPage = lazy(() => import('@/pages/CanvaCallbackPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
 function route(element: ReactNode) {
@@ -58,6 +59,9 @@ export const router = createBrowserRouter([
       // have no account at all when they arrive, and the page's job is to show
       // them what the gift is before it asks them for anything.
       { path: '/gift/:code', element: route(<GiftClaimPage />) },
+      // Canva's registered redirect URI. One fixed path, since Canva matches
+      // the whole URL against the integration's settings.
+      { path: '/canva/callback', element: route(<CanvaCallbackPage />) },
     ],
   },
   { path: '/app', element: <Navigate to="/marketplace" replace /> },

@@ -30,12 +30,15 @@ function triggerDownload(href: string, filename: string): void {
   anchor.remove();
 }
 
-/** Downloads the card as a print-resolution PNG. */
-export async function downloadCardPng(
-  svg: SVGSVGElement,
-  filename: string,
-  scale = 3,
-): Promise<void> {
+/**
+ * Rasterises the card to a canvas at `scale`.
+ *
+ * Shared by the download and the Canva upload so both send the same bitmap.
+ * Re-rendering the SVG somewhere else — server-side, or from a second code path
+ * — risks a card that differs from the one the sender approved on screen, in
+ * ways nobody would notice until it was printed.
+ */
+async function rasterise(svg: SVGSVGElement, scale: number): Promise<HTMLCanvasElement> {
   const url = svgObjectUrl(svg);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -52,17 +55,42 @@ export async function downloadCardPng(
     const context = canvas.getContext('2d');
     if (!context) throw new Error('This browser cannot export images');
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-    if (!blob) throw new Error('The card could not be converted to an image');
-    const pngUrl = URL.createObjectURL(blob);
-    triggerDownload(pngUrl, filename);
-    // Revoked on the next frame: revoking synchronously races the download in
-    // Firefox, which reads the blob after the click handler returns.
-    setTimeout(() => URL.revokeObjectURL(pngUrl), 30_000);
+    return canvas;
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** Downloads the card as a print-resolution PNG. */
+export async function downloadCardPng(
+  svg: SVGSVGElement,
+  filename: string,
+  scale = 3,
+): Promise<void> {
+  const canvas = await rasterise(svg, scale);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('The card could not be converted to an image');
+  const pngUrl = URL.createObjectURL(blob);
+  triggerDownload(pngUrl, filename);
+  // Revoked on the next frame: revoking synchronously races the download in
+  // Firefox, which reads the blob after the click handler returns.
+  setTimeout(() => URL.revokeObjectURL(pngUrl), 30_000);
+}
+
+/**
+ * The card as a base64 PNG, for handing to a server.
+ *
+ * Scaled down from the print default: the payload travels in a JSON body and
+ * base64 adds a third again on top, so 3x turns a 3 MB bitmap into a 12 MB
+ * request for no visible gain in an editor.
+ */
+export async function cardAsPngBase64(svg: SVGSVGElement, scale = 2): Promise<string> {
+  const canvas = await rasterise(svg, scale);
+  const dataUrl = canvas.toDataURL('image/png');
+  if (!dataUrl.startsWith('data:image/png')) {
+    throw new Error('The card could not be converted to an image');
+  }
+  return dataUrl;
 }
 
 /** Downloads the card as SVG — the right format to hand to a print shop. */

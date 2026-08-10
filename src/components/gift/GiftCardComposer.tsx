@@ -21,7 +21,18 @@ import {
   giftClaimUrl,
   type CreatedGiftCard,
 } from '@/services/offchain/gift';
-import { downloadCardPng, downloadCardSvg, inlineImage, printCard } from '@/lib/cardExport';
+import {
+  cardAsPngBase64,
+  downloadCardPng,
+  downloadCardSvg,
+  inlineImage,
+  printCard,
+} from '@/lib/cardExport';
+import {
+  exportCardToCanva,
+  needsCanvaConnection,
+  startCanvaAuthorization,
+} from '@/services/offchain/canva';
 import { cn } from '@/lib/cn';
 
 type Step = 'compose' | 'approve' | 'issued';
@@ -259,6 +270,45 @@ function IssuedCard({
   // at the moment the card was issued.
   const [issuedAt] = useState(() => Date.now());
   const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [canvaState, setCanvaState] = useState<'idle' | 'working'>('idle');
+
+  /*
+   * Two outcomes worth distinguishing. A first-time sender has no Canva grant
+   * yet, and the export answers 409 rather than failing — so they are sent to
+   * authorise and land back here, rather than being shown an error for
+   * something that is simply a step they have not taken.
+   */
+  async function openInCanva() {
+    const element = svg();
+    if (!element) return;
+    setCanvaState('working');
+    setNotice(undefined);
+    try {
+      const design = await exportCardToCanva({
+        pngBase64: await cardAsPngBase64(element),
+        title: `Digital Carat gift card — ${gem.name}`,
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+      });
+      window.open(design.editUrl, '_blank', 'noopener');
+      setNotice('Opened in Canva. Your card is now in your Canva projects.');
+    } catch (canvaError) {
+      if (needsCanvaConnection(canvaError)) {
+        try {
+          window.location.href = await startCanvaAuthorization(window.location.pathname);
+          return;
+        } catch (authError) {
+          setNotice(authError instanceof Error ? authError.message : 'Could not reach Canva.');
+        }
+      } else {
+        setNotice(
+          canvaError instanceof Error ? canvaError.message : 'Could not send the card to Canva.',
+        );
+      }
+    } finally {
+      setCanvaState('idle');
+    }
+  }
 
   async function email() {
     setEmailState('sending');
@@ -426,6 +476,14 @@ function IssuedCard({
           Send by WhatsApp
         </a>
       </div>
+
+      <Button
+        variant="ghost"
+        disabled={canvaState === 'working'}
+        onClick={() => void openInCanva()}
+      >
+        {canvaState === 'working' ? 'Sending to Canva…' : 'Customise in Canva'}
+      </Button>
 
       <p className="break-all font-mono text-[11px] text-ink-dim">{claimUrl}</p>
       {notice && <p className="text-[12px] text-ruby">{notice}</p>}

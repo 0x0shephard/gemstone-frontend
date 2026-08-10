@@ -30,6 +30,15 @@ verify_jwt = false
 [functions.v1-gift-notify]
 verify_jwt = false
 
+[functions.v1-canva-authorize]
+verify_jwt = false
+
+[functions.v1-canva-callback]
+verify_jwt = false
+
+[functions.v1-canva-export]
+verify_jwt = false
+
 # `inspect` has to answer before the recipient has an account — the claim page
 # shows what the card is for, then asks for the email. The `claim` action calls
 # `requireUser` itself.
