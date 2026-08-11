@@ -19,6 +19,7 @@ const SellerPage = lazy(() => import('@/pages/SellerPage'));
 const VerifyPage = lazy(() => import('@/pages/VerifyPage'));
 const AboutPage = lazy(() => import('@/pages/AboutPage'));
 const GiftClaimPage = lazy(() => import('@/pages/GiftClaimPage'));
+const GiftCodeEntryPage = lazy(() => import('@/pages/GiftCodeEntryPage'));
 const CanvaCallbackPage = lazy(() => import('@/pages/CanvaCallbackPage'));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
 
@@ -58,6 +59,9 @@ export const router = createBrowserRouter([
       // Where a printed gift card's QR code points. Public: the recipient may
       // have no account at all when they arrive, and the page's job is to show
       // them what the gift is before it asks them for anything.
+      // The gift email says "enter this code at /gift", so that bare path has to
+      // resolve to something. Without it the instruction landed on Not Found.
+      { path: '/gift', element: route(<GiftCodeEntryPage />) },
       { path: '/gift/:code', element: route(<GiftClaimPage />) },
       // Canva's registered redirect URI. One fixed path, since Canva matches
       // the whole URL against the integration's settings.
