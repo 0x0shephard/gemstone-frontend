@@ -20,7 +20,8 @@
     "contracts:check": "node scripts/check-contracts.mjs",
     "seed:sepolia-demo": "node scripts/seed-sepolia-demo-inventory.mjs",
     "verify:sepolia-demo": "node scripts/verify-sepolia-demo-inventory.mjs",
-    "verify:anvil-lifecycle": "node scripts/verify-anvil-frontend-lifecycle.mjs"
+    "verify:anvil-lifecycle": "node scripts/verify-anvil-frontend-lifecycle.mjs",
+    "build:favicon": "node scripts/build-favicon.mjs"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.1.1",

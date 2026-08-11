@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Digital Carat">
+  <title>Digital Carat</title>
+  <!--
+    A brilliant cut seen side-on: table, crown, girdle, culet. Five facets and
+    no outline, because anything finer than this dissolves at 16px, which is the
+    size that actually matters.
+
+    The colours follow the app's own accent rather than being picked for the
+    icon: emerald in the atelier scheme, gold in garnet. A single flat green
+    would vanish against a dark tab strip, which is the usual way a favicon
+    fails without anyone noticing.
+  -->
+  <style>
+    svg { --g1: #2e8f76; --g2: #0b5d4b; --g3: #05372c; }
+    @media (prefers-color-scheme: dark) {
+      svg { --g1: #e6c65c; --g2: #c9a227; --g3: #8f7318; }
+    }
+  </style>
+
+  <!-- Crown -->
+  <path d="M3 10.7 L10.7 4.8 L16 10.7 Z" fill="var(--g2)" />
+  <path d="M10.7 4.8 L21.3 4.8 L16 10.7 Z" fill="var(--g1)" />
+  <path d="M21.3 4.8 L29 10.7 L16 10.7 Z" fill="var(--g2)" />
+
+  <!-- Pavilion -->
+  <path d="M3 10.7 L16 10.7 L16 27.2 Z" fill="var(--g3)" />
+  <path d="M16 10.7 L29 10.7 L16 27.2 Z" fill="var(--g2)" />
+</svg>
