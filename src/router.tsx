@@ -1,27 +1,28 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { Skeleton } from '@/components/ui/States';
+import { lazyRoute } from '@/lib/lazyRoute';
 
-const AppShell = lazy(() =>
+const AppShell = lazyRoute(() =>
   import('@/components/layout/AppShell').then((module) => ({ default: module.AppShell })),
 );
-const LandingPage = lazy(() => import('@/pages/LandingPage'));
-const LoginPage = lazy(() => import('@/pages/LoginPage'));
-const SignupPage = lazy(() => import('@/pages/SignupPage'));
-const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'));
-const MarketplacePage = lazy(() => import('@/pages/MarketplacePage'));
-const GemDetailPage = lazy(() => import('@/pages/GemDetailPage'));
-const AuctionsPage = lazy(() => import('@/pages/AuctionsPage'));
-const SwapsPage = lazy(() => import('@/pages/SwapsPage'));
-const RedeemPage = lazy(() => import('@/pages/RedeemPage'));
-const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
-const SellerPage = lazy(() => import('@/pages/SellerPage'));
-const VerifyPage = lazy(() => import('@/pages/VerifyPage'));
-const AboutPage = lazy(() => import('@/pages/AboutPage'));
-const GiftClaimPage = lazy(() => import('@/pages/GiftClaimPage'));
-const GiftCodeEntryPage = lazy(() => import('@/pages/GiftCodeEntryPage'));
-const CanvaCallbackPage = lazy(() => import('@/pages/CanvaCallbackPage'));
-const NotFoundPage = lazy(() => import('@/pages/NotFoundPage'));
+const LandingPage = lazyRoute(() => import('@/pages/LandingPage'));
+const LoginPage = lazyRoute(() => import('@/pages/LoginPage'));
+const SignupPage = lazyRoute(() => import('@/pages/SignupPage'));
+const OnboardingPage = lazyRoute(() => import('@/pages/OnboardingPage'));
+const MarketplacePage = lazyRoute(() => import('@/pages/MarketplacePage'));
+const GemDetailPage = lazyRoute(() => import('@/pages/GemDetailPage'));
+const AuctionsPage = lazyRoute(() => import('@/pages/AuctionsPage'));
+const SwapsPage = lazyRoute(() => import('@/pages/SwapsPage'));
+const RedeemPage = lazyRoute(() => import('@/pages/RedeemPage'));
+const ProfilePage = lazyRoute(() => import('@/pages/ProfilePage'));
+const SellerPage = lazyRoute(() => import('@/pages/SellerPage'));
+const VerifyPage = lazyRoute(() => import('@/pages/VerifyPage'));
+const AboutPage = lazyRoute(() => import('@/pages/AboutPage'));
+const GiftClaimPage = lazyRoute(() => import('@/pages/GiftClaimPage'));
+const GiftCodeEntryPage = lazyRoute(() => import('@/pages/GiftCodeEntryPage'));
+const CanvaCallbackPage = lazyRoute(() => import('@/pages/CanvaCallbackPage'));
+const NotFoundPage = lazyRoute(() => import('@/pages/NotFoundPage'));
 
 function route(element: ReactNode) {
   return (

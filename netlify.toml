@@ -17,6 +17,21 @@
 [context.production]
   command = "npm run check"
 
+# Content-hashed filenames: the name changes whenever the bytes do, so these can
+# be cached indefinitely. Without this every asset costs a revalidation
+# round-trip on each load, which is felt most on a phone over cellular.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# index.html must never be cached: it is what maps to the current hashed assets,
+# and a stale copy points at chunks a later deploy has already removed.
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
 [[headers]]
   for = "/*"
   [headers.values]

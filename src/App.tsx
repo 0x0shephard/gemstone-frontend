@@ -1,10 +1,11 @@
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
+import { lazyRoute } from '@/lib/lazyRoute';
 import { RouterProvider } from 'react-router-dom';
 import * as Sentry from '@sentry/react';
 import { router } from './router';
 import { ConfigurationGate } from './components/config/ConfigurationGate';
 
-const Web3Providers = lazy(() => import('./providers/Web3Providers'));
+const Web3Providers = lazyRoute(() => import('./providers/Web3Providers'));
 
 export default function App() {
   return (
