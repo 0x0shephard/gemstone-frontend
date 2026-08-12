@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reserveShortfallUsd } from './gem';
+import { reserveShortfallUsd, shortfallLabel } from './gem';
 import type { Gem } from '@/services/types';
 
 const USD = 10n ** 18n;
@@ -43,5 +43,28 @@ describe('reserveShortfallUsd', () => {
 
   it('keeps sub-dollar precision', () => {
     expect(reserveShortfallUsd(gem({ reserveShortfallUsd: (5n * USD) / 2n }))).toBe(2.5);
+  });
+});
+
+describe('shortfallLabel', () => {
+  /**
+   * The regression this exists for. `reserve` is the percentage funded, and it
+   * used to be printed straight after the word "Short" — so a stone needing
+   * four tenths of a cent announced itself as "Short 99.99%".
+   */
+  it('reports the gap, not the funded amount', () => {
+    expect(shortfallLabel(99.99)).toBe('Short 0.01%');
+    expect(shortfallLabel(45)).toBe('Short 55%');
+    expect(shortfallLabel(0)).toBe('Short 100%');
+  });
+
+  it('never rounds a real shortfall away to zero', () => {
+    // "Short 0%" on an underfunded gem would claim it is ready to trade.
+    expect(shortfallLabel(99.999)).toBe('Short <0.01%');
+  });
+
+  it('does not go negative when the reserve is over-funded', () => {
+    expect(shortfallLabel(100)).toBe('Short 0%');
+    expect(shortfallLabel(140)).toBe('Short 0%');
   });
 });

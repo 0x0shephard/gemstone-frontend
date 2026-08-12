@@ -31,6 +31,23 @@ export function tagStyleFor(type: GemType): React.CSSProperties {
   };
 }
 
+/**
+ * How far a reserve is from full, as a label.
+ *
+ * `Gem.reserve` is the percentage *funded*, so the shortfall is its complement.
+ * Printing the funded figure after the word "Short" stated the exact opposite
+ * of the truth — a stone 99.99% funded, needing four tenths of a cent, read as
+ * "Short 99.99%".
+ */
+export function shortfallLabel(fundedPct: number): string {
+  const short = Math.max(0, 100 - fundedPct);
+  if (short === 0) return 'Short 0%';
+  // Below a hundredth of a percent there is no honest way to write the number,
+  // and rounding it to "0%" would claim the gem is funded when it is not.
+  if (short < 0.01) return 'Short <0.01%';
+  return `Short ${short < 1 ? Number(short.toFixed(2)) : Math.round(short)}%`;
+}
+
 /** Enrich a raw gem with derived presentational fields. */
 export function decorate(g: Gem): DecoratedGem {
   const color = colorFor(g.type);
@@ -42,7 +59,7 @@ export function decorate(g: Gem): DecoratedGem {
     listedPriceFmt: g.listedPrice === undefined ? undefined : fmtUsd(g.listedPrice),
     caratsFmt: fmtCarats(g.carats),
     thumb: thumbFor(g.type),
-    reserveLabel: funded ? 'Funded 100%' : `Short ${g.reserve}%`,
+    reserveLabel: funded ? 'Funded 100%' : shortfallLabel(g.reserve),
     reserveColor: funded ? 'var(--dc-emerald)' : 'var(--dc-amber)',
     funded,
     feeLabel: `${g.feeTier} · ${g.feePct.toFixed(1)}%`,
