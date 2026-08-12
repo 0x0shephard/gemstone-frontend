@@ -40,7 +40,12 @@ export default function LandingPage() {
       {/* Hero */}
       <section className="relative mx-auto grid max-w-content items-center gap-8 overflow-hidden px-5 py-10 sm:px-6 md:min-h-[86vh] md:grid-cols-[1.05fr_.95fr] md:px-10 md:py-14">
         <div className="dc-dot-grid pointer-events-none absolute inset-y-0 left-0 w-[52%] opacity-35" />
-        <div className="relative order-2 md:order-1">
+        {/* `min-w-0`: a grid item defaults to `min-width: auto` and so refuses to
+            shrink below its content's min-content width. The long CTA labels
+            below are `whitespace-nowrap` by default, which made that 397px on a
+            390px phone — overflowing the column, clipping the body copy, and
+            pushing the gemstone render off centre. */}
+        <div className="relative order-2 min-w-0 md:order-1">
           <div className="mb-7 inline-flex items-center gap-2 border-l-2 border-ink-muted pl-3 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-muted">
             Vault open
             <span className="h-1 w-1 rounded-full bg-emerald" />
@@ -54,12 +59,18 @@ export default function LandingPage() {
             at our partner bank in Turkey. This enables you to trade the ownership of your gemstones
             or redeem it while having a third party securing your physical asset.
           </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link to="/marketplace">
-              <Button size="lg">Are you a buyer? Discover our Marketplace</Button>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <Link to="/marketplace" className="w-full sm:w-auto">
+              <Button size="lg" className="h-auto w-full whitespace-normal py-3 sm:w-auto">
+                Are you a buyer? Discover our Marketplace
+              </Button>
             </Link>
-            <Link to="/seller">
-              <Button variant="ghost" size="lg">
+            <Link to="/seller" className="w-full sm:w-auto">
+              <Button
+                variant="ghost"
+                size="lg"
+                className="h-auto w-full whitespace-normal py-3 sm:w-auto"
+              >
                 Are you a gemstone seller? Discover our KYC Protocol
               </Button>
             </Link>
@@ -83,7 +94,7 @@ export default function LandingPage() {
          * The stone floats rather than sitting in a panel: concentric rings and
          * a halo tinted by the stone's own hue, nothing else competing with it.
          */}
-        <div className="relative order-1 mx-auto aspect-square w-full max-w-[520px] md:order-2">
+        <div className="relative order-1 mx-auto aspect-square w-full min-w-0 max-w-[520px] md:order-2">
           <div
             aria-hidden
             className="pointer-events-none absolute inset-[8%] rounded-full"
