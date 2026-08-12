@@ -10,7 +10,7 @@ export default {
         panel: 'var(--dc-panel)',
         inset: 'var(--dc-sidebar)',
         nested: 'color-mix(in srgb, var(--dc-card) 72%, var(--dc-vault))',
-        sidebar: 'var(--dc-sidebar)',
+        sidebar: 'rgb(var(--dc-sidebar-rgb) / <alpha-value>)',
         elevated: 'var(--dc-elevated)',
         track: 'var(--dc-track)',
         // text

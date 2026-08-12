@@ -60,10 +60,13 @@ export function AppShell() {
       <Sidebar open={sidebarOpen} onClose={closeSidebar} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header
-          className="sticky top-0 z-30 flex min-h-[76px] items-center justify-between gap-4 border-b border-line/[0.065] px-4 py-3.5 sm:px-6 md:px-8"
+          // Tighter gutters below `sm` so the page title is not truncated by a
+          // dozen pixels. The faucet and theme toggle stay: neither exists
+          // anywhere else, so hiding them would strand both on a phone.
+          className="sticky top-0 z-30 flex min-h-[76px] items-center justify-between gap-2 border-b border-line/[0.065] px-3 py-3.5 sm:gap-4 sm:px-6 md:px-8"
           style={{ background: 'var(--dc-header)', backdropFilter: 'blur(18px)' }}
         >
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
             <button
               ref={menuButtonRef}
               type="button"
@@ -80,11 +83,13 @@ export function AppShell() {
               </span>
             </button>
             <div className="hidden h-8 w-px bg-line/[0.08] sm:block" aria-hidden="true" />
-            <div className="min-w-0">
-              <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier">
+            <div className="min-w-0 flex-1">
+              {/* The eyebrow is the first thing to go: at 390px it costs a line
+                  of height and pushes the title into an ellipsis. */}
+              <div className="mb-1 hidden text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier sm:block">
                 {group}
               </div>
-              <h1 className="truncate font-display text-[18px] font-medium tracking-[-0.02em] text-ink sm:text-[20px]">
+              <h1 className="truncate font-display text-[16px] font-medium tracking-[-0.02em] text-ink sm:text-[20px]">
                 {title}
               </h1>
               {subtitle && (
@@ -92,7 +97,7 @@ export function AppShell() {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
             <div className="hidden xl:block">
               <ChainSyncStatus />
             </div>

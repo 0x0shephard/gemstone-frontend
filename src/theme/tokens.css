@@ -38,6 +38,11 @@
   color-scheme: light;
   --dc-vault: #f8f5f0;
   --dc-sidebar: #f1ece3;
+  /* Triple form so Tailwind's /opacity modifier works on this surface. A bare
+     hex through var() makes `bg-sidebar/90` compile to an invalid value, which
+     browsers drop to transparent — silently, which is how the mobile dock ended
+     up with unreadable labels floating over gemstone photographs. */
+  --dc-sidebar-rgb: 241 236 227;
   --dc-card: #ffffff;
   --dc-panel: #f1ece3;
   --dc-elevated: #eae3d7;
@@ -86,6 +91,7 @@
   color-scheme: dark;
   --dc-vault: #0a1524;
   --dc-sidebar: #0d1a2c;
+  --dc-sidebar-rgb: 13 26 44;
   --dc-card: #112240;
   --dc-panel: #16293f;
   --dc-elevated: #1c3350;
@@ -303,6 +309,23 @@ textarea::placeholder {
 
 .dc-mobile-safe {
   padding-bottom: calc(5.6rem + env(safe-area-inset-bottom));
+}
+
+/*
+ * Horizontal scroller with the bar hidden.
+ *
+ * Used for filter rows on phones, where the alternative is wrapping to four
+ * lines. The scrollbar is suppressed rather than styled because on touch there
+ * is nothing to grab, and momentum scrolling already communicates the overflow.
+ */
+.dc-scroll-x {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+.dc-scroll-x::-webkit-scrollbar {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

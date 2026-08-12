@@ -46,13 +46,20 @@ export default function MarketplacePage() {
 
   return (
     <div className="space-y-7">
-      <section className="relative overflow-hidden rounded-[4px] border border-line/[0.08] bg-gradient-to-br from-card to-inset px-5 py-6 sm:px-7 sm:py-8">
+      <section className="relative overflow-hidden rounded-[4px] border border-line/[0.08] bg-gradient-to-br from-card to-inset px-5 py-5 sm:px-7 sm:py-8">
         <div className="dc-dot-grid pointer-events-none absolute inset-y-0 right-0 w-1/2 opacity-45" />
-        <div className="relative flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+        <div className="relative flex flex-col justify-between gap-4 lg:flex-row lg:items-end lg:gap-6">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-atelier">
-              Vault inventory
-            </p>
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-atelier">
+                Vault inventory
+              </p>
+              {/* Same figure as the block below, folded onto the eyebrow line so
+                  a phone does not spend a whole row on it. */}
+              <p className="font-mono text-[12px] text-ink-dim lg:hidden">
+                {isLoading ? '—' : `${visible.length} stones`}
+              </p>
+            </div>
             <h2 className="mt-2 max-w-xl font-display text-[25px] font-medium leading-tight tracking-[-0.035em] text-ink sm:text-[31px]">
               Find the gemstones you want to invest into.
             </h2>
@@ -60,7 +67,7 @@ export default function MarketplacePage() {
               Compare gemstone values with a gemological valuation matrix.
             </p>
           </div>
-          <div className="shrink-0 text-left lg:text-right">
+          <div className="hidden shrink-0 text-left lg:block lg:text-right">
             <div className="font-mono text-[22px] font-medium text-ink">
               {isLoading ? '—' : visible.length}
             </div>
