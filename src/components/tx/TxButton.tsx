@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { TxResult } from '@/services/types';
+import type { TransactionStep } from '@/services/chain/transactionPipeline';
 import { Button, type ButtonVariant, type ButtonSize } from '@/components/ui/Button';
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
@@ -7,6 +8,21 @@ import { captureProductEvent } from '@/lib/telemetry';
 import { useQueryClient } from '@tanstack/react-query';
 
 type TxState = 'idle' | 'pending' | 'success' | 'error';
+
+/**
+ * What each stage is actually waiting on.
+ *
+ * On a phone the wallet stages hand control to another app entirely. A single
+ * "Confirming…" across all of them is indistinguishable from a hang, which is
+ * how a two-signature reserve top-up was reported: the label never changed
+ * while the wallet prompt sat behind the browser.
+ */
+const STEP_LABEL: Record<TransactionStep, string> = {
+  checking: 'Checking your wallet…',
+  approving: 'Approve the allowance in your wallet…',
+  'awaiting-signature': 'Confirm in your wallet…',
+  confirming: 'Waiting for the network…',
+};
 
 interface TxButtonProps {
   /** The write action; return a TxResult to surface the hash + explorer link. */
@@ -47,12 +63,27 @@ export function TxButton({
 }: TxButtonProps) {
   const queryClient = useQueryClient();
   const [state, setState] = useState<TxState>('idle');
+  const [step, setStep] = useState<TransactionStep>();
   const [hash, setHash] = useState<string | null>(null);
   const [result, setResult] = useState<TxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+   * Steps arrive as window events rather than through the action signature, so
+   * every existing caller keeps working untouched — the pipeline announces, the
+   * button listens.
+   */
+  useEffect(() => {
+    if (state !== 'pending') return;
+    const onStep = (event: Event) =>
+      setStep((event as CustomEvent<{ step: TransactionStep }>).detail.step);
+    window.addEventListener('dc:transaction-step', onStep);
+    return () => window.removeEventListener('dc:transaction-step', onStep);
+  }, [state]);
+
   async function run() {
     setState('pending');
+    setStep(undefined);
     setError(null);
     captureProductEvent('transaction_started', { flow: telemetryFlow });
     try {
@@ -87,7 +118,7 @@ export function TxButton({
           {state === 'pending' ? (
             <>
               <Spinner />
-              {pendingLabel}
+              {step ? STEP_LABEL[step] : pendingLabel}
             </>
           ) : (
             children
@@ -99,8 +130,9 @@ export function TxButton({
         {state === 'pending' && (
           <div className="flex items-start gap-2.5 rounded-[4px] border border-atelier/20 bg-atelier/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-atelier" />
-            Follow the wallet prompts. The app will simulate the action, request any approval and
-            wait for confirmation.
+            {step === 'approving' || step === 'awaiting-signature'
+              ? 'Open your wallet app if it did not come to the front. A payment in mUSDC needs two signatures — one to approve the allowance, one to send.'
+              : 'The app will simulate the action, request any approval and wait for confirmation.'}
           </div>
         )}
         {state === 'success' && hash && (

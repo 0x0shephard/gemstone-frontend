@@ -47,12 +47,25 @@ export function SummaryRow({
   );
 }
 
-/** Approx asset amount for a USD figure (preview only). */
+/**
+ * Approx asset amount for a USD figure (preview only).
+ *
+ * Two decimals is right for a $3,000 purchase and actively misleading for a
+ * four-tenths-of-a-cent reserve top-up, which rendered as "≈ 0 mUSDC" while the
+ * transaction it described sent 4,001 base units. A figure the user reads as
+ * zero, attached to a button that then asks them to sign, is worse than no
+ * figure at all — so small amounts keep enough digits to be non-zero.
+ */
 export function assetAmountPreview(usd: number, asset?: PaymentAsset): string {
   if (!asset) return '';
   const amt = usd / asset.usdPrice;
-  const formatted = asset.isNative
-    ? amt.toFixed(4)
-    : amt.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  if (amt === 0) return `≈ 0 ${asset.symbol}`;
+  const decimals = asset.isNative ? 4 : 2;
+  // Enough places to show at least two significant digits, so a real amount is
+  // never presented as nothing.
+  const needed = Math.max(decimals, Math.ceil(-Math.log10(Math.abs(amt))) + 1);
+  const formatted = amt.toLocaleString('en-US', {
+    maximumFractionDigits: Math.min(needed, 8),
+  });
   return `≈ ${formatted} ${asset.symbol}`;
 }

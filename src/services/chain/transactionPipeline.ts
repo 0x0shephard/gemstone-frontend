@@ -22,6 +22,31 @@ import { supabase } from '@/providers/supabase';
 import { dgeNftAbi } from '@/contracts/abis';
 import type { TxResult } from '@/services/types';
 
+/**
+ * Stages a write passes through, announced so the UI can say which one is
+ * waiting.
+ *
+ * On a phone each wallet stage means leaving the browser for a wallet app and
+ * coming back, and a token payment needs two of them. A single "Confirming…"
+ * spinner covering all of it is indistinguishable from a hang — which is
+ * exactly how it was reported.
+ */
+export type TransactionStep = 'checking' | 'approving' | 'awaiting-signature' | 'confirming';
+
+export function announceStep(step: TransactionStep): void {
+  window.dispatchEvent(new CustomEvent('dc:transaction-step', { detail: { step } }));
+}
+
+/**
+ * Ceiling on waiting for a receipt.
+ *
+ * `waitForTransactionReceipt` has no default timeout, so a transaction that is
+ * never mined leaves the button spinning forever with no hash on screen and no
+ * way to find out what happened. Ten minutes is far longer than Sepolia needs
+ * and short enough that a person is not left guessing.
+ */
+const RECEIPT_TIMEOUT_MS = 10 * 60 * 1_000;
+
 export class TransactionGuardError extends Error {
   constructor(
     message: string,
@@ -180,11 +205,16 @@ export function decodeTransactionError(error: unknown): Error {
 
 export async function runContractTransaction(input: ContractTransaction): Promise<TxResult> {
   try {
+    announceStep('checking');
     const account = await requireVerifiedWallet();
     await ensureChain();
     await ensureFunds(account, input.paymentAsset, input.paymentAmount);
-    for (const approval of input.approvals ?? []) await submitApproval(account, approval);
+    for (const approval of input.approvals ?? []) {
+      announceStep('approving');
+      await submitApproval(account, approval);
+    }
 
+    announceStep('awaiting-signature');
     const simulation = await simulateContract(wagmiConfig, {
       account,
       address: input.address,
@@ -194,7 +224,18 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       value: input.value,
     });
     const hash = (await writeContract(wagmiConfig, simulation.request)) as Hash;
-    const receipt = await waitForTransactionReceipt(wagmiConfig, { hash });
+    announceStep('confirming');
+    const receipt = await waitForTransactionReceipt(wagmiConfig, {
+      hash,
+      timeout: RECEIPT_TIMEOUT_MS,
+    }).catch(() => {
+      // The transaction may still land later; it is the waiting that ended, not
+      // necessarily the transaction. Hand back the hash so it can be followed.
+      throw new TransactionGuardError(
+        `Still unconfirmed after 10 minutes. Track it on the explorer: ${hash}`,
+        'CONTRACT_REVERTED',
+      );
+    });
     if (receipt.status !== 'success') {
       throw new TransactionGuardError('Transaction reverted.', 'CONTRACT_REVERTED');
     }
