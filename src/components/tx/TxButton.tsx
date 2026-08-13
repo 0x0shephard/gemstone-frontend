@@ -72,14 +72,20 @@ export function TxButton({
    * Steps arrive as window events rather than through the action signature, so
    * every existing caller keeps working untouched — the pipeline announces, the
    * button listens.
+   *
+   * Attached unconditionally rather than only while pending. Gating on `state`
+   * meant the listener was only bound after the `pending` render committed, but
+   * the pipeline announces its first step synchronously inside `action()` —
+   * before React has flushed — so that step was reliably emitted into nothing
+   * and never displayed. `run()` clears `step` before starting, and only a
+   * pending button renders it, so a stray event cannot show a stale stage.
    */
   useEffect(() => {
-    if (state !== 'pending') return;
     const onStep = (event: Event) =>
       setStep((event as CustomEvent<{ step: TransactionStep }>).detail.step);
     window.addEventListener('dc:transaction-step', onStep);
     return () => window.removeEventListener('dc:transaction-step', onStep);
-  }, [state]);
+  }, []);
 
   async function run() {
     setState('pending');

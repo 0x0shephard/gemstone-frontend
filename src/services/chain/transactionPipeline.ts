@@ -10,6 +10,7 @@ import {
 import {
   BaseError,
   ContractFunctionRevertedError,
+  WaitForTransactionReceiptTimeoutError,
   erc20Abi,
   type Abi,
   type Address,
@@ -228,13 +229,22 @@ export async function runContractTransaction(input: ContractTransaction): Promis
     const receipt = await waitForTransactionReceipt(wagmiConfig, {
       hash,
       timeout: RECEIPT_TIMEOUT_MS,
-    }).catch(() => {
-      // The transaction may still land later; it is the waiting that ended, not
-      // necessarily the transaction. Hand back the hash so it can be followed.
-      throw new TransactionGuardError(
-        `Still unconfirmed after 10 minutes. Track it on the explorer: ${hash}`,
-        'CONTRACT_REVERTED',
-      );
+    }).catch((waitError: unknown) => {
+      /*
+       * Only a genuine timeout is reported as one. Catching everything here
+       * told a user whose RPC hiccuped two seconds in that their transaction
+       * had been pending for ten minutes, and threw away the real cause — which
+       * was usually something a retry would have fixed.
+       */
+      if (waitError instanceof WaitForTransactionReceiptTimeoutError) {
+        // The transaction may still land later; it is the waiting that ended,
+        // not necessarily the transaction. Hand back the hash to follow it.
+        throw new TransactionGuardError(
+          `Still unconfirmed after 10 minutes. Track it on the explorer: ${hash}`,
+          'CONTRACT_REVERTED',
+        );
+      }
+      throw waitError;
     });
     if (receipt.status !== 'success') {
       throw new TransactionGuardError('Transaction reverted.', 'CONTRACT_REVERTED');

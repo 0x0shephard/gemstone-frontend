@@ -8,6 +8,7 @@ import { ReserveStatus } from '@/components/gem/ReserveStatus';
 import { ModalGemHeader, SummaryRow, assetAmountPreview } from './parts';
 import { dataService } from '@/services';
 import { reserveShortfallUsd } from '@/lib/gem';
+import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
 import { useGems, useProfile } from '@/hooks/useData';
 import { NATIVE_ASSET } from '@/config/contracts';
@@ -36,6 +37,9 @@ function ApprovalNote({ asset }: { asset?: PaymentAsset }) {
 export function BidModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
   const [amount, setAmount] = useState('');
+  // Parsed exactly from the string, never via a float: the figure that goes
+  // on-chain has to be the figure that was typed.
+  const saleAmountUsd = parseUsdInput(amount);
   const saleUsd = Number(amount) || 0;
   const shortfall = reserveShortfallUsd(gem);
   const total = saleUsd + shortfall;
@@ -76,12 +80,12 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
       <ApprovalNote asset={asset} />
       <TxButton
         block
-        disabled={!asset || saleUsd <= 0}
+        disabled={!asset || !saleAmountUsd}
         action={() =>
           dataService.bid({
             gemId: gem.gemId,
             paymentAsset: asset!.address,
-            saleAmountUsd: BigInt(Math.round(saleUsd * 1e6)) * 10n ** 12n,
+            saleAmountUsd: saleAmountUsd!,
           })
         }
         pendingLabel="Submitting bid…"
@@ -195,6 +199,7 @@ export function BuyModal({
 export function OfferModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
   const [amount, setAmount] = useState('');
+  const offerAmountUsd = parseUsdInput(amount);
   const usd = Number(amount) || 0;
   const shortfall = reserveShortfallUsd(gem);
   const total = usd + shortfall;
@@ -235,12 +240,12 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
       <ApprovalNote asset={asset} />
       <TxButton
         block
-        disabled={!asset || !gem.tokenId || usd <= 0}
+        disabled={!asset || !gem.tokenId || !offerAmountUsd}
         action={() =>
           dataService.createOffer({
             tokenId: gem.tokenId!,
             paymentAsset: asset!.address,
-            saleAmountUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,
+            saleAmountUsd: offerAmountUsd!,
           })
         }
         pendingLabel="Submitting offer…"
@@ -261,6 +266,7 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
   // list without inventing one. `Marketplace.list` rejects anything below it
   // anyway, which makes it the only safe default.
   const [price, setPrice] = useState(String(gem.value));
+  const listPriceUsd = parseUsdInput(price);
   const usd = Number(price) || 0;
   const ceiling = gem.value * MAX_LISTING_MULTIPLE;
 
@@ -310,11 +316,11 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
       </p>
       <TxButton
         block
-        disabled={!gem.tokenId || !!error || usd <= 0}
+        disabled={!gem.tokenId || !!error || !listPriceUsd}
         action={() =>
           dataService.list({
             tokenId: gem.tokenId!,
-            priceUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,
+            priceUsd: listPriceUsd!,
           })
         }
         pendingLabel="Listing…"
@@ -359,6 +365,7 @@ export function SwapModal({
   const offered = requesting ? counterpart : gem;
   const requested = requesting ? gem : counterpart;
   const reservesReady = Boolean(offered?.funded) && Boolean(requested?.funded);
+  const cashAmountUsd = delta.trim() === '' ? 0n : parseUsdInput(delta);
   const usd = Number(delta) || 0;
   return (
     <Modal
@@ -466,13 +473,19 @@ export function SwapModal({
       </p>
       <TxButton
         block
-        disabled={!offered?.tokenId || !requested?.tokenId || !reservesReady || (usd > 0 && !asset)}
+        disabled={
+          !offered?.tokenId ||
+          !requested?.tokenId ||
+          !reservesReady ||
+          cashAmountUsd === null ||
+          (cashAmountUsd > 0n && !asset)
+        }
         action={() =>
           dataService.createSwap({
             offeredTokenId: offered!.tokenId!,
             requestedTokenId: requested!.tokenId!,
             paymentAsset: asset?.address ?? NATIVE_ASSET,
-            cashAmountUsd: BigInt(Math.round(usd * 1e6)) * 10n ** 12n,
+            cashAmountUsd: cashAmountUsd!,
             proposerPays,
             expiresAt: BigInt(Math.floor(Date.now() / 1000) + 86_400),
           })
