@@ -7,6 +7,7 @@ import { activeChain } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
 import { useAuth } from '@/providers/AuthProvider';
 import { cn } from '@/lib/cn';
+import { WalletAddress } from '@/components/wallet/WalletAddress';
 
 interface AccountMenuProps {
   className?: string;
@@ -220,6 +221,17 @@ export function AccountMenu({ className }: AccountMenuProps) {
                             {wrongNetwork ? 'Fix →' : 'Manage →'}
                           </span>
                         </button>
+                        {/*
+                          The full address, copyable. Everything above shows a
+                          shortened form, which is unusable for the commonest
+                          task there is: giving somebody the address so they can
+                          send you a token.
+                        */}
+                        {address && !wrongNetwork && (
+                          <div className="mt-2 rounded-[4px] border border-line/[0.09] bg-line/[0.02] p-2.5">
+                            <WalletAddress address={address} label="Your receiving address" />
+                          </div>
+                        )}
                         {!wrongNetwork && !walletVerified && address && (
                           <button
                             type="button"

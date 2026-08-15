@@ -14,7 +14,8 @@ import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { GemThumb } from '@/components/gem/GemThumb';
 import { Card } from '@/components/ui/Card';
 import { CardGridSkeleton, EmptyState } from '@/components/ui/States';
-import { fmtUsd } from '@/lib/format';
+import { fmtUsd, shortenAddress } from '@/lib/format';
+import { WalletAddress } from '@/components/wallet/WalletAddress';
 import type { Bid, Offer } from '@/services/types';
 import { AnalyticsConsent } from '@/components/privacy/AnalyticsConsent';
 import { PendingRefunds } from '@/components/wallet/PendingRefunds';
@@ -119,6 +120,24 @@ export default function ProfilePage() {
         </Card>
       )}
 
+      {/*
+        Which wallet these figures describe. Every number on this page is read
+        from the connected address, so naming it is the difference between
+        "my tokens are missing" and "I am looking at the wrong wallet".
+      */}
+      {address ? (
+        <Card className="p-4">
+          <WalletAddress address={address} label="Portfolio is reading this wallet" />
+        </Card>
+      ) : (
+        <Card className="p-4">
+          <p className="text-[12.5px] leading-relaxed text-ink-muted">
+            No wallet is connected, so this page has nothing to read. Connect the wallet that holds
+            your tokens — signing in alone does not link one.
+          </p>
+        </Card>
+      )}
+
       {/* KPIs */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatTile label="Portfolio value" value={fmtUsd(profile?.stats.portfolioValueUsd ?? 0)} />
@@ -174,7 +193,21 @@ export default function ProfilePage() {
                 ))}
               </div>
             ) : (
-              <EmptyState title="No gems yet" hint="Buy your first gem in the marketplace." />
+              /*
+                A token sent to a wallet the visitor has not connected is not
+                missing — it is simply not being looked at. Saying "buy your
+                first gem" to someone who already owns one, because they
+                connected a different wallet or none at all, sends them looking
+                for a bug that is not there.
+              */
+              <EmptyState
+                title={address ? 'Nothing in this wallet' : 'No wallet connected'}
+                hint={
+                  address
+                    ? `Your portfolio shows tokens held by ${shortenAddress(address)}. If someone sent you a token, make sure this is the wallet they sent it to.`
+                    : 'Connect the wallet that holds your tokens — your portfolio reads directly from it.'
+                }
+              />
             ))}
 
           {tab === 'bids' && <BidsTable rows={profile.bids} />}
