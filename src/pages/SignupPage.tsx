@@ -64,7 +64,7 @@ export default function SignupPage() {
           Create your account
         </h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          Browse, buy, bid and swap freely — no KYC required.
+          Browse, buy, bid, swap and redeem freely — no KYC required.
         </p>
 
         {!configured && (
