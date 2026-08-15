@@ -51,7 +51,7 @@ export const gems: Gem[] = [
     feePct: 0.6,
     custodyProvider: 'Malca-Amit',
     custodyCountry: 'Switzerland',
-    redeem: 'KYC required',
+    redeem: 'Blocked',
   },
   {
     gemId: 3n,
@@ -127,7 +127,7 @@ export const gems: Gem[] = [
     feePct: 0.9,
     custodyProvider: 'Brink’s',
     custodyCountry: 'Switzerland',
-    redeem: 'KYC required',
+    redeem: 'Blocked',
   },
 ];
 

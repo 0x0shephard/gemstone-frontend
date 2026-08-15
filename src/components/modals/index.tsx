@@ -551,7 +551,7 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
       <ul className="space-y-2 text-[13px]">
         <CheckRow ok label="You own this token" />
         <CheckRow ok={gem.funded} label="Reserve fully funded" />
-        <CheckRow ok={gem.redeem === 'Eligible'} label="Compliance check passed (canRedeem)" />
+        <CheckRow ok={gem.redeem === 'Eligible'} label="Address is not blocked from redemption" />
       </ul>
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
@@ -647,8 +647,8 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
       >
         {canRedeem
           ? 'Request redemption'
-          : gem.redeem === 'KYC required'
-            ? 'KYC required to redeem'
+          : gem.redeem === 'Blocked'
+            ? 'This address cannot redeem'
             : 'Reserve top-up required'}
       </TxButton>
     </Modal>

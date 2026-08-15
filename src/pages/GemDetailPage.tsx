@@ -88,8 +88,8 @@ export default function GemDetailPage() {
                   Reserve short
                 </StatusBadge>
               )}
-              {gem.redeem === 'KYC required' && (
-                <StatusBadge tone="danger">KYC required</StatusBadge>
+              {gem.redeem === 'Blocked' && (
+                <StatusBadge tone="danger">Redemption blocked</StatusBadge>
               )}
             </div>
             <div className="font-mono text-[10px] uppercase tracking-[0.13em] text-ink-dim">

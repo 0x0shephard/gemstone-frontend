@@ -1,7 +1,12 @@
 import type { Address, Hash } from 'viem';
 
 export type GemType = string;
-export type RedeemStatus = 'Eligible' | 'KYC required' | 'Blocked';
+/**
+ * Redemption no longer turns on identity verification. `canRedeem` fails only
+ * when an address is on the compliance block list, so `'KYC required'` was
+ * removed rather than left unused — keeping it invited the old label back.
+ */
+export type RedeemStatus = 'Eligible' | 'Blocked';
 
 export interface Gem {
   gemId: bigint;

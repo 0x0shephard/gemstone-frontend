@@ -20,7 +20,7 @@ const STEPS = [
   {
     n: '02',
     title: 'Compliance check',
-    body: 'ComplianceRegistry.canRedeem must pass for your address.',
+    body: 'Your address must not be blocked. No identity verification is required to redeem.',
   },
   {
     n: '03',
@@ -155,8 +155,8 @@ export default function RedeemPage() {
                         <StatusBadge tone="success" dot>
                           Eligible
                         </StatusBadge>
-                      ) : gem.redeem === 'KYC required' ? (
-                        <StatusBadge tone="danger">KYC required</StatusBadge>
+                      ) : gem.redeem === 'Blocked' ? (
+                        <StatusBadge tone="danger">Blocked</StatusBadge>
                       ) : (
                         <StatusBadge tone="warning" dot>
                           Reserve short

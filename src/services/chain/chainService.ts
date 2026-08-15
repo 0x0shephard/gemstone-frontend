@@ -301,7 +301,13 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
       details.custodian?.country ??
       details.custodyCountry ??
       'Undisclosed',
-    redeem: canRedeem ? 'Eligible' : 'KYC required',
+    /*
+     * `canRedeem` is false for exactly one reason once redemption approval mode
+     * is off: the address is on the compliance block list. Labelling that "KYC
+     * required" told people to go and verify themselves, which would not have
+     * helped and is no longer what the gate checks.
+     */
+    redeem: canRedeem ? 'Eligible' : 'Blocked',
     metadataUri: registryGem.metadataURI,
     image: imageUrl(details.image),
   };
