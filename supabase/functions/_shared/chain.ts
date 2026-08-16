@@ -143,8 +143,20 @@ export function operatorChain(): OperatorChain {
   // that has not set it keeps working exactly as before rather than failing on
   // a secret it has never heard of.
   const logsRpcUrl = Deno.env.get('LOGS_RPC_URL')?.trim() || rpcUrl;
-  const logsTransport =
-    logsRpcUrl === rpcUrl ? transport : http(logsRpcUrl, { retryCount: 3, timeout: 30_000 });
+  /*
+   * Fails fast, unlike the write transport.
+   *
+   * A scan is budgeted between chunks, so the budget can only act if no single
+   * chunk can outlast it. At the write transport's 30s timeout and three
+   * retries, one unlucky call blocks for two minutes — long enough that the
+   * platform kills the worker before the budget is ever re-checked, which is
+   * exactly how a 40s budget produced a 150s run.
+   *
+   * Giving up early is cheap here in a way it is not for a write: the cursor is
+   * committed as the scan proceeds, so an abandoned chunk is retried on the next
+   * run rather than lost.
+   */
+  const logsTransport = http(logsRpcUrl, { retryCount: 1, timeout: 8_000 });
   return {
     account,
     publicClient: createPublicClient({ chain: sepolia, transport }),

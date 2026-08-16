@@ -3,6 +3,10 @@ import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { currentDemand, ingestBidEvents, DEFAULT_WINDOW_DAYS } from '../_shared/demand.ts';
 import { totalFor } from '../_shared/demandMath.ts';
+import { TIMED_OUT, phaseLog, withDeadline } from '../_shared/deadline.ts';
+
+/** Below the platform's own worker timeout, so this answers rather than dies. */
+const HARD_TIMEOUT_MS = 60_000;
 
 /**
  * Refreshes observed bid demand.
@@ -25,10 +29,37 @@ Deno.serve(async (request) => {
     return json({ error: 'Forbidden' }, 403);
   }
 
+  const phases = phaseLog();
   try {
     const admin = adminClient();
-    const { scannedThrough, inserted, caughtUp, blocksBehind } = await ingestBidEvents(admin);
+
+    /*
+     * A full chain scan against an RPC that stops answering will otherwise sit
+     * here until the platform tears the worker down, and WORKER_RESOURCE_LIMIT
+     * is all the caller ever sees — no partial result, and no clue which call
+     * hung. That is how a misconfigured logs RPC passed for eight days as a
+     * generic "not enough compute resources".
+     *
+     * Abandoning the scan costs nothing: the cursor is committed as it goes, so
+     * whatever this pass covered is kept and the rest is retried next run.
+     */
+    const ingested = await withDeadline(HARD_TIMEOUT_MS, () =>
+      ingestBidEvents(admin, undefined, { phases }),
+    );
+    if (ingested === TIMED_OUT) {
+      return json(
+        {
+          error: 'Demand ingest exceeded its own time limit',
+          // The phase after the last one recorded is the one that hung.
+          elapsedMsByPhase: phases.marks,
+        },
+        504,
+      );
+    }
+    const { scannedThrough, inserted, caughtUp, blocksBehind } = ingested;
+    phases.mark('ingest');
     const demand = await currentDemand(admin);
+    phases.mark('aggregate');
     return json({
       scannedThroughBlock: scannedThrough.toString(),
       newBids: inserted,
@@ -38,6 +69,7 @@ Deno.serve(async (request) => {
       // between a healthy job and one that will never catch up.
       caughtUp,
       blocksBehind: blocksBehind.toString(),
+      elapsedMsByPhase: phases.marks,
       windowDays: DEFAULT_WINDOW_DAYS,
       observed: {
         shape: totalFor(demand, 'shape'),

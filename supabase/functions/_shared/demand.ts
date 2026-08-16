@@ -3,6 +3,7 @@ import { parseEventLogs } from 'npm:viem@2';
 import { operatorChain, primarySaleAbi, type OperatorChain } from './chain.ts';
 import { aggregateDemand, type BidObservation } from './demandMath.ts';
 import { scanLogs } from './logScan.ts';
+import type { PhaseLog } from './deadline.ts';
 import type { DemandInput } from './valuationMath.ts';
 
 type AdminClient = SupabaseClient;
@@ -87,10 +88,16 @@ async function scannedThroughBlock(admin: AdminClient, chain: OperatorChain): Pr
 export async function ingestBidEvents(
   admin: AdminClient,
   chain: OperatorChain = operatorChain(),
-  options: { budgetMs?: number; now?: () => number } = {},
+  options: { budgetMs?: number; now?: () => number; phases?: PhaseLog } = {},
 ): Promise<{ scannedThrough: bigint; inserted: number; caughtUp: boolean; blocksBehind: bigint }> {
+  // No-op unless the caller wants the breakdown, which only the scheduled
+  // endpoint does — the pricing path calls this and cares only about the result.
+  const mark = (phase: string) => options.phases?.mark(phase);
+
   const head = await chain.publicClient.getBlockNumber();
+  mark('chain_head');
   const cursor = await scannedThroughBlock(admin, chain);
+  mark('cursor');
   const from =
     cursor > chain.deploymentBlock + REORG_REPLAY_BLOCKS
       ? cursor - REORG_REPLAY_BLOCKS
@@ -105,6 +112,7 @@ export async function ingestBidEvents(
   };
 
   let inserted = 0;
+  let commits = 0;
   let pending: BidLog[] = [];
 
   const result = await scanLogs(chain, {
@@ -137,6 +145,7 @@ export async function ingestBidEvents(
      * reverse would advance past bids that were never written, losing them.
      */
     onProgress: async (through) => {
+      mark(`commit_${(commits += 1)}`);
       if (pending.length > 0) {
         inserted += await writeBids(admin, chain, pending);
         pending = [];

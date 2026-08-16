@@ -16,6 +16,7 @@ import {
 } from '../_shared/chain.ts';
 import { scanLogs } from '../_shared/logScan.ts';
 import { notifyWallet } from '../_shared/notify.ts';
+import { TIMED_OUT, phaseLog, withDeadline, type PhaseLog } from '../_shared/deadline.ts';
 
 /**
  * Tells people about protocol state that is waiting on them.
@@ -40,13 +41,18 @@ import { notifyWallet } from '../_shared/notify.ts';
  */
 
 /**
- * How far back to look on a first run.
+ * How far back to look on a first run — roughly a week.
  *
- * Only far enough to cover positions that could still be open — roughly a week.
- * Scanning from the deployment block would work, but it would mail everyone
- * about every offer the protocol has ever seen, most of them long dead. A
- * notification system whose first act is a flood of stale mail teaches people to
- * ignore it.
+ * Far enough to cover any position that could still be open. Scanning from the
+ * deployment block would work too, but it would mail everyone about every offer
+ * the protocol has ever seen, most of them long dead, and a notification system
+ * whose first act is a flood of stale mail teaches people to ignore it.
+ *
+ * A week does not have to fit in one run. The cursor starts at this floor and
+ * only moves forward, committing as it goes, so the window is covered across
+ * however many runs it takes. Shrinking it to reach "caught up" sooner would
+ * instead mean never seeing the positions in the part that was skipped — the
+ * cursor never goes back.
  */
 const FIRST_RUN_LOOKBACK_BLOCKS = 50_000n;
 
@@ -67,6 +73,18 @@ const REORG_REPLAY_BLOCKS = 64n;
  * instead of having to fit in one invocation.
  */
 const TOTAL_BUDGET_MS = 40_000;
+
+/**
+ * Of that, the share the three log scans may use between them.
+ *
+ * The rest is held back for the deadline pass. Without a reserve the scans take
+ * everything on any run with a backlog, and the deadline pass — the one that
+ * tells people their money is recoverable — is exactly the part that never runs.
+ */
+const SCAN_BUDGET_MS = 30_000;
+
+/** The contracts scanned each pass, in the order they are given time. */
+const CONTRACT_COUNT = 3;
 
 /**
  * Deadline rows handled per run.
@@ -177,7 +195,7 @@ async function priorBidders(admin: Admin, round: string, except: string): Promis
  * who can actually act.
  */
 async function tokenHolder(chain: OperatorChain, tokenId: bigint): Promise<string | null> {
-  const owner = (await chain.publicClient
+  const owner = (await chain.logsClient
     .readContract({
       address: dgeNftAddress(),
       abi: dgeNftAbi,
@@ -190,7 +208,7 @@ async function tokenHolder(chain: OperatorChain, tokenId: bigint): Promise<strin
   const market = marketplaceAddress();
   if (owner.toLowerCase() !== market.toLowerCase()) return owner;
 
-  const listing = (await chain.publicClient
+  const listing = (await chain.logsClient
     .readContract({
       address: market,
       abi: marketplaceAbi,
@@ -216,6 +234,9 @@ async function send(
   if (result.emailed) counters.emailed += 1;
 }
 
+/** Below the platform's own worker timeout, so this answers rather than dies. */
+const HARD_TIMEOUT_MS = 60_000;
+
 Deno.serve(async (request) => {
   const early = preflight(request);
   if (early) return early;
@@ -227,17 +248,54 @@ Deno.serve(async (request) => {
     return json({ error: 'Forbidden' }, 403);
   }
 
+  const phases = phaseLog();
   try {
+    const swept = await withDeadline(HARD_TIMEOUT_MS, () => runSweep(phases));
+    if (swept === TIMED_OUT) {
+      return json(
+        {
+          error: 'Notification sweep exceeded its own time limit',
+          // The phase after the last one recorded is the one that hung.
+          elapsedMsByPhase: phases.marks,
+        },
+        504,
+      );
+    }
+    return json(swept);
+  } catch (error) {
+    return json({ error: safeErrorMessage(error, 'Notification sweep failed') }, 500);
+  }
+});
+
+async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
+  {
     const admin = adminClient();
     const chain = operatorChain();
-    const head = await chain.publicClient.getBlockNumber();
+
     const counters: Counters = { created: 0, emailed: 0 };
     const behind: Record<string, string> = {};
+    // One budget for the run, measured from before the first network call, so an
+    // expensive first contract shortens the rest rather than overrunning it.
+    const remaining = () => Math.max(0, TOTAL_BUDGET_MS - phases.elapsed());
+    const mark = phases.mark;
 
-    // One deadline for the run. Each pass gets whatever is left, so an expensive
-    // first contract shortens the rest rather than overrunning the worker.
-    const startedAt = Date.now();
-    const remaining = () => Math.max(0, TOTAL_BUDGET_MS - (Date.now() - startedAt));
+    /*
+     * An equal share of what is left, for each contract still to be scanned.
+     *
+     * Giving every scan the whole remaining budget starves the ones that come
+     * after it: with a backlog the first contract simply takes all of it, and on
+     * the first run that is precisely what happened — the marketplace advanced
+     * 2,760 blocks while the swap escrow and the auction advanced none, and
+     * would have kept advancing none on every run thereafter.
+     */
+    let scansLeft = CONTRACT_COUNT;
+    const scanShare = () => {
+      const left = Math.max(0, SCAN_BUDGET_MS - phases.elapsed());
+      return Math.floor(left / scansLeft--);
+    };
+
+    const head = await chain.logsClient.getBlockNumber();
+    mark('chain_head');
 
     // ---- Marketplace ------------------------------------------------------
     const marketFrom = await cursorFor(admin, 'marketplace', head);
@@ -245,7 +303,7 @@ Deno.serve(async (request) => {
       address: marketplaceAddress(),
       from: marketFrom,
       to: head,
-      budgetMs: remaining(),
+      budgetMs: scanShare(),
       onProgress: (through) => commitCursor(admin, 'marketplace', through),
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: marketplaceAbi, logs: logs as never })) {
@@ -294,6 +352,7 @@ Deno.serve(async (request) => {
         }
       },
     });
+    mark('marketplace');
     if (!marketResult.caughtUp) behind.marketplace = marketResult.blocksBehind.toString();
 
     // ---- Swap escrow ------------------------------------------------------
@@ -302,7 +361,7 @@ Deno.serve(async (request) => {
       address: swapEscrowAddress(),
       from: swapFrom,
       to: head,
-      budgetMs: remaining(),
+      budgetMs: scanShare(),
       onProgress: (through) => commitCursor(admin, 'swap_escrow', through),
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: swapEscrowAbi, logs: logs as never })) {
@@ -355,6 +414,7 @@ Deno.serve(async (request) => {
         }
       },
     });
+    mark('swap_escrow');
     if (!swapResult.caughtUp) behind.swap_escrow = swapResult.blocksBehind.toString();
 
     // ---- Primary sale auction --------------------------------------------
@@ -363,13 +423,13 @@ Deno.serve(async (request) => {
       address: chain.addresses.primarySale,
       from: auctionFrom,
       to: head,
-      budgetMs: remaining(),
+      budgetMs: scanShare(),
       onProgress: (through) => commitCursor(admin, 'primary_sale', through),
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: primarySaleAbi, logs: logs as never })) {
           if (event.eventName === 'BidPlaced') {
             const { gemId, bidder } = event.args as { gemId: bigint; bidder: Address };
-            const auction = (await chain.publicClient
+            const auction = (await chain.logsClient
               .readContract({
                 address: chain.addresses.primarySale,
                 abi: primarySaleAbi,
@@ -469,14 +529,16 @@ Deno.serve(async (request) => {
         }
       },
     });
+    mark('primary_sale');
     if (!auctionResult.caughtUp) behind.primary_sale = auctionResult.blocksBehind.toString();
 
     // ---- Deadlines --------------------------------------------------------
     // Runs on whatever time is left. Skipping it entirely on a heavy catch-up
     // run is fine: watches stay unresolved and the next run picks them up.
     const deadlines = await sweepDeadlines(admin, chain, counters, remaining);
+    mark('deadlines');
 
-    return json({
+    return {
       notificationsCreated: counters.created,
       emailsSent: counters.emailed,
       deadlinesChecked: deadlines,
@@ -485,13 +547,12 @@ Deno.serve(async (request) => {
         swap_escrow: swapResult.scannedThrough.toString(),
         primary_sale: auctionResult.scannedThrough.toString(),
       },
+      elapsedMsByPhase: phases.marks,
       caughtUp: Object.keys(behind).length === 0,
       blocksBehind: behind,
-    });
-  } catch (error) {
-    return json({ error: safeErrorMessage(error, 'Notification sweep failed') }, 500);
+    };
   }
-});
+}
 
 /**
  * Warns the people whose positions have lapsed, or are about to.
@@ -530,7 +591,7 @@ async function sweepDeadlines(
     let stillOpen = false;
 
     if (row.kind === 'offer') {
-      const offer = (await chain.publicClient
+      const offer = (await chain.logsClient
         .readContract({
           address: marketplaceAddress(),
           abi: marketplaceAbi,
@@ -555,7 +616,7 @@ async function sweepDeadlines(
         });
       }
     } else if (row.kind === 'swap') {
-      const offer = (await chain.publicClient
+      const offer = (await chain.logsClient
         .readContract({
           address: swapEscrowAddress(),
           abi: swapEscrowAbi,
