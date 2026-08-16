@@ -7,8 +7,6 @@ import {
   trustWallet,
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
-import { createConnector } from 'wagmi';
-import { injected } from 'wagmi/connectors';
 import { env, walletConnectConfigured } from '@/config/env';
 import { activeChain, supportedChains } from '@/config/chains';
 import { createRpcTransport, resolveRpcUrls } from '@/config/rpc';
@@ -18,19 +16,29 @@ const rpcTransport = createRpcTransport(
   resolveRpcUrls(activeChain.id, env.rpcUrl, env.rpcFallbackUrl),
 );
 
-const browserWallet = () => {
-  const wallet = injectedWallet();
-  return {
-    ...wallet,
-    name: 'MetaMask / Browser Wallet',
-    shortName: 'Browser Wallet',
-    createConnector: (walletDetails: Parameters<typeof wallet.createConnector>[0]) =>
-      createConnector((config) => ({
-        ...injected({ shimDisconnect: false })(config),
-        ...walletDetails,
-      })),
-  };
-};
+/**
+ * The browser extension, named for what it usually is.
+ *
+ * Only the label is changed. An earlier version replaced the connector too, with
+ * a hand-rolled `injected({ shimDisconnect: false })` carrying no target, to stop
+ * a duplicate MetaMask entry appearing. Both of those overrides did damage:
+ *
+ *   `shimDisconnect` is the sole gate on `wallet_requestPermissions`, so turning
+ *   it off removed the wallet's own account prompt — connecting silently reused
+ *   whatever authorisation existed, and there was no way to pick an account.
+ *
+ *   Without a target, `isAuthorized` falls back to requiring an
+ *   `injected.connected` flag that `disconnect` deletes, so an authorised wallet
+ *   read as unauthorised and every visit began by connecting again.
+ *
+ * The duplicate is now prevented where it arises, in `selectWallets`, which is
+ * cheaper than paying for it here.
+ */
+const browserWallet = () => ({
+  ...injectedWallet(),
+  name: 'MetaMask / Browser Wallet',
+  shortName: 'Browser Wallet',
+});
 
 type WalletCreator = WalletList[number]['wallets'][number];
 

@@ -12,6 +12,16 @@ export interface WalletEnvironment {
   walletConnect: boolean;
   /** `window.ethereum` is present — an extension, or a wallet's in-app browser. */
   hasInjected: boolean;
+  /**
+   * The injected provider is MetaMask itself.
+   *
+   * Decides whether the dedicated MetaMask entry would be a second door to the
+   * same wallet. Listing both is not merely untidy: the two take different code
+   * paths — one the injected connector, the other MetaMask's SDK — so which one
+   * a person happens to click changes whether they are prompted for permission
+   * and whether the connection survives a reload.
+   */
+  injectedIsMetaMask: boolean;
   /** Touch is the primary input, i.e. a phone or tablet rather than a desktop. */
   touchPrimary: boolean;
 }
@@ -31,7 +41,7 @@ export interface WalletGroup {
  * makes it the difference between a broken connect screen and a working one.
  */
 export function selectWallets(environment: WalletEnvironment): WalletGroup[] {
-  const { walletConnect, hasInjected, touchPrimary } = environment;
+  const { walletConnect, hasInjected, injectedIsMetaMask, touchPrimary } = environment;
 
   /*
    * On a desktop the injected option is always shown: extensions sometimes
@@ -42,10 +52,28 @@ export function selectWallets(environment: WalletEnvironment): WalletGroup[] {
    */
   const showInjected = hasInjected || !touchPrimary;
 
+  /*
+   * Exactly one door to MetaMask, whichever environment this is.
+   *
+   * When the extension is present the injected entry already *is* MetaMask, and
+   * the injected connector is the better of the two paths: it asks the wallet
+   * for permission on connect, which is what raises the account prompt, and it
+   * hands wagmi a target so an existing authorisation survives a reload.
+   *
+   * With no extension there is nothing to inject into, and the dedicated entry
+   * earns its place by deep-linking to the phone app over WalletConnect.
+   *
+   * Offering both was the original fault. The workaround for it — a hand-rolled
+   * injected connector with `shimDisconnect: false` — silently disabled the
+   * permission prompt and the reconnect path, which is why connecting stopped
+   * asking anything and every sign-in needed a fresh connection.
+   */
+  const metaMaskIsDuplicate = showInjected && injectedIsMetaMask;
+
   const primary: WalletKind[] = [];
   if (showInjected) primary.push('injected');
   primary.push('coinbase');
-  if (walletConnect) primary.push('metaMask');
+  if (walletConnect && !metaMaskIsDuplicate) primary.push('metaMask');
 
   const more: WalletKind[] = walletConnect ? ['rainbow', 'trust', 'walletConnect'] : [];
 
@@ -69,16 +97,50 @@ export function walletSupportIsDegraded(environment: WalletEnvironment): boolean
   return environment.touchPrimary && !environment.hasInjected && !environment.walletConnect;
 }
 
+/**
+ * Whether an injected provider is really MetaMask.
+ *
+ * `isMetaMask` is set by a long tail of wallets that impersonate it for
+ * compatibility, so the flag alone means little. The ones checked here are the
+ * wallets common enough to actually appear, each of which advertises itself
+ * under its own flag as well — a wallet not on this list is at worst offered a
+ * MetaMask entry it does not need, which is the mild failure of the two.
+ */
+function looksLikeMetaMask(ethereum: Record<string, unknown> | undefined): boolean {
+  if (!ethereum?.isMetaMask) return false;
+  return ![
+    'isBraveWallet',
+    'isCoinbaseWallet',
+    'isPhantom',
+    'isRabby',
+    'isTrust',
+    'isTrustWallet',
+    'isOkxWallet',
+    'isOKExWallet',
+    'isExodus',
+    'isFrame',
+    'isOpera',
+    'isZerion',
+  ].some((flag) => ethereum[flag]);
+}
+
 /** Reads the current browser. Separated so tests never touch globals. */
 export function detectWalletEnvironment(walletConnect: boolean): WalletEnvironment {
-  const hasInjected =
-    typeof window !== 'undefined' &&
-    typeof (window as { ethereum?: unknown }).ethereum !== 'undefined';
+  const ethereum =
+    typeof window === 'undefined'
+      ? undefined
+      : ((window as { ethereum?: Record<string, unknown> }).ethereum ?? undefined);
+  const hasInjected = ethereum !== undefined;
   // `pointer: coarse` rather than a user-agent string: it describes the input
   // the person actually has, and does not need updating for every new device.
   const touchPrimary =
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(pointer: coarse)').matches;
-  return { walletConnect, hasInjected, touchPrimary };
+  return {
+    walletConnect,
+    hasInjected,
+    injectedIsMetaMask: looksLikeMetaMask(ethereum),
+    touchPrimary,
+  };
 }

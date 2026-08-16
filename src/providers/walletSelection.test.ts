@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { selectWallets, walletSupportIsDegraded } from './walletSelection';
 
-const kinds = (environment: Parameters<typeof selectWallets>[0]) =>
-  selectWallets(environment).flatMap((group) => group.kinds);
+/**
+ * Defaults `injectedIsMetaMask` to false so each case states only what it is
+ * about. The MetaMask-specific cases set it explicitly.
+ */
+const kinds = (
+  environment: Omit<Parameters<typeof selectWallets>[0], 'injectedIsMetaMask'> &
+    Partial<Pick<Parameters<typeof selectWallets>[0], 'injectedIsMetaMask'>>,
+) =>
+  selectWallets({ injectedIsMetaMask: false, ...environment }).flatMap((group) => group.kinds);
 
 describe('wallet selection', () => {
   /**
@@ -58,19 +65,90 @@ describe('wallet selection', () => {
   });
 });
 
+describe('one door to MetaMask', () => {
+  /*
+   * The regression this exists for is subtler than a dead option: two entries
+   * both reach MetaMask, but by different connectors. Whichever one a person
+   * clicks decides whether the wallet prompts for permission and whether the
+   * connection survives a reload — so the same app behaves differently for two
+   * people who did the same thing.
+   */
+  it('drops the dedicated entry when the extension is already the injected one', () => {
+    const offered = kinds({
+      walletConnect: true,
+      hasInjected: true,
+      injectedIsMetaMask: true,
+      touchPrimary: false,
+    });
+    expect(offered).toContain('injected');
+    expect(offered).not.toContain('metaMask');
+  });
+
+  it('keeps the dedicated entry when the injected wallet is something else', () => {
+    // Rabby, Brave and friends inject too. MetaMask then still deserves a row,
+    // because it is a different wallet rather than the same one twice.
+    const offered = kinds({
+      walletConnect: true,
+      hasInjected: true,
+      injectedIsMetaMask: false,
+      touchPrimary: false,
+    });
+    expect(offered).toContain('injected');
+    expect(offered).toContain('metaMask');
+  });
+
+  it('keeps the dedicated entry on a phone with no injected provider', () => {
+    // Nothing to inject into, so the entry earns its place by deep-linking.
+    const offered = kinds({
+      walletConnect: true,
+      hasInjected: false,
+      injectedIsMetaMask: false,
+      touchPrimary: true,
+    });
+    expect(offered).toContain('metaMask');
+    expect(offered).not.toContain('injected');
+  });
+
+  it('offers only the in-app wallet inside MetaMask on a phone', () => {
+    const offered = kinds({
+      walletConnect: true,
+      hasInjected: true,
+      injectedIsMetaMask: true,
+      touchPrimary: true,
+    });
+    expect(offered).toContain('injected');
+    expect(offered).not.toContain('metaMask');
+  });
+});
+
 describe('degraded support', () => {
   it('flags the configuration that leaves phones with the least', () => {
     expect(
-      walletSupportIsDegraded({ walletConnect: false, hasInjected: false, touchPrimary: true }),
+      walletSupportIsDegraded({
+        walletConnect: false,
+        hasInjected: false,
+        injectedIsMetaMask: false,
+        touchPrimary: true,
+      }),
     ).toBe(true);
   });
 
   it('is not flagged once WalletConnect is configured, or on desktop', () => {
     expect(
-      walletSupportIsDegraded({ walletConnect: true, hasInjected: false, touchPrimary: true }),
+      walletSupportIsDegraded({
+        walletConnect: true,
+        hasInjected: false,
+        injectedIsMetaMask: false,
+        touchPrimary: true,
+      }),
     ).toBe(false);
     expect(
-      walletSupportIsDegraded({ walletConnect: false, hasInjected: false, touchPrimary: false }),
+      walletSupportIsDegraded({
+        walletConnect: false,
+        hasInjected: false,
+        injectedIsMetaMask: false,
+        touchPrimary: false,
+      }),
     ).toBe(false);
   });
 });
