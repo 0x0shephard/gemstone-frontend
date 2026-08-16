@@ -552,7 +552,13 @@ async function getOffers(): Promise<Offer[]> {
         offerFmt: `$${Number(formatUnits(saleUsdValue, 18)).toLocaleString()}`,
         from: bidder,
         status,
-        statusColor: status === 'Pending' ? 'var(--dc-amber)' : '#8B8B94',
+        /*
+         * Expired reads as amber, not grey. It is the state where the bidder's
+         * payment is still held by the contract and only they can retrieve it,
+         * so it wants attention rather than the muted tone of a closed row.
+         */
+        statusColor:
+          status === 'Pending' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
         secondsLeft: Number(expiry > now ? expiry - now : 0n),
       } satisfies Offer;
     }),
@@ -646,7 +652,10 @@ async function getSwaps(): Promise<SwapRequest[]> {
         giveDisplayId: offered.displayId,
         diff: formatSwapCash(cashAmount, cashUsd, cashDescriptor, proposerPays),
         status,
-        statusColor: status === 'Active' ? 'var(--dc-amber)' : '#8B8B94',
+        // As with offers: an expired swap still holds the proposer's token in
+        // escrow, so it is unfinished business rather than history.
+        statusColor:
+          status === 'Active' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
       } satisfies SwapRequest;
     }),
   );
@@ -829,19 +838,38 @@ export const chainService: IDataService = {
     return {
       owned,
       bids,
+      /*
+       * Live offers only.
+       *
+       * `getOffers` replays every `OfferCreated` the protocol has ever emitted,
+       * so an offer that was accepted or refunded stayed in the list for good.
+       * These tabs are a to-do list — the tab even carries a count — and one
+       * that never empties stops being read. Settled offers are not lost: every
+       * one of these events already appears under History.
+       *
+       * `Expired` is deliberately kept. It means the offer lapsed and the
+       * payment is *still* sitting in the Marketplace contract waiting to be
+       * claimed, which is the most actionable row on the screen. Only
+       * `Refunded` — the claim having actually happened — retires it.
+       */
       offers: normalizedAddress
         ? offers.filter(
             (offer) =>
-              offer.bidder.toLowerCase() === normalizedAddress ||
-              offer.tokenOwner.toLowerCase() === normalizedAddress ||
-              offer.listingSeller?.toLowerCase() === normalizedAddress,
+              (offer.status === 'Pending' || offer.status === 'Expired') &&
+              (offer.bidder.toLowerCase() === normalizedAddress ||
+                offer.tokenOwner.toLowerCase() === normalizedAddress ||
+                offer.listingSeller?.toLowerCase() === normalizedAddress),
           )
         : [],
+      // Same shape, same reason. An expired swap still holds the proposer's NFT
+      // in escrow until they cancel, so it stays; a cancelled or accepted one is
+      // finished with.
       swaps: normalizedAddress
         ? swaps.filter(
             (swap) =>
-              swap.proposer.toLowerCase() === normalizedAddress ||
-              swap.requestedOwner.toLowerCase() === normalizedAddress,
+              (swap.status === 'Active' || swap.status === 'Expired') &&
+              (swap.proposer.toLowerCase() === normalizedAddress ||
+                swap.requestedOwner.toLowerCase() === normalizedAddress),
           )
         : [],
       /*
