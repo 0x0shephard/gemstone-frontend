@@ -1,7 +1,8 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { parseEventLogs } from 'npm:viem@2';
 import { operatorChain, primarySaleAbi, type OperatorChain } from './chain.ts';
-import { aggregateDemand, planScanRanges, type BidObservation } from './demandMath.ts';
+import { aggregateDemand, type BidObservation } from './demandMath.ts';
+import { scanLogs } from './logScan.ts';
 import type { DemandInput } from './valuationMath.ts';
 
 type AdminClient = SupabaseClient;
@@ -11,11 +12,25 @@ type AdminClient = SupabaseClient;
  * preference multipliers.
  */
 
-/** Under every common provider cap; only ratchets down from here. */
-const INITIAL_SPAN = 1_000n;
-const MIN_SPAN = 64n;
 /** Re-read recent blocks so a reorg near the head cannot strand a bid. */
 const REORG_REPLAY_BLOCKS = 64n;
+/**
+ * Wall clock allowed for one pass.
+ *
+ * A run that stops here is not a failure: the cursor is committed as it goes, so
+ * the next run resumes where this one stopped. Comfortably inside the platform's
+ * own limit, which kills the isolate outright and would lose the tail of the
+ * scan along with it.
+ */
+const SCAN_BUDGET_MS = 45_000;
+/**
+ * Chunks scanned between cursor commits.
+ *
+ * Rows are keyed by `(tx_hash, log_index)` and the cursor only moves backwards
+ * on a crash, so re-reading up to this many chunks is free. Committing on every
+ * chunk would triple the round trips for no gain.
+ */
+const COMMIT_EVERY = 20;
 /** Rolling aggregation window. Older bids stop influencing price. */
 export const DEFAULT_WINDOW_DAYS = 90;
 
@@ -72,41 +87,42 @@ async function scannedThroughBlock(admin: AdminClient, chain: OperatorChain): Pr
 export async function ingestBidEvents(
   admin: AdminClient,
   chain: OperatorChain = operatorChain(),
-): Promise<{ scannedThrough: bigint; inserted: number }> {
+  options: { budgetMs?: number; now?: () => number } = {},
+): Promise<{ scannedThrough: bigint; inserted: number; caughtUp: boolean; blocksBehind: bigint }> {
   const head = await chain.publicClient.getBlockNumber();
   const cursor = await scannedThroughBlock(admin, chain);
   const from =
     cursor > chain.deploymentBlock + REORG_REPLAY_BLOCKS
       ? cursor - REORG_REPLAY_BLOCKS
       : chain.deploymentBlock;
-  if (from > head) return { scannedThrough: cursor, inserted: 0 };
 
-  const logs: Array<{
+  type BidLog = {
     gemId: bigint;
     bidder: string;
     blockNumber: bigint;
     txHash: string;
     logIndex: number;
-  }> = [];
-  let span = INITIAL_SPAN;
-  let position = from;
+  };
 
-  while (position <= head) {
-    const [range] = planScanRanges(position, head, span);
-    try {
-      const raw = await chain.publicClient.getLogs({
-        address: chain.addresses.primarySale,
-        fromBlock: range.from,
-        toBlock: range.to,
-      });
+  let inserted = 0;
+  let pending: BidLog[] = [];
+
+  const result = await scanLogs(chain, {
+    address: chain.addresses.primarySale,
+    from,
+    to: head,
+    budgetMs: options.budgetMs ?? SCAN_BUDGET_MS,
+    now: options.now,
+    commitEvery: COMMIT_EVERY,
+    onLogs: (logs) => {
       for (const event of parseEventLogs({
         abi: primarySaleAbi,
-        logs: raw,
+        logs: logs as never,
         eventName: 'BidPlaced',
       })) {
         if (event.blockNumber === null || event.transactionHash === null || event.logIndex === null)
           continue;
-        logs.push({
+        pending.push({
           gemId: event.args.gemId as bigint,
           bidder: event.args.bidder as string,
           blockNumber: event.blockNumber,
@@ -114,64 +130,85 @@ export async function ingestBidEvents(
           logIndex: event.logIndex,
         });
       }
-      position = range.to + 1n;
-    } catch (error) {
-      if (span <= MIN_SPAN) throw error;
-      span = span / 2n < MIN_SPAN ? MIN_SPAN : span / 2n;
-    }
-  }
-
-  let inserted = 0;
-  if (logs.length > 0) {
-    const gemIds = [...new Set(logs.map((log) => log.gemId.toString()))];
-    const { data: submissions, error: submissionError } = await admin
-      .from('seller_submissions')
-      .select('onchain_gem_id,attributes,graded_attributes')
-      .in('onchain_gem_id', gemIds);
-    if (submissionError) throw submissionError;
-    const attributesByGem = new Map(
-      (submissions ?? []).map((row) => [String(row.onchain_gem_id), attributesFrom(row)]),
-    );
-
-    // One request per distinct block rather than per log.
-    const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
-    const timestamps = new Map<bigint, string>();
-    for (const blockNumber of blockNumbers) {
-      const block = await chain.publicClient.getBlock({ blockNumber });
-      timestamps.set(blockNumber, new Date(Number(block.timestamp) * 1_000).toISOString());
-    }
-
-    const rows = logs.map((log) => {
-      const attributes = attributesByGem.get(log.gemId.toString());
-      return {
-        gem_id: log.gemId.toString(),
-        bidder: log.bidder.toLowerCase(),
-        tx_hash: log.txHash,
-        log_index: log.logIndex,
-        block_number: Number(log.blockNumber),
-        observed_at: timestamps.get(log.blockNumber),
-        shape: attributes?.shape ?? null,
-        color: attributes?.color ?? null,
-        color_grade: attributes?.colorGrade ?? null,
-      };
-    });
-
-    const { data: written, error: insertError } = await admin
-      .from('demand_bids')
-      .upsert(rows, { onConflict: 'tx_hash,log_index', ignoreDuplicates: true })
-      .select('id');
-    if (insertError) throw insertError;
-    inserted = written?.length ?? 0;
-  }
-
-  const { error: cursorError } = await admin.from('demand_scan_state').upsert({
-    id: true,
-    scanned_through_block: Number(head),
-    updated_at: new Date().toISOString(),
+    },
+    /*
+     * Bids first, cursor second. A crash between the two replays a range that is
+     * already recorded, which the `(tx_hash, log_index)` key absorbs — the
+     * reverse would advance past bids that were never written, losing them.
+     */
+    onProgress: async (through) => {
+      if (pending.length > 0) {
+        inserted += await writeBids(admin, chain, pending);
+        pending = [];
+      }
+      const { error } = await admin.from('demand_scan_state').upsert({
+        id: true,
+        scanned_through_block: Number(through),
+        updated_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+    },
   });
-  if (cursorError) throw cursorError;
 
-  return { scannedThrough: head, inserted };
+  return {
+    scannedThrough: result.scannedThrough,
+    inserted,
+    caughtUp: result.caughtUp,
+    blocksBehind: result.blocksBehind,
+  };
+}
+
+/** Resolves attributes and block times for a batch of bids, then records them. */
+async function writeBids(
+  admin: AdminClient,
+  chain: OperatorChain,
+  logs: readonly {
+    gemId: bigint;
+    bidder: string;
+    blockNumber: bigint;
+    txHash: string;
+    logIndex: number;
+  }[],
+): Promise<number> {
+  const gemIds = [...new Set(logs.map((log) => log.gemId.toString()))];
+  const { data: submissions, error: submissionError } = await admin
+    .from('seller_submissions')
+    .select('onchain_gem_id,attributes,graded_attributes')
+    .in('onchain_gem_id', gemIds);
+  if (submissionError) throw submissionError;
+  const attributesByGem = new Map(
+    (submissions ?? []).map((row) => [String(row.onchain_gem_id), attributesFrom(row)]),
+  );
+
+  // One request per distinct block rather than per log.
+  const blockNumbers = [...new Set(logs.map((log) => log.blockNumber))];
+  const timestamps = new Map<bigint, string>();
+  for (const blockNumber of blockNumbers) {
+    const block = await chain.publicClient.getBlock({ blockNumber });
+    timestamps.set(blockNumber, new Date(Number(block.timestamp) * 1_000).toISOString());
+  }
+
+  const rows = logs.map((log) => {
+    const attributes = attributesByGem.get(log.gemId.toString());
+    return {
+      gem_id: log.gemId.toString(),
+      bidder: log.bidder.toLowerCase(),
+      tx_hash: log.txHash,
+      log_index: log.logIndex,
+      block_number: Number(log.blockNumber),
+      observed_at: timestamps.get(log.blockNumber),
+      shape: attributes?.shape ?? null,
+      color: attributes?.color ?? null,
+      color_grade: attributes?.colorGrade ?? null,
+    };
+  });
+
+  const { data: written, error: insertError } = await admin
+    .from('demand_bids')
+    .upsert(rows, { onConflict: 'tx_hash,log_index', ignoreDuplicates: true })
+    .select('id');
+  if (insertError) throw insertError;
+  return written?.length ?? 0;
 }
 
 /**

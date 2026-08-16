@@ -27,11 +27,17 @@ Deno.serve(async (request) => {
 
   try {
     const admin = adminClient();
-    const { scannedThrough, inserted } = await ingestBidEvents(admin);
+    const { scannedThrough, inserted, caughtUp, blocksBehind } = await ingestBidEvents(admin);
     const demand = await currentDemand(admin);
     return json({
       scannedThroughBlock: scannedThrough.toString(),
       newBids: inserted,
+      // A pass that ran out of budget is reported rather than presented as a
+      // clean sweep. Without this the caller cannot tell "nothing to do" from
+      // "still tens of thousands of blocks behind", which is the difference
+      // between a healthy job and one that will never catch up.
+      caughtUp,
+      blocksBehind: blocksBehind.toString(),
       windowDays: DEFAULT_WINDOW_DAYS,
       observed: {
         shape: totalFor(demand, 'shape'),

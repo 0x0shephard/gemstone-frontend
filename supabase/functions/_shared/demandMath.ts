@@ -116,3 +116,52 @@ export function planScanRanges(from: bigint, to: bigint, maxSpan: bigint): ScanR
   }
   return ranges;
 }
+
+/**
+ * The span a provider says it will accept, read out of its rejection.
+ *
+ * Providers that cap `eth_getLogs` nearly always name their limit in the error,
+ * and taking them at their word beats halving blindly — halving from 1,000 to a
+ * 10-block cap costs seven wasted round trips per chunk, on every chunk.
+ *
+ * Three phrasings seen in the wild:
+ *   Alchemy    "…up to a 10 block range. …this block range should work:
+ *               [0xad10d9, 0xad10e2]"
+ *   thirdweb   "Maximum allowed number of requested blocks is 1000"
+ *   dRPC       "ranges over 10000 blocks are not supported on free plan"
+ */
+export function suggestedSpan(message: string): bigint | null {
+  // An explicit range the provider offers is the most reliable signal: it is
+  // the only form that cannot be confused with some other number in the text.
+  const offered = message.match(/\[\s*(0x[0-9a-f]+)\s*,\s*(0x[0-9a-f]+)\s*\]/i);
+  if (offered) {
+    const span = BigInt(offered[2]) - BigInt(offered[1]) + 1n;
+    if (span > 0n) return span;
+  }
+  const stated =
+    message.match(/(\d+)\s*[- ]?block\s*range/i) ??
+    message.match(/blocks?\s+is\s+(\d+)/i) ??
+    message.match(/(?:over|exceeds?|above)\s+(\d+)\s+blocks/i);
+  if (stated) {
+    const span = BigInt(stated[1]);
+    if (span > 0n) return span;
+  }
+  return null;
+}
+
+/**
+ * The next width to try after a rejected chunk, or `null` when out of room.
+ *
+ * Returning `null` at a width of one block is what stops a provider outage from
+ * being mistaken for a range cap and retried forever.
+ */
+export function narrowedSpan(current: bigint, message: string): bigint | null {
+  if (current <= 1n) return null;
+  const suggested = suggestedSpan(message);
+  // Only ever narrower. A provider naming a limit wider than what it just
+  // refused is describing a different constraint — response size, say — and
+  // widening on a rejection would loop.
+  if (suggested !== null && suggested < current) return suggested;
+  const halved = current / 2n;
+  return halved < 1n ? 1n : halved;
+}

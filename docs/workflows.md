@@ -198,6 +198,51 @@ the gem stays `Listed` forever — `GemRegistry` has no withdraw path and the on
 exit is being minted. Exhaustion is therefore a flag for a human, not an
 automatic cancellation.
 
+### A6. People are told what is waiting on them
+
+```
+v1-notify-sweep             scheduled hourly, gated by x-notify-sweep-secret
+  event pass    Marketplace  OfferCreated  → owner: you have an offer (24h)
+                             OfferAccepted → close the watch
+                SwapEscrow   OfferCreated  → owner: a swap is proposed
+                             OfferAccepted → close the watch
+                Auction      BidPlaced     → earlier bidders: you were outbid
+                             AuctionSettled          → winner: you won
+                             AuctionSettlementRefunded → bidder: claim it back
+  deadline pass offer expired, still active → bidder: claim your refund
+                swap expired, still active  → proposer: your NFT is in escrow
+```
+
+Two passes because the two failure modes are different shapes. The event pass
+reads what happened. The deadline pass reads what is about to stop being
+possible, and a log scan cannot find that — the event that matters is the absence
+of one. Positions are written to `notification_watch` with their expiry as they
+open, so the expiry check is a dated query rather than a rescan of all history.
+
+**The swap case is the one that strands most.** `SwapEscrow.createOffer`
+transfers the proposer's NFT into escrow. Once the offer expires `acceptOffer`
+reverts, and only `cancelOffer` — callable by the proposer alone — returns it.
+Nothing on chain does this automatically, and before this sweep nothing told them
+either, so an unaccepted swap parked a token in a contract indefinitely.
+
+Deduplication lives in a unique index on
+`(wallet_address, kind, entity_type, entity_id)` rather than in the sweep. The
+sweep re-derives state every hour and will see the same open offer every time; a
+crashed and rerun pass must not double-send either.
+
+Notifications are addressed to a **wallet**, not a profile. Tokens reach people
+with no account — a gift, a plain transfer — and those holders still have
+deadlines. `v1-siwe-verify` backfills `profile_id` when a wallet is linked, so
+someone who signs up in order to act on an emailed offer does not arrive at an
+empty list. A wallet nobody has linked still gets a row; it simply cannot be
+emailed.
+
+**Not covered.** A listing selling (`Purchased`) notifies nobody: the sale pays
+the seller automatically, so nothing is stranded, and the event carries only the
+buyer. Reserve shortfalls, redemption stage changes, and seller submission status
+changes are also silent — they are database transitions rather than chain events,
+so they belong at the point of change rather than in a sweep.
+
 ---
 
 ## B. Pricing engine

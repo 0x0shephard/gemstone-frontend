@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateDemand, planScanRanges, totalFor, type BidObservation } from './demandMath.ts';
+import {
+  aggregateDemand,
+  narrowedSpan,
+  planScanRanges,
+  suggestedSpan,
+  totalFor,
+  type BidObservation,
+} from './demandMath.ts';
 import { marketMultiplier } from './valuationMath.ts';
 import { PPM, VALUATION_MATRIX } from './valuationMatrix.ts';
 
@@ -91,5 +98,58 @@ describe('scan range planning', () => {
 
   it('rejects a non-positive span instead of looping forever', () => {
     expect(() => planScanRanges(0n, 10n, 0n)).toThrow(/must be positive/i);
+  });
+});
+
+/*
+ * Verbatim rejections from the three providers this has actually been pointed
+ * at. Paraphrasing them would test the regex against itself; the whole point is
+ * that real wording is messier than the shape you would invent.
+ */
+const ALCHEMY =
+  'JSON is not a valid request object. — Under the Free tier plan, you can make ' +
+  'eth_getLogs requests with up to a 10 block range. Based on your parameters, this ' +
+  'block range should work: [0xad10d9, 0xad10e2]. Upgrade to PAYG for expanded block range.';
+const THIRDWEB =
+  'Log response size exceeded. Maximum allowed number of requested blocks is 1000';
+const DRPC = 'ranges over 10000 blocks are not supported on free plan';
+
+describe('reading a provider span cap out of its rejection', () => {
+  it('prefers the explicit range a provider offers', () => {
+    // [0xad10d9, 0xad10e2] is ten blocks inclusive, and agrees with the prose.
+    expect(suggestedSpan(ALCHEMY)).toBe(10n);
+  });
+
+  it('reads a cap stated only in prose', () => {
+    expect(suggestedSpan(THIRDWEB)).toBe(1_000n);
+    expect(suggestedSpan(DRPC)).toBe(10_000n);
+  });
+
+  it('finds nothing in an error that is not about range', () => {
+    expect(suggestedSpan('execution reverted')).toBeNull();
+    expect(suggestedSpan('502 Bad Gateway')).toBeNull();
+  });
+});
+
+describe('narrowing after a rejected chunk', () => {
+  it('drops straight to the provider cap instead of halving toward it', () => {
+    // This is the bug that stopped the sweep: halving from 1,000 bottomed out at
+    // a 64-block floor and threw, while the provider would only ever accept 10.
+    expect(narrowedSpan(1_000n, ALCHEMY)).toBe(10n);
+  });
+
+  it('halves when the provider explains nothing', () => {
+    expect(narrowedSpan(1_000n, 'connection reset')).toBe(500n);
+  });
+
+  it('ignores a cap wider than the width just refused', () => {
+    // A 1,000-block cap cannot explain a 500-block chunk being rejected, so the
+    // refusal is about something else and widening would loop forever.
+    expect(narrowedSpan(500n, THIRDWEB)).toBe(250n);
+  });
+
+  it('gives up at a single block rather than retrying an outage forever', () => {
+    expect(narrowedSpan(2n, 'connection reset')).toBe(1n);
+    expect(narrowedSpan(1n, 'connection reset')).toBeNull();
   });
 });

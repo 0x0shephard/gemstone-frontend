@@ -8,6 +8,7 @@ import { groupForPath } from './navigation';
 import { ColorSchemeToggle } from '@/components/theme/ColorSchemeToggle';
 import { AccountMenu } from '@/components/auth/AccountMenu';
 import { MusdcFaucetButton } from '@/components/wallet/MusdcFaucetButton';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 
 /** App layout: hidden navigation drawer + sticky content header + routed <Outlet/>. */
@@ -102,6 +103,7 @@ export function AppShell() {
               <ChainSyncStatus />
             </div>
             <MusdcFaucetButton compact />
+            <NotificationBell />
             <ColorSchemeToggle />
             <AccountMenu />
           </div>

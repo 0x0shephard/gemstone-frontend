@@ -54,3 +54,6 @@ verify_jwt = false
 
 [functions.v1-auction-refresh]
 verify_jwt = false
+
+[functions.v1-notify-sweep]
+verify_jwt = false

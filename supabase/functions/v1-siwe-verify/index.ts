@@ -4,6 +4,7 @@ import { parseSiweMessage, verifySiweMessage } from 'npm:viem@2/siwe';
 import { adminClient, audit, requireUser, sha256 } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { resolveSiteOrigin } from '../_shared/origins.ts';
+import { backfillProfileLinks } from '../_shared/notify.ts';
 
 Deno.serve(async (request) => {
   const early = preflight(request);
@@ -89,6 +90,17 @@ Deno.serve(async (request) => {
       .select('wallet_address,verified_at')
       .single();
     if (error) throw error;
+    /*
+     * Notifications are addressed to a wallet, because a token can reach someone
+     * who has no account — a gift, a plain transfer — and those holders still
+     * have deadlines. Anything written before this moment names the wallet and
+     * no profile, so without this the person who was emailed about an offer, and
+     * signed up in order to act on it, would arrive at an empty list.
+     *
+     * Not fatal: a wallet is linked either way, and the alternative is failing a
+     * sign-in over a backfill.
+     */
+    await backfillProfileLinks(admin, walletAddress, user.id).catch(() => undefined);
     await audit(
       user.id,
       currentPrimary ? 'wallet.relinked' : 'wallet.linked',

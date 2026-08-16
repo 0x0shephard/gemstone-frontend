@@ -46,6 +46,11 @@ export const primarySaleAbi = parseAbi([
   'function settleAuction(uint256 gemId) returns (uint256 tokenId)',
   'function auctions(uint256 gemId) view returns (bool exists,bool settled,uint64 startTime,uint64 endTime,uint256 floorUsd,address highestBidder,address paymentAsset,uint256 amount,uint256 usdValue,uint256 reserveUsd)',
   'event BidPlaced(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount, uint256 usdValue)',
+  // Read by the notification sweep. A win and a refunded settlement are both
+  // things the bidder has to be told: one means they own a stone, the other
+  // means their money is sitting in the contract waiting to be claimed.
+  'event AuctionSettled(uint256 indexed gemId, uint256 indexed tokenId, address indexed winner, address paymentAsset, uint256 amount)',
+  'event AuctionSettlementRefunded(uint256 indexed gemId, address indexed bidder, address indexed paymentAsset, uint256 amount, bytes32 reasonHash)',
 ]);
 
 export const dgeNftAbi = parseAbi([
@@ -69,9 +74,58 @@ export function dgeNftAddress(): Address {
   return requiredAddress('DGE_NFT_ADDRESS');
 }
 
+/**
+ * Secondary-market events the notification sweep reads.
+ *
+ * Events and the few views needed to tell a live offer from a settled one.
+ * Nothing here is written to: the sweep observes, it does not act.
+ */
+export const marketplaceAbi = parseAbi([
+  'event OfferCreated(uint256 indexed offerId, address indexed bidder, uint256 indexed tokenId, address paymentAsset, uint256 amount, uint256 saleUsdValue, uint64 expiry)',
+  'event OfferCancelled(uint256 indexed offerId)',
+  'event OfferAccepted(uint256 indexed offerId, address indexed seller)',
+  // `Purchased` is deliberately absent. A sale pays the seller automatically, so
+  // nothing is stranded, and the event carries only the buyer — telling the
+  // seller would mean recovering their address from an earlier `Listed` event
+  // that may sit outside the scan window. Worth doing, but not by guessing.
+  'function offers(uint256 offerId) view returns (address bidder, uint256 tokenId, address paymentAsset, uint256 amount, uint256 saleUsdValue, uint64 expiry, bool active)',
+  // Two fields, not three: `Listing` carries no `active` flag. An escrowed
+  // token's listing is cleared on cancel, so a zero seller is what "not listed"
+  // looks like.
+  'function listings(uint256 tokenId) view returns (address seller, uint256 priceUsd)',
+]);
+
+export const swapEscrowAbi = parseAbi([
+  'event OfferCreated(uint256 indexed offerId, address indexed proposer, uint256 indexed offeredTokenId, uint256 requestedTokenId, address cashAsset, uint256 cashAmount, bool proposerPaysCash, uint64 expiry)',
+  'event OfferCancelled(uint256 indexed offerId)',
+  'event OfferAccepted(uint256 indexed offerId, address indexed accepter)',
+  'function offers(uint256 offerId) view returns (address proposer, uint256 offeredTokenId, uint256 requestedTokenId, address cashAsset, uint256 cashAmount, bool proposerPaysCash, uint64 expiry, bool active)',
+]);
+
+/** Addresses used only by the notification sweep, resolved on demand. */
+export function marketplaceAddress(): Address {
+  return requiredAddress('MARKETPLACE_ADDRESS');
+}
+
+export function swapEscrowAddress(): Address {
+  return requiredAddress('SWAP_ESCROW_ADDRESS');
+}
+
 export interface OperatorChain {
   account: ReturnType<typeof privateKeyToAccount>;
   publicClient: ReturnType<typeof createPublicClient>;
+  /**
+   * Read-only client used for `eth_getLogs`, which is the one call whose cost
+   * providers meter by block range rather than by request.
+   *
+   * Separate from {@link publicClient} because the limit that matters here is
+   * unrelated to the one that matters for writes. The operator RPC allows a
+   * 10-block range on its plan; a history scan at that width needs more requests
+   * per day than the chain produces blocks, so it can never catch up however
+   * carefully it retries. Point `LOGS_RPC_URL` at a provider with a wide range
+   * and the same scan is a couple of hundred calls.
+   */
+  logsClient: ReturnType<typeof createPublicClient>;
   walletClient: ReturnType<typeof createWalletClient>;
   addresses: {
     registry: Address;
@@ -85,9 +139,16 @@ export function operatorChain(): OperatorChain {
   const privateKey = requiredEnv('SEPOLIA_OPERATOR_PRIVATE_KEY') as `0x${string}`;
   const account = privateKeyToAccount(privateKey);
   const transport = http(rpcUrl, { retryCount: 3, timeout: 30_000 });
+  // Optional, and deliberately falling back to the operator RPC: a deployment
+  // that has not set it keeps working exactly as before rather than failing on
+  // a secret it has never heard of.
+  const logsRpcUrl = Deno.env.get('LOGS_RPC_URL')?.trim() || rpcUrl;
+  const logsTransport =
+    logsRpcUrl === rpcUrl ? transport : http(logsRpcUrl, { retryCount: 3, timeout: 30_000 });
   return {
     account,
     publicClient: createPublicClient({ chain: sepolia, transport }),
+    logsClient: createPublicClient({ chain: sepolia, transport: logsTransport }),
     walletClient: createWalletClient({ account, chain: sepolia, transport }),
     addresses: {
       registry: requiredAddress('GEM_REGISTRY_ADDRESS'),

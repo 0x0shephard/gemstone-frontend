@@ -1,11 +1,18 @@
 name: Scheduled sweeps
 
-# Two operator jobs that keep the protocol moving without anyone watching:
+# Three operator jobs that keep the protocol moving without anyone watching:
 #
 #   v1-auction-refresh  settles won auctions, re-opens unsold ones for another
 #                       24 hours, and stops at the round ceiling.
 #   v1-demand-refresh   ingests BidPlaced events into the demand counts behind
 #                       the pricing engine's market multipliers.
+#   v1-notify-sweep     tells people about state that is waiting on them — an
+#                       offer on their token, a swap holding their NFT, a bid
+#                       they have just lost.
+#
+# Order matters only in that notifications run last: a person told about an
+# auction should be told after that auction has been settled or re-opened, not
+# before.
 #
 # Both authorise by a secret header rather than a Supabase session, and both are
 # exempt from JWT verification in supabase/config.toml — without that the
@@ -16,12 +23,25 @@ name: Scheduled sweeps
 #   SUPABASE_FUNCTIONS_URL   https://<project-ref>.supabase.co/functions/v1
 #   AUCTION_REFRESH_SECRET
 #   DEMAND_REFRESH_SECRET
+#   NOTIFY_SWEEP_SECRET
+#
+# The demand ingest also depends on a Supabase secret, LOGS_RPC_URL, pointing at
+# a provider that allows wide `eth_getLogs` ranges. It falls back to the operator
+# RPC, whose plan caps ranges at 10 blocks — a width at which a history scan
+# needs more requests per day than the chain produces blocks, so it can never
+# converge no matter how long it is left running.
 
 on:
   schedule:
-    # 01:15 UTC daily. Auctions run 24 hours, so one pass a day is enough; the
-    # offset keeps it clear of the top of the hour when GitHub's queue is busiest.
-    - cron: '15 1 * * *'
+    # Hourly, at :15 — clear of the top of the hour, when GitHub's queue is
+    # busiest and scheduled jobs are most likely to be delayed.
+    #
+    # Daily used to be enough, when the only jobs were auction upkeep and demand
+    # ingest. It is not enough to notify anyone: a marketplace offer expires 24
+    # hours after it is made, so a daily pass can reach the owner minutes before
+    # the offer lapses, or after. The auction and demand steps below skip
+    # cheaply when there is nothing to do, so the extra passes cost little.
+    - cron: '15 * * * *'
   workflow_dispatch:
 
 concurrency:
@@ -70,3 +90,37 @@ jobs:
               exit 1
             }
           echo "$BODY"
+          # A 200 is not the same as a finished scan. The ingest commits its
+          # cursor as it goes and stops on a time budget, so a run that is still
+          # far behind returns success — and staying quiet about that is how a
+          # scan that never converges passes for a healthy job.
+          BEHIND=$(printf '%s' "$BODY" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print("" if d.get("caughtUp", True) else d.get("blocksBehind","?"))')
+          if [ -n "$BEHIND" ]; then
+            echo "::warning::demand ingest is still $BEHIND blocks behind the chain head."
+            echo "If this figure is not falling run to run, the logs RPC span cap is too"
+            echo "low to keep up — set LOGS_RPC_URL to a provider that allows wide"
+            echo "eth_getLogs ranges."
+          fi
+
+      - name: Notify people about state waiting on them
+        env:
+          URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          SECRET: ${{ secrets.NOTIFY_SWEEP_SECRET }}
+        run: |
+          if [ -z "$SECRET" ]; then
+            echo "::notice::NOTIFY_SWEEP_SECRET is not set; skipping notifications"
+            exit 0
+          fi
+          BODY=$(curl -sS --fail-with-body --max-time 600 \
+            -X POST "$URL/v1-notify-sweep" \
+            -H "x-notify-sweep-secret: $SECRET") || {
+              echo "::error::notification sweep failed: $BODY"
+              exit 1
+            }
+          echo "$BODY"
+          BEHIND=$(printf '%s' "$BODY" | python3 -c \
+            'import json,sys; d=json.load(sys.stdin); print("" if d.get("caughtUp", True) else json.dumps(d.get("blocksBehind",{})))')
+          if [ -n "$BEHIND" ]; then
+            echo "::warning::notification sweep has not caught up: $BEHIND"
+          fi
