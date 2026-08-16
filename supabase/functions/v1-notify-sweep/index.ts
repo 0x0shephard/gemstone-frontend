@@ -222,6 +222,7 @@ async function tokenHolder(chain: OperatorChain, tokenId: bigint): Promise<strin
 interface Counters {
   created: number;
   emailed: number;
+  pushed: number;
 }
 
 async function send(
@@ -232,6 +233,7 @@ async function send(
   const result = await notifyWallet(admin, input);
   if (result.created) counters.created += 1;
   if (result.emailed) counters.emailed += 1;
+  counters.pushed += result.pushed;
 }
 
 /** Below the platform's own worker timeout, so this answers rather than dies. */
@@ -272,7 +274,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     const admin = adminClient();
     const chain = operatorChain();
 
-    const counters: Counters = { created: 0, emailed: 0 };
+    const counters: Counters = { created: 0, emailed: 0, pushed: 0 };
     const behind: Record<string, string> = {};
     // One budget for the run, measured from before the first network call, so an
     // expensive first contract shortens the rest rather than overrunning it.
@@ -541,6 +543,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     return {
       notificationsCreated: counters.created,
       emailsSent: counters.emailed,
+      pushesSent: counters.pushed,
       deadlinesChecked: deadlines,
       scannedThroughBlock: {
         marketplace: marketResult.scannedThrough.toString(),

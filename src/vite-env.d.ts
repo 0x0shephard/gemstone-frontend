@@ -6,6 +6,13 @@ interface ImportMetaEnv {
   readonly VITE_RPC_FALLBACK_URL?: string;
   readonly VITE_WALLETCONNECT_PROJECT_ID?: string;
   readonly VITE_SUPABASE_URL?: string;
+  /**
+   * Web Push application server key, as an uncompressed P-256 point in base64url.
+   *
+   * Public by design — it is sent to the push service on every subscribe. The
+   * matching private key is a Supabase secret and must never reach the client.
+   */
+  readonly VITE_VAPID_PUBLIC_KEY?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
   readonly VITE_SUMSUB_BACKEND_URL?: string;
   readonly VITE_EXPLORER_BASE_URL?: string;

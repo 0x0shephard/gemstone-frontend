@@ -8,6 +8,7 @@ import {
   markNotificationRead,
 } from '@/services/offchain/notifications';
 import { cn } from '@/lib/cn';
+import { PushToggle } from './PushToggle';
 
 /**
  * Unread protocol notifications, in the navigation bar.
@@ -116,6 +117,8 @@ export function NotificationBell() {
               </button>
             )}
           </div>
+
+          <PushToggle />
 
           <div className="max-h-[26rem] overflow-y-auto">
             {notifications.length === 0 ? (

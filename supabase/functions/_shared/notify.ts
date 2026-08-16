@@ -1,6 +1,7 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { canonicalSiteOrigin } from './origins.ts';
 import { EmailNotConfiguredError, emailConfigured, escapeHtml, sendEmail } from './email.ts';
+import { PushGoneError, pushConfigured, sendPush } from './webpush.ts';
 
 /**
  * Delivering a notification to whoever holds a wallet.
@@ -32,9 +33,26 @@ export interface NotificationInput {
 export interface DeliveryResult {
   created: boolean;
   emailed: boolean;
+  /** Devices this reached as a Web Push. */
+  pushed: number;
   /** Why nothing was sent, when nothing was. */
   reason?: 'duplicate' | 'no-account' | 'no-email' | 'email-disabled' | 'send-failed';
 }
+
+/**
+ * The notifications that go out by email.
+ *
+ * Everything else is push and the in-app feed. Email is the only channel that
+ * reaches someone who has neither the site open nor push permission granted, so
+ * it is reserved for the messages where an asset is genuinely stuck and nobody
+ * else can free it — an expired offer holding a bidder's payment, and an expired
+ * swap holding a proposer's token.
+ *
+ * The rest are news. Being outbid, or receiving an offer, matters while you are
+ * paying attention and is worth a notification; it is not worth an email, and a
+ * channel that sends everything gets filtered as a channel that sends nothing.
+ */
+const EMAIL_KINDS = new Set(['offer.refundable', 'swap.recoverable']);
 
 /** Lowercased, or null when it is not an address at all. */
 function normalizeWallet(wallet: string): string | null {
@@ -55,7 +73,7 @@ export async function notifyWallet(
   input: NotificationInput,
 ): Promise<DeliveryResult> {
   const wallet = normalizeWallet(input.wallet);
-  if (!wallet) return { created: false, emailed: false, reason: 'no-account' };
+  if (!wallet) return { created: false, emailed: false, pushed: 0, reason: 'no-account' };
 
   // A wallet nobody has linked still gets a row. When that person later signs in
   // and links it, `backfillProfileLinks` attaches the history rather than
@@ -85,13 +103,23 @@ export async function notifyWallet(
 
   if (error) {
     // 23505 is the unique index doing its job: already told them.
-    if (error.code === '23505') return { created: false, emailed: false, reason: 'duplicate' };
+    if (error.code === '23505') {
+      return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
+    }
     throw error;
   }
-  if (!row) return { created: false, emailed: false, reason: 'duplicate' };
+  if (!row) return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
 
-  if (!profileId) return { created: true, emailed: false, reason: 'no-account' };
-  if (!emailConfigured()) return { created: true, emailed: false, reason: 'email-disabled' };
+  // The row is the notification. Everything below is delivery, and a failure to
+  // deliver never removes it from the feed.
+  if (!profileId) return { created: true, emailed: false, pushed: 0, reason: 'no-account' };
+
+  const pushed = await pushToDevices(admin, profileId, input, row.id as string);
+
+  if (!EMAIL_KINDS.has(input.kind)) return { created: true, emailed: false, pushed };
+  if (!emailConfigured()) {
+    return { created: true, emailed: false, pushed, reason: 'email-disabled' };
+  }
 
   const { data: profile } = await admin
     .from('profiles')
@@ -99,7 +127,7 @@ export async function notifyWallet(
     .eq('id', profileId)
     .maybeSingle();
   const to = (profile?.email as string | null)?.trim();
-  if (!to) return { created: true, emailed: false, reason: 'no-email' };
+  if (!to) return { created: true, emailed: false, pushed, reason: 'no-email' };
 
   try {
     await sendEmail(
@@ -107,14 +135,14 @@ export async function notifyWallet(
     );
   } catch (sendError) {
     if (sendError instanceof EmailNotConfiguredError) {
-      return { created: true, emailed: false, reason: 'email-disabled' };
+      return { created: true, emailed: false, pushed, reason: 'email-disabled' };
     }
     /*
      * The row stays, `emailed_at` stays null, and the sweep moves on. One
      * undeliverable address must not abort a pass that still has other people
      * to reach — and the notification is still there in the app.
      */
-    return { created: true, emailed: false, reason: 'send-failed' };
+    return { created: true, emailed: false, pushed, reason: 'send-failed' };
   }
 
   await admin
@@ -122,7 +150,78 @@ export async function notifyWallet(
     .update({ emailed_at: new Date().toISOString() })
     .eq('id', row.id);
 
-  return { created: true, emailed: true };
+  return { created: true, emailed: true, pushed };
+}
+
+/**
+ * Pushes to every device this account has registered.
+ *
+ * A person is not a device: the same account on a laptop and a phone is two
+ * subscriptions and both should ring. Failures are per device and never
+ * propagate — one dead endpoint must not stop the others, and none of it can be
+ * allowed to fail the notification itself, which is already recorded.
+ */
+async function pushToDevices(
+  admin: SupabaseClient,
+  profileId: string,
+  input: NotificationInput,
+  notificationId: string,
+): Promise<number> {
+  if (!pushConfigured()) return 0;
+
+  const { data: devices } = await admin
+    .from('push_subscriptions')
+    .select('id,endpoint,p256dh,auth')
+    .eq('profile_id', profileId)
+    .is('expired_at', null);
+  if (!devices?.length) return 0;
+
+  const message = {
+    title: input.title,
+    body: input.body,
+    url: input.actionPath ?? '/profile',
+    // Keyed to the thing, so a device showing an older notice about the same
+    // offer replaces it rather than stacking a second one.
+    tag: `${input.entityType}:${input.entityId}`,
+  };
+
+  let delivered = 0;
+  for (const device of devices) {
+    try {
+      await sendPush(
+        {
+          endpoint: String(device.endpoint),
+          p256dh: String(device.p256dh),
+          auth: String(device.auth),
+        },
+        message,
+      );
+      delivered += 1;
+      await admin
+        .from('push_subscriptions')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('id', device.id);
+    } catch (pushError) {
+      if (pushError instanceof PushGoneError) {
+        // The browser dropped this subscription. Retire it so it is not retried
+        // on every notification from here on.
+        await admin
+          .from('push_subscriptions')
+          .update({ expired_at: new Date().toISOString() })
+          .eq('id', device.id);
+      }
+      // Anything else is transient as far as this run is concerned. The
+      // notification is in the feed either way.
+    }
+  }
+
+  if (delivered > 0) {
+    await admin
+      .from('notifications')
+      .update({ pushed_at: new Date().toISOString() })
+      .eq('id', notificationId);
+  }
+  return delivered;
 }
 
 function renderNotification(
