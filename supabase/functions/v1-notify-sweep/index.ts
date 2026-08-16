@@ -53,8 +53,28 @@ const FIRST_RUN_LOOKBACK_BLOCKS = 50_000n;
 /** Re-read recent blocks so a reorg near the head cannot strand an event. */
 const REORG_REPLAY_BLOCKS = 64n;
 
-/** Split across the three contracts, well inside the platform's wall clock. */
-const BUDGET_PER_CONTRACT_MS = 25_000;
+/**
+ * Wall clock for the whole invocation, shared across all four passes.
+ *
+ * Budgeting each pass separately does not work: three scans at 25s each, plus a
+ * deadline pass doing its own chain reads, ran for two and a half minutes and
+ * was killed with WORKER_RESOURCE_LIMIT. A per-pass limit bounds a pass; only a
+ * shared deadline bounds the run.
+ *
+ * Being cut short is not a failure. Every cursor is committed as its scan
+ * proceeds, so the next run resumes rather than restarts — which is what lets
+ * the first run, with a week of history to cover, converge over a few hours
+ * instead of having to fit in one invocation.
+ */
+const TOTAL_BUDGET_MS = 40_000;
+
+/**
+ * Deadline rows handled per run.
+ *
+ * Each one costs a chain read and possibly an email. Small enough that a backlog
+ * drains over several runs rather than pushing one run past the wall clock.
+ */
+const DEADLINE_BATCH = 25;
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -214,13 +234,18 @@ Deno.serve(async (request) => {
     const counters: Counters = { created: 0, emailed: 0 };
     const behind: Record<string, string> = {};
 
+    // One deadline for the run. Each pass gets whatever is left, so an expensive
+    // first contract shortens the rest rather than overrunning the worker.
+    const startedAt = Date.now();
+    const remaining = () => Math.max(0, TOTAL_BUDGET_MS - (Date.now() - startedAt));
+
     // ---- Marketplace ------------------------------------------------------
     const marketFrom = await cursorFor(admin, 'marketplace', head);
     const marketResult = await scanLogs(chain, {
       address: marketplaceAddress(),
       from: marketFrom,
       to: head,
-      budgetMs: BUDGET_PER_CONTRACT_MS,
+      budgetMs: remaining(),
       onProgress: (through) => commitCursor(admin, 'marketplace', through),
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: marketplaceAbi, logs: logs as never })) {
@@ -277,7 +302,7 @@ Deno.serve(async (request) => {
       address: swapEscrowAddress(),
       from: swapFrom,
       to: head,
-      budgetMs: BUDGET_PER_CONTRACT_MS,
+      budgetMs: remaining(),
       onProgress: (through) => commitCursor(admin, 'swap_escrow', through),
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: swapEscrowAbi, logs: logs as never })) {
@@ -338,7 +363,7 @@ Deno.serve(async (request) => {
       address: chain.addresses.primarySale,
       from: auctionFrom,
       to: head,
-      budgetMs: BUDGET_PER_CONTRACT_MS,
+      budgetMs: remaining(),
       onProgress: (through) => commitCursor(admin, 'primary_sale', through),
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: primarySaleAbi, logs: logs as never })) {
@@ -447,7 +472,9 @@ Deno.serve(async (request) => {
     if (!auctionResult.caughtUp) behind.primary_sale = auctionResult.blocksBehind.toString();
 
     // ---- Deadlines --------------------------------------------------------
-    const deadlines = await sweepDeadlines(admin, chain, counters);
+    // Runs on whatever time is left. Skipping it entirely on a heavy catch-up
+    // run is fine: watches stay unresolved and the next run picks them up.
+    const deadlines = await sweepDeadlines(admin, chain, counters, remaining);
 
     return json({
       notificationsCreated: counters.created,
@@ -478,17 +505,26 @@ async function sweepDeadlines(
   admin: Admin,
   chain: OperatorChain,
   counters: Counters,
+  remaining: () => number,
 ): Promise<number> {
+  if (remaining() <= 0) return 0;
+
   const { data: due } = await admin
     .from('notification_watch')
     .select('id,kind,entity_id,beneficiary_wallet,expires_at')
     .is('resolved_at', null)
     .lt('expires_at', new Date().toISOString())
-    .limit(200);
+    .order('expires_at', { ascending: true })
+    .limit(DEADLINE_BATCH);
 
   if (!due?.length) return 0;
 
+  let handled = 0;
   for (const row of due) {
+    // Checked per row, not just up front: each one is a chain read and possibly
+    // an email, and the row stays unresolved so the next run continues here.
+    if (remaining() <= 0) break;
+    handled += 1;
     const entityId = String(row.entity_id);
     const wallet = String(row.beneficiary_wallet);
     let stillOpen = false;
@@ -565,5 +601,5 @@ async function sweepDeadlines(
       .eq('id', row.id);
   }
 
-  return due.length;
+  return handled;
 }
