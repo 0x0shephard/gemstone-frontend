@@ -247,25 +247,69 @@ export default function ProfilePage() {
           {tab === 'redeem' &&
             (profile.redemptions.length ? (
               <div className="space-y-3">
-                {profile.redemptions.map((r, i) => (
-                  <Card key={i} className="flex items-center gap-3 p-4">
-                    <GemThumb
-                      gem={r.gem}
-                      height={44}
-                      rounded="rounded-[4px]"
-                      showTag={false}
-                      showCarat={false}
-                      className="w-11"
-                    />
-                    <div className="flex-1">
-                      <div className="text-[14px] font-semibold text-ink">{r.gem.name}</div>
-                      <div className="text-[12px] text-ink-muted">{r.stage}</div>
-                    </div>
-                    <StatusBadge color={r.statusColor} dot>
-                      {r.status}
-                    </StatusBadge>
-                  </Card>
-                ))}
+                {profile.redemptions.map((r, i) => {
+                  const connected = address?.toLowerCase();
+                  const isCustodian = connected === r.custodian.toLowerCase();
+                  const isOwner = connected === r.owner.toLowerCase();
+                  return (
+                    <Card key={i} className="p-4">
+                      <div className="flex items-center gap-3">
+                        <GemThumb
+                          gem={r.gem}
+                          height={44}
+                          rounded="rounded-[4px]"
+                          showTag={false}
+                          showCarat={false}
+                          className="w-11"
+                        />
+                        <div className="flex-1">
+                          <div className="text-[14px] font-semibold text-ink">{r.gem.name}</div>
+                          <div className="text-[12px] text-ink-muted">{r.stage}</div>
+                        </div>
+                        <StatusBadge color={r.statusColor} dot>
+                          {r.status}
+                        </StatusBadge>
+                      </div>
+
+                      {/*
+                        Nothing advances a redemption on its own. `confirmRedemption`
+                        is callable only by the custodian recorded on the gem, so
+                        without this the request sits open for good while the portal
+                        reports it in progress.
+                      */}
+                      <div className="mt-3 flex flex-col gap-2.5 border-t border-line/[0.06] pt-3 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-[11.5px] leading-relaxed text-ink-dim">
+                          {isCustodian
+                            ? 'You are the custodian for this stone. Confirming burns the token, releases the reserve to you, and cannot be undone — do it once the stone is physically with its owner.'
+                            : 'Waiting on the custodian to confirm the physical handover. Cancelling returns the token to normal and unlocks transfers.'}
+                        </p>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          {isOwner && (
+                            <TxButton
+                              size="sm"
+                              variant="ghost"
+                              action={() => dataService.cancelRedemption({ tokenId: r.tokenId })}
+                              pendingLabel="Cancelling…"
+                              telemetryFlow="redemption_cancel"
+                            >
+                              Cancel
+                            </TxButton>
+                          )}
+                          {isCustodian && (
+                            <TxButton
+                              size="sm"
+                              action={() => dataService.confirmRedemption({ tokenId: r.tokenId })}
+                              pendingLabel="Confirming…"
+                              telemetryFlow="redemption_confirm"
+                            >
+                              Confirm handover
+                            </TxButton>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
             ) : (
               <EmptyState title="No redemption requests" />

@@ -237,11 +237,20 @@ someone who signs up in order to act on an emailed offer does not arrive at an
 empty list. A wallet nobody has linked still gets a row; it simply cannot be
 emailed.
 
+Redemption is on this list because it is the one flow that **cannot** finish on
+its own. `RedemptionManager.confirmRedemption` checks `msg.sender != gem.custodian`
+— an exact address, not a role — so a request stays open until that one wallet
+acts. Before the sweep covered it nothing told the custodian anything, and the
+redeem portal reported "Custodian fulfillment, 60%" indefinitely; the 60 is a
+constant, not a measurement. The custodian's action lives in Portfolio →
+Redemption, which now lists a request to **both** parties rather than only the
+owner.
+
 **Not covered.** A listing selling (`Purchased`) notifies nobody: the sale pays
 the seller automatically, so nothing is stranded, and the event carries only the
-buyer. Reserve shortfalls, redemption stage changes, and seller submission status
-changes are also silent — they are database transitions rather than chain events,
-so they belong at the point of change rather than in a sweep.
+buyer. Reserve shortfalls and seller submission status changes are also silent —
+they are database transitions rather than chain events, so they belong at the
+point of change rather than in a sweep.
 
 ---
 

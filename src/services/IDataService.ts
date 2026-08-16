@@ -8,6 +8,7 @@ import type {
   BuyNowRequest,
   CancelListingRequest,
   CancelRedemptionRequest,
+  ConfirmRedemptionRequest,
   ClaimRefundRequest,
   ClaimTreasuryPayoutRequest,
   CreateOfferRequest,
@@ -103,5 +104,6 @@ export interface IDataService {
   cancelSwap(request: SwapRequestAction): Promise<TxResult>;
   requestRedemption(request: RedemptionRequest): Promise<TxResult>;
   cancelRedemption(request: CancelRedemptionRequest): Promise<TxResult>;
+  confirmRedemption(request: ConfirmRedemptionRequest): Promise<TxResult>;
   fundReserve(request: FundReserveRequest): Promise<TxResult>;
 }

@@ -30,6 +30,7 @@ import type {
   BuyNowRequest,
   CancelListingRequest,
   CancelRedemptionRequest,
+  ConfirmRedemptionRequest,
   ClaimRefundRequest,
   ClaimTreasuryPayoutRequest,
   CreateOfferRequest,
@@ -677,13 +678,17 @@ async function getRedemptions(): Promise<Redemption[]> {
   }
   const results = await Promise.all(
     [...active.entries()].map(async ([tokenId, opened]) => {
-      const gem = await readGem(opened.gemId);
-      if (!gem) return;
+      const [gem, registryGem] = await Promise.all([
+        readGem(opened.gemId),
+        readRegistryGem(opened.gemId).catch(() => undefined),
+      ]);
+      if (!gem || !registryGem) return;
       return {
         workflowId: `onchain-${opened.requestHash}`,
         tokenId,
         gem,
         owner: opened.owner,
+        custodian: registryGem.custodian,
         stage: 'Custodian fulfillment',
         progress: 60,
         status: 'On-chain request open',
@@ -839,8 +844,20 @@ export const chainService: IDataService = {
               swap.requestedOwner.toLowerCase() === normalizedAddress,
           )
         : [],
+      /*
+       * Both sides of the redemption, not just the owner's.
+       *
+       * The custodian is the only address that can confirm one, and filtering
+       * to the owner meant the party who has to act never saw that there was
+       * anything to act on — which is why a request could sit open indefinitely
+       * with the portal cheerfully reporting "in progress".
+       */
       redemptions: normalizedAddress
-        ? redemptions.filter((redemption) => redemption.owner.toLowerCase() === normalizedAddress)
+        ? redemptions.filter(
+            (redemption) =>
+              redemption.owner.toLowerCase() === normalizedAddress ||
+              redemption.custodian.toLowerCase() === normalizedAddress,
+          )
         : [],
       activity: activityFor(snapshot, address),
       stats: {
@@ -1286,6 +1303,18 @@ export const chainService: IDataService = {
     runContractTransaction({
       ...contract('RedemptionManager'),
       functionName: 'cancelRedemption',
+      args: [request.tokenId],
+    }),
+  /*
+   * The last step, and the only one nothing else can do for you. It burns the
+   * token, marks the gem redeemed and releases the reserve to the custodian —
+   * irreversible, and callable only by the address recorded as custodian on the
+   * gem.
+   */
+  confirmRedemption: (request: ConfirmRedemptionRequest) =>
+    runContractTransaction({
+      ...contract('RedemptionManager'),
+      functionName: 'confirmRedemption',
       args: [request.tokenId],
     }),
   fundReserve: async (request: FundReserveRequest) => {

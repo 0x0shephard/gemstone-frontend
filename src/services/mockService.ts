@@ -108,6 +108,7 @@ function buildRedemptions(): Redemption[] {
     tokenId: dgById(gemId).tokenId!,
     gem: dgById(gemId),
     owner: zeroAddress,
+    custodian: zeroAddress,
     stage,
     progress,
     status,
@@ -197,5 +198,6 @@ export const mockService: IDataService = {
   cancelSwap: ok,
   requestRedemption: ok,
   cancelRedemption: ok,
+  confirmRedemption: ok,
   fundReserve: ok,
 };

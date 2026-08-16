@@ -6,10 +6,13 @@ import { json, preflight } from '../_shared/cors.ts';
 import {
   dgeNftAbi,
   dgeNftAddress,
+  gemRegistryAbi,
   marketplaceAbi,
   marketplaceAddress,
   operatorChain,
   primarySaleAbi,
+  redemptionManagerAbi,
+  redemptionManagerAddress,
   swapEscrowAbi,
   swapEscrowAddress,
   type OperatorChain,
@@ -84,7 +87,7 @@ const TOTAL_BUDGET_MS = 40_000;
 const SCAN_BUDGET_MS = 30_000;
 
 /** The contracts scanned each pass, in the order they are given time. */
-const CONTRACT_COUNT = 3;
+const CONTRACT_COUNT = 4;
 
 /**
  * Deadline rows handled per run.
@@ -534,6 +537,112 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     mark('primary_sale');
     if (!auctionResult.caughtUp) behind.primary_sale = auctionResult.blocksBehind.toString();
 
+    // ---- Redemption manager ----------------------------------------------
+    const redemptionFrom = await cursorFor(admin, 'redemption_manager', head);
+    const redemptionResult = await scanLogs(chain, {
+      address: redemptionManagerAddress(),
+      from: redemptionFrom,
+      to: head,
+      budgetMs: scanShare(),
+      commitEvery: 10,
+      onProgress: (through) => commitCursor(admin, 'redemption_manager', through),
+      onLogs: async (logs: Log[]) => {
+        for (const event of parseEventLogs({ abi: redemptionManagerAbi, logs: logs as never })) {
+          const { tokenId, gemId } = event.args as { tokenId: bigint; gemId: bigint };
+
+          if (event.eventName === 'RedemptionOpened') {
+            const { owner } = event.args as { owner: Address };
+            /*
+             * The custodian is the whole point of this branch. Redemption stops
+             * dead until they call `confirmRedemption`, and nothing else can do
+             * it for them — so this is the message that turns a request into a
+             * shipment rather than a row that sits at "in progress" forever.
+             */
+            const gem = (await chain.logsClient
+              .readContract({
+                address: chain.addresses.registry,
+                abi: gemRegistryAbi,
+                functionName: 'getGem',
+                args: [gemId],
+              })
+              .catch(() => null)) as { custodian: Address } | null;
+            if (gem?.custodian && gem.custodian !== ZERO) {
+              await send(admin, counters, {
+                wallet: gem.custodian,
+                kind: 'redemption.opened',
+                title: 'A redemption is waiting on you',
+                body:
+                  `The owner of gemstone #${gemId} has asked to take physical delivery. The ` +
+                  `token is locked until this is settled. Once the stone is with them, confirm ` +
+                  `the handover — nobody else can, and the reserve is released to you when you do.`,
+                actionPath: '/profile?tab=redeem',
+                actionLabel: 'Review the redemption',
+                entityType: 'redemption',
+                entityId: String(tokenId),
+              });
+            }
+
+            // And the owner, so "in progress" has a known counterparty.
+            await send(admin, counters, {
+              wallet: owner,
+              kind: 'redemption.requested',
+              title: 'Your redemption request is open',
+              body:
+                `Gemstone #${gemId} is now awaiting custodian fulfilment, and the token is ` +
+                `locked while that runs. You can cancel at any time to unlock it.`,
+              actionPath: '/profile?tab=redeem',
+              actionLabel: 'Track your redemption',
+              entityType: 'redemption',
+              entityId: String(tokenId),
+            });
+          }
+
+          if (event.eventName === 'RedemptionConfirmed' || event.eventName === 'RedemptionCancelled') {
+            /*
+             * Neither event carries the owner — only `(tokenId, gemId)` — and by
+             * now the token is burned, so `ownerOf` cannot answer either. The
+             * notification written when the request opened is the surviving
+             * record of who asked, so that is what is read back.
+             *
+             * A request opened before this sweep existed has no such row. Those
+             * are skipped rather than addressed to the zero address, which would
+             * quietly accumulate notifications nobody can ever read.
+             */
+            const { data: opened } = await admin
+              .from('notifications')
+              .select('wallet_address')
+              .eq('kind', 'redemption.requested')
+              .eq('entity_type', 'redemption')
+              .eq('entity_id', String(tokenId))
+              .maybeSingle();
+            if (!opened?.wallet_address) continue;
+
+            const confirmed = event.eventName === 'RedemptionConfirmed';
+            await send(admin, counters, {
+              wallet: String(opened.wallet_address),
+              kind: confirmed ? 'redemption.confirmed' : 'redemption.cancelled',
+              title: confirmed
+                ? 'Your gemstone has been released'
+                : 'Your redemption was cancelled',
+              body: confirmed
+                ? `The custodian has confirmed physical handover of gemstone #${gemId}. The ` +
+                  `token has been burned and the reserve released — the stone is yours outright.`
+                : `The redemption request for gemstone #${gemId} was cancelled. The token is ` +
+                  `unlocked and back to normal, and you can request redemption again whenever ` +
+                  `you like.`,
+              actionPath: '/profile',
+              entityType: 'redemption',
+              entityId: String(tokenId),
+            });
+          }
+        }
+      },
+    });
+    mark('redemption_manager');
+    if (!redemptionResult.caughtUp) {
+      behind.redemption_manager = redemptionResult.blocksBehind.toString();
+    }
+
     // ---- Deadlines --------------------------------------------------------
     // Runs on whatever time is left. Skipping it entirely on a heavy catch-up
     // run is fine: watches stay unresolved and the next run picks them up.
@@ -549,6 +658,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
         marketplace: marketResult.scannedThrough.toString(),
         swap_escrow: swapResult.scannedThrough.toString(),
         primary_sale: auctionResult.scannedThrough.toString(),
+        redemption_manager: redemptionResult.scannedThrough.toString(),
       },
       elapsedMsByPhase: phases.marks,
       caughtUp: Object.keys(behind).length === 0,

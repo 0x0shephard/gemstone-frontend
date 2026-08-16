@@ -102,9 +102,27 @@ export const swapEscrowAbi = parseAbi([
   'function offers(uint256 offerId) view returns (address proposer, uint256 offeredTokenId, uint256 requestedTokenId, address cashAsset, uint256 cashAmount, bool proposerPaysCash, uint64 expiry, bool active)',
 ]);
 
+/**
+ * Redemption lifecycle, for the notification sweep.
+ *
+ * Nothing advances a redemption automatically: `confirmRedemption` is callable
+ * only by the address recorded as custodian on the gem. So the custodian being
+ * told a request is open is not a courtesy — it is the only thing that starts
+ * the second half of the flow.
+ */
+export const redemptionManagerAbi = parseAbi([
+  'event RedemptionOpened(uint256 indexed tokenId, uint256 indexed gemId, address indexed owner, bytes32 requestHash)',
+  'event RedemptionConfirmed(uint256 indexed tokenId, uint256 indexed gemId)',
+  'event RedemptionCancelled(uint256 indexed tokenId, uint256 indexed gemId)',
+]);
+
 /** Addresses used only by the notification sweep, resolved on demand. */
 export function marketplaceAddress(): Address {
   return requiredAddress('MARKETPLACE_ADDRESS');
+}
+
+export function redemptionManagerAddress(): Address {
+  return requiredAddress('REDEMPTION_MANAGER_ADDRESS');
 }
 
 export function swapEscrowAddress(): Address {

@@ -113,6 +113,14 @@ export interface Redemption {
   tokenId: bigint;
   gem: DecoratedGem;
   owner: Address;
+  /**
+   * The only address that can finish this.
+   *
+   * `RedemptionManager.confirmRedemption` checks `msg.sender != gem.custodian`
+   * — an exact address, not a role — so the custodian has to be carried here for
+   * the UI to know whether to offer the action at all.
+   */
+  custodian: Address;
   stage: string;
   progress: number;
   status: string;
@@ -283,6 +291,16 @@ export interface RedemptionRequest {
 }
 
 export interface CancelRedemptionRequest {
+  tokenId: bigint;
+}
+
+/**
+ * Completes a redemption: burns the token and releases the reserve.
+ *
+ * Irreversible, and gated on an exact address rather than a role — only the
+ * custodian recorded on the gem can call it.
+ */
+export interface ConfirmRedemptionRequest {
   tokenId: bigint;
 }
 
