@@ -206,3 +206,34 @@ export const ppmToNumber = (ppm: string): number => Number(ppm) / 1_000_000;
 // Delegates so the grading portal cannot drift from the rest of the UI; the
 // previous integer division floored every fractional dollar.
 export const usdFromBaseUnits = (value: string): number => usdFromBase(BigInt(value));
+
+export interface RedemptionFulfillment {
+  tokenId: string;
+  gemId: string;
+  method: 'pickup' | 'insured_delivery';
+  /** Free-form by design: the shape differs between pickup and delivery. */
+  details: Record<string, unknown>;
+  status: string;
+  requestedAt: string;
+}
+
+/**
+ * Where a redeemed stone has to go.
+ *
+ * Held apart from the redemption list because it is the requester's name and
+ * address. The endpoint checks custody authority and writes an audit record for
+ * every read, so this is fetched when a custodian opens one request rather than
+ * eagerly for the whole queue.
+ */
+export async function loadRedemptionFulfillment(
+  tokenId: string,
+): Promise<RedemptionFulfillment | null> {
+  try {
+    return await invoke('v1-redemption-fulfillment', { tokenId });
+  } catch (error) {
+    // A request that predates the commitment flow has no row, which is a real
+    // state rather than a failure — the caller says so instead of erroring.
+    if (error instanceof Error && /no open redemption/i.test(error.message)) return null;
+    throw error;
+  }
+}

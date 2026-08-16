@@ -34,13 +34,24 @@ Deno.serve(async (request) => {
   const payload = JSON.parse(body);
   const eventId = String(payload.correlationId ?? payload.inspectionId ?? (await sha256(body)));
   const admin = adminClient();
-  const { error: duplicate } = await admin.from('sumsub_webhook_events').insert({
-    event_id: eventId,
-    event_type: payload.type,
-    payload_sha256: await sha256(body),
-  });
-  if (duplicate?.code === '23505') return json({ ok: true, duplicate: true });
-  if (duplicate) throw duplicate;
+
+  /*
+   * Checked, not claimed. Recording the event before applying it meant a failed
+   * update was still acknowledged as handled: the function returned 200, Sumsub
+   * stopped retrying, and the retry that would have fixed it was rejected as a
+   * duplicate. A verification could be lost permanently with no error raised
+   * anywhere — the applicant simply stayed unverified.
+   *
+   * Reading first leaves a window where two concurrent deliveries of the same
+   * event both proceed. That is harmless: applying a review decision is
+   * idempotent, and the row below rejects the loser. Losing a decision is not.
+   */
+  const { data: seen } = await admin
+    .from('sumsub_webhook_events')
+    .select('event_id')
+    .eq('event_id', eventId)
+    .maybeSingle();
+  if (seen) return json({ ok: true, duplicate: true });
 
   const status =
     payload.reviewStatus === 'completed' && payload.reviewResult?.reviewAnswer === 'GREEN'
@@ -48,12 +59,29 @@ Deno.serve(async (request) => {
       : payload.reviewStatus === 'completed'
         ? 'rejected'
         : 'pending';
-  await admin.from('kyc_profiles').upsert({
+  // The error was previously discarded, which is what made the loss silent.
+  // Throwing produces a non-2xx, and Sumsub retries — which is the entire point
+  // of a webhook having a retry policy.
+  const { error: applyError } = await admin.from('kyc_profiles').upsert({
     profile_id: payload.externalUserId,
     applicant_id: payload.applicantId,
     status,
     review_result: payload.reviewResult ?? null,
     updated_at: new Date().toISOString(),
   });
+  if (applyError) throw applyError;
+
+  /*
+   * Marked handled only now that it has been. A failure here costs a reprocess
+   * of an idempotent update on the next delivery, which is the cheap direction
+   * to fail in.
+   */
+  const { error: recordError } = await admin.from('sumsub_webhook_events').insert({
+    event_id: eventId,
+    event_type: payload.type,
+    payload_sha256: await sha256(body),
+  });
+  if (recordError && recordError.code !== '23505') throw recordError;
+
   return json({ ok: true });
 });

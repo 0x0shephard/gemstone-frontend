@@ -7,7 +7,7 @@ import { PaymentAssetSelector } from '@/components/payment/PaymentAssetSelector'
 import { ReserveStatus } from '@/components/gem/ReserveStatus';
 import { ModalGemHeader, SummaryRow, assetAmountPreview } from './parts';
 import { dataService } from '@/services';
-import { reserveShortfallUsd } from '@/lib/gem';
+import { purchaseQuote, reserveShortfallUsd } from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
 import { useGems, useProfile } from '@/hooks/useData';
@@ -146,8 +146,9 @@ export function BuyModal({
   mode = 'buyNow',
 }: BaseModalProps & { mode?: 'buyNow' | 'buy' }) {
   const [asset, setAsset] = useState<PaymentAsset>();
-  const shortfall = reserveShortfallUsd(gem);
-  const total = gem.value + shortfall;
+  const quote = purchaseQuote(gem, mode);
+  const { shortfallUsd: shortfall, totalUsd: total } = quote;
+  const secondary = mode === 'buy';
   return (
     <Modal
       open={open}
@@ -157,13 +158,28 @@ export function BuyModal({
     >
       <ModalGemHeader gem={gem} />
       <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3">
-        <SummaryRow label="Listed price" value={gem.valueFmt} />
+        {/*
+          The seller's ask, which is what the contract charges. Shown alongside
+          the approved valuation rather than instead of it: a listing may be up
+          to 1.5× the valuation, and the gap is the buyer's business.
+        */}
+        <SummaryRow
+          label={secondary ? 'Seller’s ask' : 'Listed price'}
+          value={fmtUsd(quote.priceUsd)}
+        />
+        {secondary && <SummaryRow label="Approved value" value={gem.valueFmt} />}
         {shortfall > 0 && (
           <SummaryRow label="Reserve top-up" value={fmtUsd(shortfall)} accent="var(--dc-amber)" />
         )}
         <div className="my-1 h-px bg-line/[0.06]" />
         <SummaryRow label="Total required" value={fmtUsd(total)} />
       </div>
+      {!quote.priced && (
+        <p className="rounded-[4px] border border-line/[0.08] bg-panel p-3 text-[11.5px] leading-relaxed text-ink">
+          This token’s asking price could not be read, so there is nothing to quote. Reload the
+          listing before buying — proceeding would authorise an amount this screen cannot show you.
+        </p>
+      )}
       <p className="text-[11.5px] leading-relaxed text-ink-dim">
         {mode === 'buyNow'
           ? 'The listed price follows the on-chain 80 / 8 / 6 / 4 / 2 treasury split. Any reserve shortfall is a separate buyer-funded charge and is not included in that split.'
@@ -179,7 +195,9 @@ export function BuyModal({
       <ApprovalNote asset={asset} />
       <TxButton
         block
-        disabled={!asset}
+        // Blocked when unpriced: sending a purchase whose cost the screen could
+        // not state is the failure this whole quote exists to prevent.
+        disabled={!asset || !quote.priced}
         action={() =>
           mode === 'buyNow'
             ? dataService.buyNow({ gemId: gem.gemId, paymentAsset: asset!.address })

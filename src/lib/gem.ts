@@ -80,3 +80,39 @@ export function decorate(g: Gem): DecoratedGem {
 export function reserveShortfallUsd(g: Gem): number {
   return Number(formatUnits(g.reserveShortfallUsd, 18));
 }
+
+export interface PurchaseQuote {
+  /** What the contract will charge for the stone itself. */
+  priceUsd: number;
+  shortfallUsd: number;
+  totalUsd: number;
+  /**
+   * False when the price cannot be established. A secondary purchase must be
+   * blocked rather than quoted, because the only number available in that case
+   * is the valuation, which is not what the contract charges.
+   */
+  priced: boolean;
+}
+
+/**
+ * What a purchase will actually cost.
+ *
+ * The two sales are priced from different places, and conflating them was
+ * charging buyers more than the screen said. A primary sale settles at the gem's
+ * registry price, which is what `value` carries. A secondary sale settles at the
+ * seller's ask — `Marketplace.buy` reads `listings(tokenId).priceUsd` — and the
+ * valuation has no bearing on it beyond capping what may be asked.
+ *
+ * Listing at the 1.5× ceiling therefore meant a modal reading $1,000 over a
+ * transaction taking $1,500, with the approval built from the real figure so
+ * nothing downstream objected.
+ */
+export function purchaseQuote(gem: Gem, mode: 'buyNow' | 'buy'): PurchaseQuote {
+  const shortfallUsd = reserveShortfallUsd(gem);
+  // `listedPrice` is absent when the token is not listed, and on a secondary
+  // purchase that is a missing fact rather than a reason to fall back — falling
+  // back to `value` is precisely the bug.
+  const priceUsd = mode === 'buy' ? (gem.listedPrice ?? 0) : gem.value;
+  const priced = mode === 'buyNow' || gem.listedPrice !== undefined;
+  return { priceUsd, shortfallUsd, totalUsd: priceUsd + shortfallUsd, priced };
+}

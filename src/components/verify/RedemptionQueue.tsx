@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAccount } from 'wagmi';
 import { Card } from '@/components/ui/Card';
@@ -5,6 +6,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TxButton } from '@/components/tx/TxButton';
 import { WalletAddress } from '@/components/wallet/WalletAddress';
 import { dataService } from '@/services';
+import { loadRedemptionFulfillment } from '@/services/offchain/verification';
 
 /**
  * Redemptions waiting on a custodian.
@@ -90,6 +92,8 @@ export function RedemptionQueue() {
                   </div>
                 </dl>
 
+                <FulfillmentDisclosure tokenId={redemption.tokenId} enabled={isCustodian} />
+
                 <div className="mt-3 flex flex-col gap-2 border-t border-line/[0.06] pt-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-[11.5px] leading-relaxed text-ink-dim">
                     {!isConnected
@@ -115,5 +119,69 @@ export function RedemptionQueue() {
         </ul>
       )}
     </Card>
+  );
+}
+
+/**
+ * Where the stone actually has to go.
+ *
+ * Behind a click rather than rendered with the row: this is the requester's name
+ * and address, every read is audited server-side, and a queue that paints a
+ * dozen home addresses on load makes that audit trail meaningless.
+ */
+function FulfillmentDisclosure({ tokenId, enabled }: { tokenId: bigint; enabled: boolean }) {
+  const [shown, setShown] = useState(false);
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['verify', 'fulfillment', String(tokenId)],
+    queryFn: () => loadRedemptionFulfillment(String(tokenId)),
+    enabled: shown && enabled,
+  });
+
+  if (!enabled) return null;
+
+  if (!shown) {
+    return (
+      <button
+        type="button"
+        onClick={() => setShown(true)}
+        className="mt-3 text-[11.5px] font-semibold text-ink underline underline-offset-2 hover:text-ink-muted"
+      >
+        Show delivery details
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-[4px] border border-line/[0.08] bg-panel p-3">
+      {isLoading ? (
+        <p className="text-[11.5px] text-ink-dim">Reading delivery details…</p>
+      ) : isError ? (
+        <p className="text-[11.5px] text-ink-dim">
+          Could not read the delivery details. Do not confirm until you can — the token is burned
+          either way.
+        </p>
+      ) : !data ? (
+        <p className="text-[11.5px] text-ink-dim">
+          This redemption has no delivery record. It predates the commitment flow, so arrange the
+          handover with the owner directly before confirming.
+        </p>
+      ) : (
+        <>
+          <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-ink-dim">
+            {data.method === 'pickup' ? 'Collection in person' : 'Insured delivery'}
+          </p>
+          <dl className="mt-2 space-y-1.5">
+            {Object.entries(data.details).map(([key, value]) => (
+              <div key={key} className="flex flex-wrap gap-x-2 text-[11.5px]">
+                <dt className="text-ink-dim">{key.replace(/([a-z])([A-Z])/g, '$1 $2')}</dt>
+                <dd className="text-ink">
+                  {typeof value === 'string' ? value : JSON.stringify(value)}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
+    </div>
   );
 }
