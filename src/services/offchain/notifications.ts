@@ -58,6 +58,7 @@ export async function listNotifications(limit = 30): Promise<AppNotification[]> 
   const { data, error } = await supabase
     .from('notifications')
     .select('id,kind,title,body,action_path,entity_type,entity_id,expires_at,read_at,created_at')
+    .is('dismissed_at', null)
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) return [];
@@ -77,4 +78,29 @@ export async function markAllNotificationsRead(): Promise<void> {
     .from('notifications')
     .update({ read_at: new Date().toISOString() })
     .is('read_at', null);
+}
+
+/**
+ * Clears one notification from the list.
+ *
+ * Hidden rather than deleted, and that is not squeamishness. The sweep
+ * deduplicates on `(wallet, kind, entity, entity_id)` and re-derives the same
+ * open offer every hour, so a deleted row would be reinserted on the next pass —
+ * clearing your list would appear to work and undo itself within the hour.
+ */
+export async function dismissNotification(id: string): Promise<void> {
+  if (!supabase) return;
+  await supabase
+    .from('notifications')
+    .update({ dismissed_at: new Date().toISOString() })
+    .eq('id', id);
+}
+
+/** Clears everything currently visible. */
+export async function clearAllNotifications(): Promise<void> {
+  if (!supabase) return;
+  await supabase
+    .from('notifications')
+    .update({ dismissed_at: new Date().toISOString() })
+    .is('dismissed_at', null);
 }

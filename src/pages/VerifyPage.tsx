@@ -5,6 +5,7 @@ import { Labeled, inputClass } from '@/components/ui/Field';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Skeleton } from '@/components/ui/States';
 import { useAuth } from '@/providers/AuthProvider';
+import { RedemptionQueue } from '@/components/verify/RedemptionQueue';
 import {
   confirmCustody,
   loadQueue,
@@ -371,6 +372,13 @@ export default function VerifyPage() {
           {result.message}
         </div>
       )}
+
+      {/*
+        Same audience as the custody queue: the operator who physically holds
+        the stones. Intake is the first half of custody and handover the last,
+        so they belong on one screen.
+      */}
+      {canCustody && <RedemptionQueue />}
 
       {canCustody && (
         <CustodyQueue

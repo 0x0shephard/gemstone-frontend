@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/providers/AuthProvider';
 import {
+  clearAllNotifications,
+  dismissNotification,
   listNotifications,
   markAllNotificationsRead,
   markNotificationRead,
@@ -50,6 +52,8 @@ export function NotificationBell() {
 
   const readOne = useMutation({ mutationFn: markNotificationRead, onSuccess: invalidate });
   const readAll = useMutation({ mutationFn: markAllNotificationsRead, onSuccess: invalidate });
+  const dismissOne = useMutation({ mutationFn: dismissNotification, onSuccess: invalidate });
+  const clearAll = useMutation({ mutationFn: clearAllNotifications, onSuccess: invalidate });
 
   // Dismiss on an outside click or Escape, so the panel does not sit open over
   // the page after attention has moved on.
@@ -107,15 +111,26 @@ export function NotificationBell() {
             <span className="text-[11px] font-semibold uppercase tracking-[0.13em] text-ink-dim">
               Notifications
             </span>
-            {unread.length > 0 && (
-              <button
-                type="button"
-                onClick={() => readAll.mutate()}
-                className="text-[11px] font-medium text-ink-muted hover:text-ink"
-              >
-                Mark all read
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {unread.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => readAll.mutate()}
+                  className="text-[11px] font-medium text-ink-muted hover:text-ink"
+                >
+                  Mark all read
+                </button>
+              )}
+              {notifications.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => clearAll.mutate()}
+                  className="text-[11px] font-medium text-ink-muted hover:text-ink"
+                >
+                  Clear all
+                </button>
+              )}
+            </div>
           </div>
 
           <PushToggle />
@@ -151,7 +166,7 @@ export function NotificationBell() {
                 );
 
                 const className = cn(
-                  'block w-full border-b border-line/[0.06] px-4 py-3 text-left transition-colors last:border-b-0',
+                  'block w-full py-3 pl-4 pr-9 text-left transition-colors',
                   notification.readAt
                     ? 'hover:bg-line/[0.02]'
                     : 'bg-line/[0.025] hover:bg-line/[0.045]',
@@ -159,29 +174,41 @@ export function NotificationBell() {
 
                 // Reading and acting are the same gesture: anything worth
                 // notifying about has somewhere to go and something to do.
-                const dismiss = () => {
+                const openNotification = () => {
                   if (!notification.readAt) readOne.mutate(notification.id);
                   setOpen(false);
                 };
 
-                return notification.actionPath ? (
-                  <Link
+                return (
+                  // The dismiss control is a sibling of the row, not a child: a
+                  // button nested inside a link is invalid, and browsers resolve
+                  // it by firing whichever they feel like.
+                  <div
                     key={notification.id}
-                    to={notification.actionPath}
-                    onClick={dismiss}
-                    className={className}
+                    className="relative border-b border-line/[0.06] last:border-b-0"
                   >
-                    {body}
-                  </Link>
-                ) : (
-                  <button
-                    key={notification.id}
-                    type="button"
-                    onClick={dismiss}
-                    className={className}
-                  >
-                    {body}
-                  </button>
+                    {notification.actionPath ? (
+                      <Link
+                        to={notification.actionPath}
+                        onClick={openNotification}
+                        className={className}
+                      >
+                        {body}
+                      </Link>
+                    ) : (
+                      <button type="button" onClick={openNotification} className={className}>
+                        {body}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => dismissOne.mutate(notification.id)}
+                      className="absolute right-1.5 top-2.5 flex h-6 w-6 items-center justify-center rounded-[4px] text-[15px] leading-none text-ink-dim transition-colors hover:bg-line/[0.06] hover:text-ink"
+                      aria-label={`Clear notification: ${notification.title}`}
+                    >
+                      ×
+                    </button>
+                  </div>
                 );
               })
             )}
