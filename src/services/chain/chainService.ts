@@ -557,8 +557,7 @@ async function getOffers(): Promise<Offer[]> {
          * payment is still held by the contract and only they can retrieve it,
          * so it wants attention rather than the muted tone of a closed row.
          */
-        statusColor:
-          status === 'Pending' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
+        statusColor: status === 'Pending' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
         secondsLeft: Number(expiry > now ? expiry - now : 0n),
       } satisfies Offer;
     }),
@@ -654,8 +653,7 @@ async function getSwaps(): Promise<SwapRequest[]> {
         status,
         // As with offers: an expired swap still holds the proposer's token in
         // escrow, so it is unfinished business rather than history.
-        statusColor:
-          status === 'Active' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
+        statusColor: status === 'Active' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
       } satisfies SwapRequest;
     }),
   );

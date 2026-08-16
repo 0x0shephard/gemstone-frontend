@@ -13,6 +13,14 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
+    // Served verbatim from `public/`, so it never passes through the bundler and
+    // runs in a worker rather than a page: `self` and `clients` exist, `window`
+    // and `document` do not. Without this it lints against no environment at all
+    // and every worker global reads as undefined.
+    files: ['public/**/*.js'],
+    languageOptions: { ecmaVersion: 2022, globals: globals.serviceworker },
+  },
+  {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: { ecmaVersion: 2022, globals: globals.browser },
     plugins: {

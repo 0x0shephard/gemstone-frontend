@@ -152,7 +152,9 @@ export function NotificationBell() {
 
                 const className = cn(
                   'block w-full border-b border-line/[0.06] px-4 py-3 text-left transition-colors last:border-b-0',
-                  notification.readAt ? 'hover:bg-line/[0.02]' : 'bg-line/[0.025] hover:bg-line/[0.045]',
+                  notification.readAt
+                    ? 'hover:bg-line/[0.02]'
+                    : 'bg-line/[0.025] hover:bg-line/[0.045]',
                 );
 
                 // Reading and acting are the same gesture: anything worth
@@ -172,7 +174,12 @@ export function NotificationBell() {
                     {body}
                   </Link>
                 ) : (
-                  <button key={notification.id} type="button" onClick={dismiss} className={className}>
+                  <button
+                    key={notification.id}
+                    type="button"
+                    onClick={dismiss}
+                    className={className}
+                  >
                     {body}
                   </button>
                 );

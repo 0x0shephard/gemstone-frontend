@@ -8,8 +8,7 @@ import { selectWallets, walletSupportIsDegraded } from './walletSelection';
 const kinds = (
   environment: Omit<Parameters<typeof selectWallets>[0], 'injectedIsMetaMask'> &
     Partial<Pick<Parameters<typeof selectWallets>[0], 'injectedIsMetaMask'>>,
-) =>
-  selectWallets({ injectedIsMetaMask: false, ...environment }).flatMap((group) => group.kinds);
+) => selectWallets({ injectedIsMetaMask: false, ...environment }).flatMap((group) => group.kinds);
 
 describe('wallet selection', () => {
   /**

@@ -130,9 +130,7 @@ export async function notifyWallet(
   if (!to) return { created: true, emailed: false, pushed, reason: 'no-email' };
 
   try {
-    await sendEmail(
-      renderNotification(input, (profile?.full_name as string | null) ?? null, to),
-    );
+    await sendEmail(renderNotification(input, (profile?.full_name as string | null) ?? null, to));
   } catch (sendError) {
     if (sendError instanceof EmailNotConfiguredError) {
       return { created: true, emailed: false, pushed, reason: 'email-disabled' };

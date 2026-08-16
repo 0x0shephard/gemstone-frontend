@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { disablePush, enablePush, pushState, pushSupported, type PushState } from '@/services/offchain/push';
+import {
+  disablePush,
+  enablePush,
+  pushState,
+  pushSupported,
+  type PushState,
+} from '@/services/offchain/push';
 
 /**
  * Turns browser notifications on for this device.

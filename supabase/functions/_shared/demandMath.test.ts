@@ -111,8 +111,7 @@ const ALCHEMY =
   'JSON is not a valid request object. — Under the Free tier plan, you can make ' +
   'eth_getLogs requests with up to a 10 block range. Based on your parameters, this ' +
   'block range should work: [0xad10d9, 0xad10e2]. Upgrade to PAYG for expanded block range.';
-const THIRDWEB =
-  'Log response size exceeded. Maximum allowed number of requested blocks is 1000';
+const THIRDWEB = 'Log response size exceeded. Maximum allowed number of requested blocks is 1000';
 const DRPC = 'ranges over 10000 blocks are not supported on free plan';
 
 describe('reading a provider span cap out of its rejection', () => {

@@ -146,9 +146,7 @@ async function encryptPayload(
   const ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, [
     'deriveBits',
   ]);
-  const ephemeralPublic = new Uint8Array(
-    await crypto.subtle.exportKey('raw', ephemeral.publicKey),
-  );
+  const ephemeralPublic = new Uint8Array(await crypto.subtle.exportKey('raw', ephemeral.publicKey));
 
   const shared = new Uint8Array(
     await crypto.subtle.deriveBits(
@@ -170,11 +168,7 @@ async function encryptPayload(
   // The order of the two public keys in `key_info` is fixed by the spec:
   // recipient first, sender second. Swapping them yields a key the device
   // derives differently, and the only symptom is silence.
-  const keyInfo = concat(
-    encoder.encode('WebPush: info\0'),
-    clientPublic,
-    ephemeralPublic,
-  );
+  const keyInfo = concat(encoder.encode('WebPush: info\0'), clientPublic, ephemeralPublic);
   const ikm = await hkdf(authSecret, shared, keyInfo, 32);
 
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -235,7 +229,9 @@ export async function sendPush(
     headers: {
       Authorization: await vapidHeader(
         subscription.endpoint,
-        options.subject ?? Deno.env.get('VAPID_SUBJECT')?.trim() ?? 'mailto:support@digitalcarat.io',
+        options.subject ??
+          Deno.env.get('VAPID_SUBJECT')?.trim() ??
+          'mailto:support@digitalcarat.io',
       ),
       'Content-Encoding': 'aes128gcm',
       'Content-Type': 'application/octet-stream',

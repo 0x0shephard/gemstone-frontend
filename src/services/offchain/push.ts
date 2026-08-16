@@ -79,7 +79,9 @@ export async function enablePush(): Promise<PushState> {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'unsubscribed';
 
-  const subscription = await (await registration()).pushManager.subscribe({
+  const subscription = await (
+    await registration()
+  ).pushManager.subscribe({
     // Required by every implementation, and the reason a silent subscription
     // that reaches no one is not possible here.
     userVisibleOnly: true,

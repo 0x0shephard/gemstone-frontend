@@ -371,14 +371,13 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
       onLogs: async (logs: Log[]) => {
         for (const event of parseEventLogs({ abi: swapEscrowAbi, logs: logs as never })) {
           if (event.eventName === 'OfferCreated') {
-            const { offerId, proposer, requestedTokenId, offeredTokenId, expiry } =
-              event.args as {
-                offerId: bigint;
-                proposer: Address;
-                requestedTokenId: bigint;
-                offeredTokenId: bigint;
-                expiry: bigint;
-              };
+            const { offerId, proposer, requestedTokenId, offeredTokenId, expiry } = event.args as {
+              offerId: bigint;
+              proposer: Address;
+              requestedTokenId: bigint;
+              offeredTokenId: bigint;
+              expiry: bigint;
+            };
             const expiresAt = new Date(Number(expiry) * 1_000);
             /*
              * The proposer's NFT is already in escrow — `createOffer` transfers
@@ -442,8 +441,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
                 args: [gemId],
               })
               .catch(() => null)) as
-              | readonly [boolean, boolean, bigint, bigint, bigint, Address, ...unknown[]]
-              | null;
+              readonly [boolean, boolean, bigint, bigint, bigint, Address, ...unknown[]] | null;
             if (!auction || !auction[0]) continue;
             /*
              * Only auctions still open. The first run replays about a week of
@@ -597,7 +595,10 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
             });
           }
 
-          if (event.eventName === 'RedemptionConfirmed' || event.eventName === 'RedemptionCancelled') {
+          if (
+            event.eventName === 'RedemptionConfirmed' ||
+            event.eventName === 'RedemptionCancelled'
+          ) {
             /*
              * Neither event carries the owner — only `(tokenId, gemId)` — and by
              * now the token is burned, so `ownerOf` cannot answer either. The
@@ -711,7 +712,8 @@ async function sweepDeadlines(
           functionName: 'offers',
           args: [BigInt(entityId)],
         })
-        .catch(() => null)) as readonly [Address, bigint, Address, bigint, bigint, bigint, boolean] | null;
+        .catch(() => null)) as
+        readonly [Address, bigint, Address, bigint, bigint, bigint, boolean] | null;
       stillOpen = Boolean(offer?.[6]);
       if (stillOpen) {
         await send(admin, counters, {
@@ -737,8 +739,7 @@ async function sweepDeadlines(
           args: [BigInt(entityId)],
         })
         .catch(() => null)) as
-        | readonly [Address, bigint, bigint, Address, bigint, boolean, bigint, boolean]
-        | null;
+        readonly [Address, bigint, bigint, Address, bigint, boolean, bigint, boolean] | null;
       stillOpen = Boolean(offer?.[7]);
       if (stillOpen) {
         await send(admin, counters, {
