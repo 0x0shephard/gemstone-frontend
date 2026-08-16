@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   aggregateDemand,
+  isRateLimited,
   narrowedSpan,
   planScanRanges,
   suggestedSpan,
@@ -151,5 +152,31 @@ describe('narrowing after a rejected chunk', () => {
   it('gives up at a single block rather than retrying an outage forever', () => {
     expect(narrowedSpan(2n, 'connection reset')).toBe(1n);
     expect(narrowedSpan(1n, 'connection reset')).toBeNull();
+  });
+});
+
+describe('telling a rate limit from a range cap', () => {
+  it('recognises the throughput limits providers actually send', () => {
+    // Verbatim from Alchemy, which is what failed the scheduled run.
+    expect(
+      isRateLimited(
+        'RPC Request failed. — Your app has exceeded its compute units per second capacity.',
+      ),
+    ).toBe(true);
+    expect(isRateLimited('HTTP request failed. — Too Many Requests')).toBe(true);
+    expect(isRateLimited('429 Too Many Requests')).toBe(true);
+  });
+
+  it('does not mistake a range cap for a rate limit', () => {
+    // These two need opposite responses, and the range caps are the ones with
+    // numbers in them — easy to match by accident.
+    expect(isRateLimited(ALCHEMY)).toBe(false);
+    expect(isRateLimited(THIRDWEB)).toBe(false);
+    expect(isRateLimited(DRPC)).toBe(false);
+  });
+
+  it('does not mistake an ordinary failure for a rate limit', () => {
+    expect(isRateLimited('execution reverted')).toBe(false);
+    expect(isRateLimited('connection reset')).toBe(false);
   });
 });

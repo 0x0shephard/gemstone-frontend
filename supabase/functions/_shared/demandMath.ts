@@ -150,6 +150,23 @@ export function suggestedSpan(message: string): bigint | null {
 }
 
 /**
+ * Whether a rejection is about rate rather than range.
+ *
+ * These two failures look alike and need opposite responses. A range cap is
+ * answered by asking for less at once; a rate limit is answered by asking less
+ * often, and narrowing the span makes it strictly worse — the same blocks then
+ * take more requests, which is the thing being limited.
+ *
+ * Wording seen from providers: "exceeded its compute units per second
+ * capacity" (Alchemy), "Too Many Requests", plain 429s.
+ */
+export function isRateLimited(message: string): boolean {
+  return /rate ?limit|too many requests|\b429\b|compute units|exceeded its .*capacity|throughput|capacity/i.test(
+    message,
+  );
+}
+
+/**
  * The next width to try after a rejected chunk, or `null` when out of room.
  *
  * Returning `null` at a width of one block is what stops a provider outage from

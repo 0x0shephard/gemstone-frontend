@@ -1,6 +1,6 @@
 import type { Log } from 'npm:viem@2';
 import type { Address } from 'npm:viem@2';
-import { narrowedSpan, planScanRanges } from './demandMath.ts';
+import { isRateLimited, narrowedSpan, planScanRanges } from './demandMath.ts';
 import type { OperatorChain } from './chain.ts';
 
 /**
@@ -25,6 +25,12 @@ import type { OperatorChain } from './chain.ts';
 
 /** Under every common provider cap; only ratchets down from here. */
 export const INITIAL_SPAN = 1_000n;
+
+/** First pause after a rate limit; doubles while the limit keeps being hit. */
+const INITIAL_BACKOFF_MS = 250;
+const MAX_BACKOFF_MS = 4_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface ScanOptions {
   /** Contract whose logs to read. */
@@ -70,6 +76,14 @@ export async function scanLogs(chain: OperatorChain, options: ScanOptions): Prom
   let position = from;
   let chunks = 0;
   let sinceCommit = 0;
+  /*
+   * Pause held between chunks for the rest of the run once a rate limit is seen.
+   *
+   * Self-tuning rather than a fixed delay: a provider with headroom is never
+   * slowed down, and one that pushes back is backed off from until it stops.
+   */
+  let pacingMs = 0;
+  let backoffMs = INITIAL_BACKOFF_MS;
 
   const commit = async (through: bigint) => {
     if (onProgress) await onProgress(through);
@@ -78,6 +92,7 @@ export async function scanLogs(chain: OperatorChain, options: ScanOptions): Prom
 
   while (position <= to) {
     if (now() - startedAt > budgetMs) break;
+    if (pacingMs > 0) await sleep(pacingMs);
 
     const [range] = planScanRanges(position, to, span);
     try {
@@ -95,6 +110,25 @@ export async function scanLogs(chain: OperatorChain, options: ScanOptions): Prom
       if (sinceCommit >= commitEvery) await commit(position - 1n);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+
+      /*
+       * Rate limits are not failures, they are a pace. Backing off and coming
+       * back to the same range is the only response that helps — narrowing the
+       * span would ask for the same blocks in more requests, which is what is
+       * being limited — and giving up would fail a scheduled job over a
+       * condition that resolves itself within a second.
+       *
+       * No retry ceiling is needed: the budget above already bounds this. A
+       * provider that never lets up simply means this run makes little progress
+       * and says so, rather than erroring.
+       */
+      if (isRateLimited(message)) {
+        await sleep(backoffMs);
+        pacingMs = Math.max(pacingMs, backoffMs);
+        backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+        continue;
+      }
+
       const next = narrowedSpan(span, message);
       if (next === null) {
         // Out of room to narrow: this is an outage, not a range cap. Keep the
