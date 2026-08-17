@@ -101,14 +101,20 @@ export async function notifyWallet(
     .select('id')
     .maybeSingle();
 
-  if (error) {
-    // 23505 is the unique index doing its job: already told them.
-    if (error.code === '23505') {
-      return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
-    }
-    throw error;
+  if (error && error.code !== '23505') throw error;
+
+  /*
+   * A duplicate means the notification is recorded, not that it was delivered.
+   *
+   * The row is written before delivery is attempted, so an email that failed to
+   * send left `emailed_at` null and a row that made every later pass return
+   * early — the send was never retried. That is worst for exactly the two kinds
+   * that are emailed at all, both of which say an asset is stuck and only the
+   * recipient can free it.
+   */
+  if (error?.code === '23505' || !row) {
+    return retryUndeliveredEmail(admin, wallet, input, profileId);
   }
-  if (!row) return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
 
   // The row is the notification. Everything below is delivery, and a failure to
   // deliver never removes it from the feed.
@@ -149,6 +155,67 @@ export async function notifyWallet(
     .eq('id', row.id);
 
   return { created: true, emailed: true, pushed };
+}
+
+/**
+ * Sends an email that a previous pass recorded but failed to deliver.
+ *
+ * Reached only when the notification already exists. Everything here is
+ * deliberately narrow: the row's own state decides whether anything is owed, so
+ * a notification that was delivered, was never meant to be emailed, or has
+ * already lapsed produces no work and no second message.
+ */
+async function retryUndeliveredEmail(
+  admin: SupabaseClient,
+  wallet: string,
+  input: NotificationInput,
+  profileId: string | null,
+): Promise<DeliveryResult> {
+  if (!profileId || !EMAIL_KINDS.has(input.kind) || !emailConfigured()) {
+    return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
+  }
+
+  const { data: existing } = await admin
+    .from('notifications')
+    .select('id,emailed_at,expires_at')
+    .eq('wallet_address', wallet)
+    .eq('kind', input.kind)
+    .eq('entity_type', input.entityType)
+    .eq('entity_id', input.entityId)
+    .maybeSingle();
+
+  // Already sent, or gone: either way there is nothing left to deliver. An
+  // expired warning arriving late is worse than none, since the thing it says
+  // to do can no longer be done.
+  if (!existing || existing.emailed_at) {
+    return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
+  }
+  if (existing.expires_at && new Date(existing.expires_at as string).getTime() <= Date.now()) {
+    return { created: false, emailed: false, pushed: 0, reason: 'duplicate' };
+  }
+
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('email,full_name')
+    .eq('id', profileId)
+    .maybeSingle();
+  const to = (profile?.email as string | null)?.trim();
+  if (!to) return { created: false, emailed: false, pushed: 0, reason: 'no-email' };
+
+  try {
+    await sendEmail(renderNotification(input, (profile?.full_name as string | null) ?? null, to));
+  } catch {
+    // Still undelivered, still recorded as such. The next pass tries again,
+    // which is the whole point of coming back here.
+    return { created: false, emailed: false, pushed: 0, reason: 'send-failed' };
+  }
+
+  await admin
+    .from('notifications')
+    .update({ emailed_at: new Date().toISOString() })
+    .eq('id', existing.id);
+
+  return { created: false, emailed: true, pushed: 0 };
 }
 
 /**

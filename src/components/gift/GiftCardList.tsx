@@ -10,6 +10,7 @@ import { explorerTxUrl } from '@/config/chains';
 import { giftOperatorAddress } from '@/config/contracts';
 import { shortenAddress } from '@/lib/format';
 import { dataService } from '@/services';
+import { useAuth } from '@/providers/AuthProvider';
 import {
   cancelGiftCard,
   giftCardState,
@@ -44,19 +45,51 @@ const LABEL: Record<GiftCardState, string> = {
  */
 export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
+  // Keyed by account. These rows carry recipient names, email addresses and
+  // personal messages, and a key that does not name the account is shared by
+  // every account that uses this tab. Sign-out clears the cache as well; this is
+  // the half that also holds within a session.
   const { data: cards, isLoading } = useQuery({
-    queryKey: ['giftCards'],
+    queryKey: ['giftCards', user?.id ?? 'anonymous'],
     queryFn: listGiftCards,
+    enabled: Boolean(user),
   });
 
-  const tokenIds = (cards ?? []).map((card) => card.token_id);
+  /*
+   * Every owned token, not only the ones with a card.
+   *
+   * Issuing a gift approves the operator on chain and then writes the card. A
+   * failure or a closed modal between those two leaves the approval standing
+   * with no card to hang it from — and ERC-721 `approve` may only be called by
+   * the owner, so the operator cannot withdraw it either. Deriving the list from
+   * cards meant the one permission nobody could revoke was also the one nothing
+   * would ever show.
+   */
+  const tokenIds = [
+    ...new Set([
+      ...(cards ?? []).map((card) => card.token_id),
+      ...owned.filter((gem) => gem.tokenId !== undefined).map((gem) => String(gem.tokenId)),
+    ]),
+  ];
   const { data: approvals } = useQuery({
     queryKey: ['giftCardApprovals', tokenIds.join(',')],
     queryFn: () => dataService.getTokenApprovals(tokenIds.map((id) => BigInt(id))),
     enabled: tokenIds.length > 0,
   });
+
+  const operator = giftOperatorAddress;
+  // Approved to the gift operator, with no card explaining why.
+  const strandedApprovals = operator
+    ? tokenIds.filter((tokenId) => {
+        const approved = approvals?.[tokenId];
+        if (!approved || isAddressEqual(approved, zeroAddress)) return false;
+        if (!isAddressEqual(approved, operator)) return false;
+        return !(cards ?? []).some((card) => card.token_id === tokenId && card.status === 'active');
+      })
+    : [];
 
   const cancel = useMutation({
     mutationFn: cancelGiftCard,
@@ -66,7 +99,9 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
   });
 
   if (isLoading) return <CardGridSkeleton count={2} />;
-  if (!cards?.length) {
+  // An empty state is only honest when there is genuinely nothing outstanding.
+  // A stranded approval is outstanding whether or not a card exists.
+  if (!cards?.length && strandedApprovals.length === 0) {
     return (
       <EmptyState
         title="No gift cards"
@@ -85,7 +120,33 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
           {error}
         </p>
       )}
-      {cards.map((card) => (
+      {strandedApprovals.length > 0 && (
+        <Card className="p-4">
+          <h3 className="text-[13px] font-semibold text-ink">Permissions left behind</h3>
+          <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
+            {strandedApprovals.length === 1 ? 'A token is' : 'These tokens are'} still approved for
+            the gift operator with no active card. That usually means an issue was interrupted part
+            way. Nobody can spend it without a card, but only you can withdraw the permission.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {strandedApprovals.map((tokenId) => (
+              <TxButton
+                key={tokenId}
+                size="sm"
+                variant="secondary"
+                action={() => dataService.revokeApproval({ tokenId: BigInt(tokenId) })}
+                pendingLabel="Revoking…"
+                telemetryFlow="gift_revoke_orphan_approval"
+                onDone={() => queryClient.invalidateQueries({ queryKey: ['giftCardApprovals'] })}
+                doneLabel="Done"
+              >
+                Revoke token #{tokenId}
+              </TxButton>
+            ))}
+          </div>
+        </Card>
+      )}
+      {(cards ?? []).map((card) => (
         <GiftCardRowItem
           key={card.id}
           card={card}

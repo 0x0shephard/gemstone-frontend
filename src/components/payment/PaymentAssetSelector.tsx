@@ -13,10 +13,23 @@ interface PaymentAssetSelectorProps {
  * ETH uses address(0). ERC-20 selections drive an approve→call flow upstream.
  */
 export function PaymentAssetSelector({ value, onChange, className }: PaymentAssetSelectorProps) {
-  const { data: assets = [], isLoading } = usePaymentAssets();
+  const { data: allAssets = [], isLoading } = usePaymentAssets();
+  // Registry state decides what is offered. An asset turned off on chain cannot
+  // settle a payment, and listing it would produce a transaction that reverts
+  // after the buyer has already approved an allowance.
+  const assets = allAssets.filter((asset) => asset.enabled);
 
   if (isLoading) {
     return <div className="h-[58px] animate-pulse rounded-[4px] bg-line/[0.04]" />;
+  }
+
+  if (assets.length === 0) {
+    return (
+      <p className="rounded-[4px] border border-line/[0.09] bg-inset px-3.5 py-3 text-[12px] leading-relaxed text-ink-muted">
+        No payment asset is currently accepted. The registry has every option disabled, so payments
+        cannot settle until an operator re-enables one.
+      </p>
+    );
   }
 
   return (

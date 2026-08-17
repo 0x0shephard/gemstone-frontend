@@ -95,8 +95,30 @@ function contract(moduleName: keyof DeploymentManifest['addresses']) {
   };
 }
 
+/**
+ * How long a settled projection is reused before being rebuilt.
+ *
+ * The cache was invalidated only by `dc:transaction-confirmed`, which fires for
+ * transactions made *here*. Everything the rest of the world does — an offer
+ * arriving, a swap proposed, a gem registered — was therefore invisible until
+ * the tab was reloaded or the visitor happened to transact, and the queries
+ * layered on top refetched a snapshot that could not change.
+ *
+ * Short enough that the market looks live, long enough that the many callers of
+ * `projection()` inside one render do not each trigger a replay.
+ */
+const PROJECTION_TTL_MS = 45_000;
+let projectionFetchedAt = 0;
+
 function projection(force = false): Promise<ProjectionSnapshot> {
+  if (!force && projectionPromise && Date.now() - projectionFetchedAt > PROJECTION_TTL_MS) {
+    projectionPromise = undefined;
+    // Discovery is bounded by the same clock: a gem registered by someone else
+    // is new state too, and probing for it is what makes it appear at all.
+    gemIdsPromise = undefined;
+  }
   if (force || !projectionPromise) {
+    projectionFetchedAt = Date.now();
     projectionPromise = syncProjection(client)
       .then((snapshot) => {
         settledSnapshot = snapshot;
@@ -370,18 +392,36 @@ async function getPaymentAssets(): Promise<PaymentAsset[]> {
   ];
   return Promise.all(
     candidates.map(async (asset) => {
-      const enabled = (await client.readContract({
-        ...contract('PaymentTokenRegistry'),
-        functionName: 'isEnabled',
-        args: [asset.address],
-      })) as boolean;
-      if (!enabled) throw new Error(`${asset.symbol} is disabled in PaymentTokenRegistry`);
+      const enabled = (await client
+        .readContract({
+          ...contract('PaymentTokenRegistry'),
+          functionName: 'isEnabled',
+          args: [asset.address],
+        })
+        .catch(() => false)) as boolean;
+      /*
+       * Reported, not thrown.
+       *
+       * This runs inside a `Promise.all`, so throwing on a disabled asset
+       * rejected the whole list and left every payment screen unable to offer
+       * *any* asset — one token being turned off in the registry took down
+       * buying, bidding, offers, swaps and reserve funding together. The type
+       * has carried an `enabled` flag all along, which is the shape that lets a
+       * caller drop one asset and keep the other.
+       *
+       * A disabled asset has no meaningful quote either, and asking for one can
+       * revert, so the price read is skipped rather than guarded downstream.
+       */
       const oneToken = 10n ** BigInt(asset.decimals);
-      const usdValue = (await client.readContract({
-        ...contract('PaymentTokenRegistry'),
-        functionName: 'quoteTokenToUsd',
-        args: [asset.address, oneToken],
-      })) as bigint;
+      const usdValue = enabled
+        ? ((await client
+            .readContract({
+              ...contract('PaymentTokenRegistry'),
+              functionName: 'quoteTokenToUsd',
+              args: [asset.address, oneToken],
+            })
+            .catch(() => 0n)) as bigint)
+        : 0n;
       return {
         ...asset,
         enabled,

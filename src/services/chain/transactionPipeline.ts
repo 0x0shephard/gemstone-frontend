@@ -58,7 +58,9 @@ export class TransactionGuardError extends Error {
       | 'WRONG_WALLET'
       | 'INSUFFICIENT_BALANCE'
       | 'USER_REJECTED'
-      | 'CONTRACT_REVERTED',
+      | 'CONTRACT_REVERTED'
+      /** The allowance or token approval itself reverted, before the main call. */
+      | 'APPROVAL_REVERTED',
   ) {
     super(message);
     this.name = 'TransactionGuardError';
@@ -147,6 +149,30 @@ async function ensureFunds(
   }
 }
 
+/**
+ * Waits for an approval to confirm, and insists that it succeeded.
+ *
+ * Both approval paths previously awaited a bare `waitForTransactionReceipt`,
+ * which carries no timeout and no check on the result. Two failures followed
+ * from that: a transaction the node never reports leaves the button pending
+ * forever, with nothing on screen saying so; and a *reverted* approval was
+ * treated as success, so the main call went ahead and failed on an allowance
+ * that was never granted — reported as whatever the second failure happened to
+ * say rather than the first.
+ */
+async function awaitApprovalReceipt(hash: `0x${string}`): Promise<void> {
+  const receipt = await waitForTransactionReceipt(wagmiConfig, {
+    hash,
+    timeout: RECEIPT_TIMEOUT_MS,
+  });
+  if (receipt.status !== 'success') {
+    throw new TransactionGuardError(
+      'The approval transaction reverted, so the transfer was not attempted.',
+      'APPROVAL_REVERTED',
+    );
+  }
+}
+
 async function submitApproval(account: Address, approval: Approval): Promise<void> {
   if (approval.kind === 'erc20') {
     const allowance = (await readContract(wagmiConfig, {
@@ -164,7 +190,7 @@ async function submitApproval(account: Address, approval: Approval): Promise<voi
       args: [approval.spender, approval.amountOrTokenId],
     });
     const hash = await writeContract(wagmiConfig, simulation.request);
-    await waitForTransactionReceipt(wagmiConfig, { hash });
+    await awaitApprovalReceipt(hash);
     return;
   }
 
@@ -183,7 +209,7 @@ async function submitApproval(account: Address, approval: Approval): Promise<voi
     args: [approval.spender, approval.amountOrTokenId],
   });
   const hash = await writeContract(wagmiConfig, simulation.request);
-  await waitForTransactionReceipt(wagmiConfig, { hash });
+  await awaitApprovalReceipt(hash);
 }
 
 export function decodeTransactionError(error: unknown): Error {

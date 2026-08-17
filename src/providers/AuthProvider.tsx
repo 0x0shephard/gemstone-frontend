@@ -12,6 +12,7 @@ import { getAddress, type Address } from 'viem';
 import { createSiweMessage } from 'viem/siwe';
 import { useSignMessage } from 'wagmi';
 import { supabase } from './supabase';
+import { queryClient } from './queryClient';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
 import { functionErrorMessage } from '@/lib/supabaseFunctions';
@@ -175,6 +176,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setSession(null);
     setLinkedWallet(null);
+    /*
+     * Everything the previous account fetched, gone with them.
+     *
+     * React Query caches by key, and a key that does not name the account is
+     * shared by every account that uses this tab. Gift cards were the clearest
+     * case — recipient names, email addresses and personal messages under a
+     * plain `['giftCards']` — but the same applies to redemption delivery
+     * addresses and anything else added later.
+     *
+     * Cleared wholesale rather than key by key: a list of what to forget is a
+     * list that the next feature forgets to join.
+     */
+    queryClient.clear();
   }, []);
 
   const linkWallet = useCallback(
