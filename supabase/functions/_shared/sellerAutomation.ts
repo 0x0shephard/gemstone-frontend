@@ -1,6 +1,6 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { getAddress, isAddressEqual, parseEventLogs, type Address, type Hash } from 'npm:viem@2';
-import { audit } from './auth.ts';
+import { audit, sha256 } from './auth.ts';
 import { createCommitment } from './commitment.ts';
 import { safeErrorMessage } from './errors.ts';
 import {
@@ -46,10 +46,14 @@ interface SellerSubmission {
   onchain_gem_id: string | null;
   activation_attempts: number;
   activation_started_at: string | null;
+  /** Set as soon as `registerGem` is broadcast, so recovery can be exact. */
+  registration_tx_hash: string | null;
+  /** Chain height before the first broadcast; the floor for a recovery scan. */
+  registration_scan_from_block: number | null;
 }
 
 const sellerColumns =
-  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at';
+  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at,registration_tx_hash,registration_scan_from_block';
 
 async function loadSubmission(admin: AdminClient, submissionId: string): Promise<SellerSubmission> {
   const { data, error } = await admin
@@ -104,6 +108,59 @@ async function resolvePrimaryImage(
   };
 }
 
+/**
+ * Certificate digests, computed from the stored bytes rather than read.
+ *
+ * `evidence_files.sha256` is written by the seller — the insert policy checks
+ * ownership and category and says nothing about the digest matching the object.
+ * Committing that value on chain therefore recorded whatever the seller claimed
+ * their certificate hashed to, which is the one thing the commitment exists to
+ * make impossible: the certificate could be swapped afterwards and the
+ * commitment would still verify against the substitute.
+ *
+ * Hashing here costs a download per certificate, once, at activation. The stored
+ * column is left alone: it is still useful for deduplication and for spotting a
+ * client that computed it wrongly, and overwriting it would destroy the evidence
+ * that the two ever disagreed.
+ */
+async function certificateDigestsFromStorage(
+  admin: AdminClient,
+  submissionId: string,
+): Promise<string[]> {
+  const { data: files, error } = await admin
+    .from('evidence_files')
+    .select('id,bucket,object_path,sha256')
+    .eq('submission_id', submissionId)
+    .eq('category', 'certificate');
+  if (error) throw error;
+
+  const digests: string[] = [];
+  for (const file of files ?? []) {
+    const { data: blob, error: downloadError } = await admin.storage
+      .from(file.bucket)
+      .download(file.object_path);
+    if (downloadError || !blob) {
+      throw new Error(`Certificate could not be read from private storage: ${file.object_path}`);
+    }
+    const actual = await sha256(new Uint8Array(await blob.arrayBuffer()));
+    /*
+     * A mismatch is refused rather than silently corrected. It means either a
+     * client that hashes incorrectly or a deliberate substitution, and neither
+     * should be resolved by an automated process quietly committing whichever
+     * value it happens to trust.
+     */
+    if (file.sha256 && file.sha256.toLowerCase() !== actual) {
+      throw new Error(
+        `Certificate ${file.object_path} does not match its recorded digest; activation stopped`,
+      );
+    }
+    digests.push(actual);
+  }
+  // Sorted here because the commitment is order-sensitive and this no longer
+  // arrives pre-ordered from the database.
+  return digests.sort();
+}
+
 export async function prepareSellerSubmission(
   admin: AdminClient,
   submissionId: string,
@@ -119,15 +176,7 @@ export async function prepareSellerSubmission(
   let image: PublishedImage | undefined;
   let imageEvidenceId: string | undefined;
   if (!submission.certificate_hash || !submission.canonical_payload) {
-    const { data: files, error } = await admin
-      .from('evidence_files')
-      .select('category,sha256')
-      .eq('submission_id', submissionId)
-      .order('sha256');
-    if (error) throw error;
-    const certificateDigests = (files ?? [])
-      .filter((file) => file.category === 'certificate')
-      .map((file) => file.sha256);
+    const certificateDigests = await certificateDigestsFromStorage(admin, submissionId);
     if (certificateDigests.length === 0 || !submission.metadata_uri) {
       throw new Error('Approved certificates and metadata URI are required');
     }
@@ -259,12 +308,56 @@ export async function prepareSellerSubmission(
   return submission;
 }
 
+/**
+ * The gem id from a registration whose receipt was already recorded.
+ *
+ * Exact where the log scan is a search: the transaction hash names the one
+ * transaction that could have registered this stone. Recorded before anything
+ * else is written, so it survives the failure the scan exists to recover from.
+ */
+async function gemIdFromRecordedTx(
+  chain: ReturnType<typeof operatorChain>,
+  submission: SellerSubmission,
+): Promise<bigint | undefined> {
+  const hash = submission.registration_tx_hash;
+  if (!hash) return undefined;
+  const receipt = await chain.publicClient
+    .getTransactionReceipt({ hash: hash as Hash })
+    .catch(() => undefined);
+  // A hash the node cannot find is a transaction that never landed — dropped
+  // from the mempool, or replaced. Registering again is then correct, so this
+  // falls through to the scan rather than failing.
+  if (!receipt || receipt.status !== 'success') return undefined;
+  const event = parseEventLogs({
+    abi: gemRegistryAbi,
+    eventName: 'GemRegistered',
+    logs: receipt.logs,
+  })[0];
+  return event?.args.gemId;
+}
+
 async function recoverRegisteredGem(
   chain: ReturnType<typeof operatorChain>,
   submission: SellerSubmission,
 ): Promise<bigint | undefined> {
+  const recorded = await gemIdFromRecordedTx(chain, submission);
+  if (recorded !== undefined) return recorded;
+
   const latestBlock = await chain.publicClient.getBlockNumber();
-  const earliestBlock = latestBlock > 127n ? latestBlock - 127n : chain.deploymentBlock;
+  /*
+   * From where the attempt began, not from a fixed distance behind the head.
+   *
+   * A 128-block floor meant recovery worked for about twenty-five minutes and
+   * then silently stopped, so a retry the next morning registered the stone a
+   * second time. The registry has no uniqueness guard to catch that.
+   */
+  const recordedFloor =
+    submission.registration_scan_from_block === null ||
+    submission.registration_scan_from_block === undefined
+      ? undefined
+      : BigInt(submission.registration_scan_from_block);
+  const fallbackFloor = latestBlock > 127n ? latestBlock - 127n : chain.deploymentBlock;
+  const earliestBlock = recordedFloor ?? fallbackFloor;
   const lowerBound = earliestBlock > chain.deploymentBlock ? earliestBlock : chain.deploymentBlock;
   let toBlock = latestBlock;
   while (toBlock >= lowerBound) {
@@ -441,12 +534,37 @@ export async function activateSellerSubmission(
       gemId = await recoverRegisteredGem(chain, submission);
     }
     if (!gemId) {
+      /*
+       * Two writes before the registration, both cheap and both about being able
+       * to find it again afterwards.
+       *
+       * The floor is recorded first because it must survive the broadcast
+       * itself failing to return. `registerGem` is not idempotent and the
+       * registry enforces no uniqueness, so a registration that lands while this
+       * process dies is a stone that gets registered twice unless the retry can
+       * locate it.
+       */
+      if (
+        submission.registration_scan_from_block === null ||
+        submission.registration_scan_from_block === undefined
+      ) {
+        await persistStep(admin, submissionId, {
+          registration_scan_from_block: Number(await chain.publicClient.getBlockNumber()),
+        });
+      }
+
       latestHash = await writeAndConfirm(chain, {
         address: chain.addresses.registry,
         abi: gemRegistryAbi,
         functionName: 'registerGem',
         args: [seller, chain.account.address, submission.metadata_uri, submission.certificate_hash],
       });
+
+      // The hash on its own, before anything that could fail. It was previously
+      // written in the same statement as the gem id, so the one value that makes
+      // recovery exact was lost by precisely the failure it was needed for.
+      await persistStep(admin, submissionId, { registration_tx_hash: latestHash });
+
       const receipt = await chain.publicClient.getTransactionReceipt({ hash: latestHash });
       const event = parseEventLogs({
         abi: gemRegistryAbi,
@@ -457,7 +575,6 @@ export async function activateSellerSubmission(
       if (!gemId) throw new Error('GemRegistered event was not found');
       await persistStep(admin, submissionId, {
         onchain_gem_id: gemId.toString(),
-        registration_tx_hash: latestHash,
         activation_state: 'registered',
       });
     } else if (!submission.onchain_gem_id) {
