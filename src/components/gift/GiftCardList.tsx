@@ -52,11 +52,25 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
   // personal messages, and a key that does not name the account is shared by
   // every account that uses this tab. Sign-out clears the cache as well; this is
   // the half that also holds within a session.
-  const { data: cards, isLoading } = useQuery({
+  const { data: allCards, isLoading } = useQuery({
     queryKey: ['giftCards', user?.id ?? 'anonymous'],
     queryFn: listGiftCards,
     enabled: Boolean(user),
   });
+
+  /*
+   * Cards still worth showing.
+   *
+   * The list rendered every card ever issued, so one cancelled months ago sat
+   * beside a live one for good. Cancelling is the act of finishing with a card;
+   * a claimed one is finished too, and its stone has moved on to somebody else's
+   * portfolio. Neither leaves anything to do.
+   *
+   * `cards` still drives the approval reconciliation below, which needs the
+   * cancelled ones: a card withdrawn without its on-chain approval being revoked
+   * is precisely what the stranded-approvals panel exists to catch.
+   */
+  const cards = (allCards ?? []).filter((card) => card.status === 'active');
 
   /*
    * Every owned token, not only the ones with a card.
@@ -70,7 +84,7 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
    */
   const tokenIds = [
     ...new Set([
-      ...(cards ?? []).map((card) => card.token_id),
+      ...(allCards ?? []).map((card) => card.token_id),
       ...owned.filter((gem) => gem.tokenId !== undefined).map((gem) => String(gem.tokenId)),
     ]),
   ];
@@ -87,7 +101,9 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
         const approved = approvals?.[tokenId];
         if (!approved || isAddressEqual(approved, zeroAddress)) return false;
         if (!isAddressEqual(approved, operator)) return false;
-        return !(cards ?? []).some((card) => card.token_id === tokenId && card.status === 'active');
+        return !(allCards ?? []).some(
+          (card) => card.token_id === tokenId && card.status === 'active',
+        );
       })
     : [];
 
@@ -101,7 +117,7 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
   if (isLoading) return <CardGridSkeleton count={2} />;
   // An empty state is only honest when there is genuinely nothing outstanding.
   // A stranded approval is outstanding whether or not a card exists.
-  if (!cards?.length && strandedApprovals.length === 0) {
+  if (cards.length === 0 && strandedApprovals.length === 0) {
     return (
       <EmptyState
         title="No gift cards"
@@ -146,7 +162,7 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
           </div>
         </Card>
       )}
-      {(cards ?? []).map((card) => (
+      {cards.map((card) => (
         <GiftCardRowItem
           key={card.id}
           card={card}

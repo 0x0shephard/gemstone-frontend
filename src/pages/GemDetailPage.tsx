@@ -1,4 +1,6 @@
 import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useAccount } from 'wagmi';
+import { isAddressEqual } from 'viem';
 import { useGem } from '@/hooks/useData';
 import { GemThumb } from '@/components/gem/GemThumb';
 import { StatTile } from '@/components/ui/StatTile';
@@ -18,8 +20,9 @@ export default function GemDetailPage() {
   const { gemId = '' } = useParams();
   const [searchParams] = useSearchParams();
   const { data: gem, isLoading, isError } = useGem(gemId);
+  const { address } = useAccount();
   const modals = useGemModals();
-  const isManageView = searchParams.get('manage') === '1';
+  const manageRequested = searchParams.get('manage') === '1';
 
   if (isLoading) {
     return (
@@ -38,6 +41,26 @@ export default function GemDetailPage() {
    */
   const isAuction = !gem.tokenId;
   const isSecondaryListing = Boolean(gem.listingSeller);
+
+  /*
+   * Ownership decides what is offered, not the query string.
+   *
+   * `?manage=1` came from the link that was followed, so opening your own token
+   * from the marketplace — which lists every live token, including yours —
+   * presented "Make an offer" and "Propose a swap" against yourself. Those are
+   * not idle buttons: `Marketplace.createOffer` never checks that the bidder is
+   * not the owner, so the offer is created and the payment escrowed, leaving
+   * money locked until it expires and can be refunded.
+   *
+   * The listing seller counts as the owner: a listed token is held by the
+   * Marketplace, so `ownerOf` names the contract rather than the person.
+   */
+  const ownedByViewer = Boolean(
+    address &&
+    ((gem.owner && isAddressEqual(gem.owner, address)) ||
+      (gem.listingSeller && isAddressEqual(gem.listingSeller, address))),
+  );
+  const isManageView = ownedByViewer || manageRequested;
   const isActiveListing = isManageView && isSecondaryListing;
 
   const specs: [string, React.ReactNode][] = [

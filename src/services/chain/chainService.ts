@@ -849,7 +849,19 @@ export const chainService: IDataService = {
               ]
             >,
           ]);
-          if (!gem || !auction[0]) return;
+          /*
+           * A settled auction is finished business, win or lose.
+           *
+           * Only `exists` was checked, so a bid stayed in the list for good once
+           * the auction closed — reading "Leading · Ended" beside a token that
+           * was already sitting in the portfolio. Settlement is the moment there
+           * is nothing left to do: the winner has the token, and a loser's stake
+           * is a claimable refund shown on the auctions page.
+           *
+           * An auction that has ended but is *not* yet settled stays, because
+           * the sweep has still to act on it.
+           */
+          if (!gem || !auction[0] || auction[1]) return;
           const mine = event.args.usdValue as bigint;
           const secondsLeft = Number(auction[3] > now ? auction[3] - now : 0n);
           const leading =
