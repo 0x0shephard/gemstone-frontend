@@ -60,22 +60,41 @@ export function selectWallets(environment: WalletEnvironment): WalletGroup[] {
    * for permission on connect, which is what raises the account prompt, and it
    * hands wagmi a target so an existing authorisation survives a reload.
    *
-   * With no extension there is nothing to inject into, and the dedicated entry
-   * earns its place by deep-linking to the phone app over WalletConnect.
-   *
    * Offering both was the original fault. The workaround for it — a hand-rolled
    * injected connector with `shimDisconnect: false` — silently disabled the
-   * permission prompt and the reconnect path, which is why connecting stopped
-   * asking anything and every sign-in needed a fresh connection.
+   * permission prompt and the reconnect path.
    */
   const metaMaskIsDuplicate = showInjected && injectedIsMetaMask;
 
+  /*
+   * A phone browser with no wallet of its own, where the dedicated MetaMask
+   * entry is the one thing that must not lead.
+   *
+   * RainbowKit picks the connector by environment: `shouldUseWalletConnect` is
+   * `!injected && !isMobile()`, so on a phone that entry is *not* WalletConnect
+   * — it is MetaMask's own SDK, which hands off through a `metamask.app.link`
+   * universal link. The operating system treats that as a URL any browser can
+   * claim, offers a choice between Chrome and MetaMask, and a session that only
+   * exists inside the SDK does not survive the detour. MetaMask opens with
+   * nothing to sign.
+   *
+   * WalletConnect leads here instead. It reaches the same wallet through a `wc:`
+   * link that only wallets claim, over a relay session that survives the app
+   * switch — which is the whole difficulty on a phone.
+   */
+  const phoneWithoutWallet = touchPrimary && !hasInjected;
+
   const primary: WalletKind[] = [];
   if (showInjected) primary.push('injected');
+  if (walletConnect && phoneWithoutWallet) primary.push('walletConnect');
   primary.push('coinbase');
-  if (walletConnect && !metaMaskIsDuplicate) primary.push('metaMask');
+  if (walletConnect && !metaMaskIsDuplicate && !phoneWithoutWallet) primary.push('metaMask');
 
-  const more: WalletKind[] = walletConnect ? ['rainbow', 'trust', 'walletConnect'] : [];
+  const more: WalletKind[] = !walletConnect
+    ? []
+    : phoneWithoutWallet
+      ? ['rainbow', 'trust']
+      : ['rainbow', 'trust', 'walletConnect'];
 
   return more.length > 0
     ? [

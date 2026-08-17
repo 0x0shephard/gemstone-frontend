@@ -96,19 +96,30 @@ describe('one door to MetaMask', () => {
     expect(offered).toContain('metaMask');
   });
 
-  it('keeps the dedicated entry on a phone with no injected provider', () => {
-    // Nothing to inject into, so the entry earns its place by deep-linking.
-    const offered = kinds({
+  it('leads with WalletConnect on a phone, not the MetaMask SDK', () => {
+    /*
+     * The reported failure: MetaMask opened with nothing to sign. RainbowKit
+     * chooses the connector by environment — `!injected && !isMobile()` — so on
+     * a phone the dedicated entry is MetaMask's SDK, which hands off through a
+     * `metamask.app.link` universal link. The OS offers that URL to any browser
+     * that claims it, and the session does not survive the detour.
+     */
+    const groups = selectWallets({
       walletConnect: true,
       hasInjected: false,
       injectedIsMetaMask: false,
       touchPrimary: true,
     });
-    expect(offered).toContain('metaMask');
+    const offered = groups.flatMap((group) => group.kinds);
+    expect(offered).not.toContain('metaMask');
     expect(offered).not.toContain('injected');
+    // And it must lead, not sit under "More wallets" where nobody looks.
+    expect(groups[0].kinds).toContain('walletConnect');
   });
 
   it('offers only the in-app wallet inside MetaMask on a phone', () => {
+    // A wallet's own browser injects a provider, so the injected path applies
+    // and there is no hand-off between apps left to fail.
     const offered = kinds({
       walletConnect: true,
       hasInjected: true,
