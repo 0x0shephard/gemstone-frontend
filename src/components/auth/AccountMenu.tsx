@@ -7,6 +7,7 @@ import { activeChain } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
 import { useAuth } from '@/providers/AuthProvider';
 import { cn } from '@/lib/cn';
+import { detectWalletEnvironment } from '@/providers/walletSelection';
 import { WalletAddress } from '@/components/wallet/WalletAddress';
 
 interface AccountMenuProps {
@@ -36,6 +37,15 @@ export function AccountMenu({ className }: AccountMenuProps) {
     .join('')
     .toUpperCase();
   const wrongNetwork = isConnected && chainId !== activeChain.id;
+  /*
+   * A touch device with no injected provider: a phone browser rather than a
+   * wallet's in-app browser, which is the only configuration where connecting
+   * requires leaving the app.
+   */
+  const [showInAppBrowserHint] = useState(() => {
+    const environment = detectWalletEnvironment(false);
+    return environment.touchPrimary && !environment.hasInjected;
+  });
   const walletVerified = Boolean(address && linkedWallet?.toLowerCase() === address.toLowerCase());
 
   useEffect(() => {
@@ -195,13 +205,36 @@ export function AccountMenu({ className }: AccountMenuProps) {
                 {({ openAccountModal, openChainModal, openConnectModal }) => (
                   <div className="mt-3">
                     {!isConnected ? (
-                      <button
-                        type="button"
-                        onClick={openConnectModal}
-                        className="dc-btn-anim flex h-10 w-full items-center justify-center rounded-[4px] bg-atelier px-3 text-[12.5px] font-semibold text-vault"
-                      >
-                        Connect wallet
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={openConnectModal}
+                          className="dc-btn-anim flex h-10 w-full items-center justify-center rounded-[4px] bg-atelier px-3 text-[12.5px] font-semibold text-vault"
+                        >
+                          Connect wallet
+                        </button>
+                        {/*
+                          Only on a phone that has no wallet of its own, which is
+                          the one place connecting means leaving the browser
+                          entirely. That hand-off is where it goes wrong: the
+                          wallet approves, the reply is published to a relay, and
+                          the tab it was meant for may have been closed by the
+                          operating system while it sat in the background.
+
+                          Opening the site inside the wallet's own browser
+                          removes the hand-off rather than working around it —
+                          there is no app switch, no relay, and the wallet is
+                          simply present on the page.
+                        */}
+                        {showInAppBrowserHint && (
+                          <p className="mt-2 text-[11px] leading-relaxed text-ink-dim">
+                            Trouble connecting on your phone? Open{' '}
+                            <span className="font-semibold text-ink-muted">digitalcarat.io</span> in
+                            your wallet app’s own browser — MetaMask has one under Browse — and it
+                            connects without switching apps.
+                          </p>
+                        )}
+                      </>
                     ) : (
                       <>
                         <button

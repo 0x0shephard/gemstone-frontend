@@ -6,6 +6,7 @@ import { wagmiConfig } from './wagmi';
 import { queryClient } from './queryClient';
 import { rainbowTheme } from './rainbowTheme';
 import { AuthProvider } from './AuthProvider';
+import { reviveWalletConnectOnReturn } from './walletConnectRevival';
 import { watchPendingWork } from '@/services/chain/reconcilePending';
 
 export default function Web3Providers({ children }: { children: ReactNode }) {
@@ -16,6 +17,15 @@ export default function Web3Providers({ children }: { children: ReactNode }) {
    * which page the return lands on.
    */
   useEffect(watchPendingWork, []);
+
+  /*
+   * Reconciling what was already broadcast is only half of coming back from a
+   * wallet. The other half is the socket the answer arrives on: while the tab
+   * sat in the background the operating system may have closed it, and a reply
+   * published to the relay meanwhile was queued for a connection that no longer
+   * exists. Nudging the transport awake is what lets it be collected.
+   */
+  useEffect(() => reviveWalletConnectOnReturn(wagmiConfig), []);
 
   return (
     <WagmiProvider config={wagmiConfig}>
