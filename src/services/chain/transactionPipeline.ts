@@ -258,6 +258,15 @@ async function runStep(
   return hash;
 }
 
+/**
+ * `ERC20InsufficientAllowance(address,uint256,uint256)`, OpenZeppelin's.
+ *
+ * Recorded as a selector because the ERC-20 ABI used here declares functions
+ * only, so viem has nothing to decode the custom error against and surfaces the
+ * four bytes verbatim.
+ */
+const ERC20_INSUFFICIENT_ALLOWANCE = '0xfb8f41b2';
+
 export function decodeTransactionError(error: unknown): Error {
   if (error instanceof TransactionGuardError) return error;
   // Carries a hash, and must reach the UI intact — losing it here would put the
@@ -268,6 +277,22 @@ export function decodeTransactionError(error: unknown): Error {
       (candidate) => candidate instanceof ContractFunctionRevertedError,
     ) as ContractFunctionRevertedError | null;
     if (reverted) {
+      /*
+       * A raw selector is not an explanation.
+       *
+       * `ERC20InsufficientAllowance` is not in the ABI these calls are decoded
+       * against, so it arrived as an undecodable four-byte signature and was
+       * reported as "Contract transaction reverted" — which describes every
+       * revert there is and points at nothing. It is the one revert a person can
+       * actually act on, so it is named.
+       */
+      const selector = reverted.signature ?? reverted.data?.errorName;
+      if (selector === ERC20_INSUFFICIENT_ALLOWANCE) {
+        return new TransactionGuardError(
+          'The token allowance is not in place yet. Approve the payment asset and try again.',
+          'APPROVAL_REVERTED',
+        );
+      }
       const reason = reverted.data?.errorName ?? reverted.reason ?? 'Contract transaction reverted';
       return new TransactionGuardError(reason, 'CONTRACT_REVERTED');
     }
@@ -303,18 +328,43 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       if (step) planned.push({ kind: 'approval', ...step });
     }
 
-    const simulation = await simulateContract(wagmiConfig, {
-      account,
-      address: input.address,
-      abi: input.abi,
-      functionName: input.functionName,
-      args: input.args,
-      value: input.value,
-    });
+    const simulateCall = () =>
+      simulateContract(wagmiConfig, {
+        account,
+        address: input.address,
+        abi: input.abi,
+        functionName: input.functionName,
+        args: input.args,
+        value: input.value,
+      });
+
+    /*
+     * Simulated up front only when nothing has to be approved first.
+     *
+     * A call that spends an ERC-20 cannot be simulated before its allowance
+     * exists — the simulation reverts on the transfer, which is not a fault in
+     * the call but a description of the order things happen in. Simulating
+     * regardless meant a wallet paying with a token for the first time was
+     * refused before it was asked to sign anything, and the failure surfaced as
+     * "Contract transaction reverted" with no wallet prompt at all. Wallets that
+     * had approved once in the past were unaffected, which is why this survived:
+     * the allowance they already held made the simulation pass.
+     *
+     * Where there is no approval, the early simulation is kept — refusing before
+     * a signature is better than after one.
+     */
+    const needsApprovalFirst = planned.length > 0;
+    const simulation = needsApprovalFirst ? undefined : await simulateCall();
+
     planned.push({
       kind: 'call',
-      label: planned.length > 0 ? 'Confirm the transaction' : 'Confirm in your wallet',
-      send: async () => (await writeContract(wagmiConfig, simulation.request)) as Hash,
+      label: needsApprovalFirst ? 'Confirm the transaction' : 'Confirm in your wallet',
+      send: async () => {
+        // Simulated here when approvals came first, so the allowance granted by
+        // the step above is in place and the simulation describes reality.
+        const request = (simulation ?? (await simulateCall())).request;
+        return (await writeContract(wagmiConfig, request)) as Hash;
+      },
     });
 
     const opened = openWork({
