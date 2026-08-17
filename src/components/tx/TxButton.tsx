@@ -1,13 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TxResult } from '@/services/types';
-import type { TransactionStep } from '@/services/chain/transactionPipeline';
+import {
+  BroadcastPendingError,
+  setStepGate,
+  type StepPrompt,
+  type TransactionStep,
+} from '@/services/chain/txSteps';
 import { Button, type ButtonVariant, type ButtonSize } from '@/components/ui/Button';
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
 import { captureProductEvent } from '@/lib/telemetry';
 import { useQueryClient } from '@tanstack/react-query';
 
-type TxState = 'idle' | 'pending' | 'success' | 'error';
+/**
+ * `awaiting-gesture` is the state this component exists for on a phone.
+ *
+ * Each wallet request needs its own tap, so the request is built while the
+ * browser is demonstrably in front. Chaining them automatically meant the second
+ * was created while the tab was backgrounded, and the wallet opened to nothing.
+ *
+ * `broadcast` is the other one that matters: something is on chain and its
+ * outcome is unknown. It is deliberately terminal for this button — retrying
+ * from here is how the same purchase gets paid for twice.
+ */
+type TxState = 'idle' | 'awaiting-gesture' | 'pending' | 'success' | 'error' | 'broadcast';
 
 /**
  * What each stage is actually waiting on.
@@ -67,6 +83,10 @@ export function TxButton({
   const [hash, setHash] = useState<string | null>(null);
   const [result, setResult] = useState<TxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<StepPrompt>();
+  // Resolves the gate promise. A ref rather than state: the pipeline is awaiting
+  // this exact function, and a re-render must not hand it a different one.
+  const continueRef = useRef<(() => void) | undefined>(undefined);
 
   /*
    * Steps arrive as window events rather than through the action signature, so
@@ -92,6 +112,28 @@ export function TxButton({
     setStep(undefined);
     setError(null);
     captureProductEvent('transaction_started', { flow: telemetryFlow });
+
+    /*
+     * The pipeline pauses here before every wallet request and waits for a tap.
+     *
+     * The gate is a single module-level slot, cleared in `finally`. Two writes
+     * running at once would therefore contend — which is a limitation rather
+     * than a guard, and an acceptable one: a wallet handles one request at a
+     * time regardless, and every screen here disables its button while a
+     * transaction is in flight.
+     */
+    setStepGate(
+      (nextPrompt) =>
+        new Promise<void>((resolve) => {
+          setPrompt(nextPrompt);
+          setState('awaiting-gesture');
+          continueRef.current = () => {
+            setState('pending');
+            resolve();
+          };
+        }),
+    );
+
     try {
       const res = await action();
       setHash(res.hash);
@@ -100,9 +142,21 @@ export function TxButton({
       captureProductEvent('transaction_confirmed', { flow: telemetryFlow, result: 'success' });
       await queryClient.invalidateQueries();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Transaction failed');
-      setState('error');
-      captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'error' });
+      if (e instanceof BroadcastPendingError) {
+        // Sent, outcome unknown. No retry is offered: the hash is the useful
+        // thing, and a second attempt would duplicate work already in flight.
+        setHash(e.hash);
+        setError(e.message);
+        setState('broadcast');
+        captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'broadcast' });
+      } else {
+        setError(e instanceof Error ? e.message : 'Transaction failed');
+        setState('error');
+        captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'error' });
+      }
+    } finally {
+      setStepGate(undefined);
+      continueRef.current = undefined;
     }
   }
 
@@ -113,7 +167,7 @@ export function TxButton({
         so a second click would have run the same purchase or listing again
         against a wallet that had already paid.
       */}
-      {state !== 'success' && (
+      {state !== 'success' && state !== 'broadcast' && state !== 'awaiting-gesture' && (
         <Button
           variant={variant}
           size={size}
@@ -130,6 +184,30 @@ export function TxButton({
             children
           )}
         </Button>
+      )}
+
+      {/*
+        One tap per wallet request. The wallet is opened from this handler, so
+        the request is built while the browser is in the foreground — which is
+        the whole reason a phone stopped being shown an empty wallet.
+      */}
+      {state === 'awaiting-gesture' && prompt && (
+        <div className="space-y-2">
+          <Button
+            variant={variant}
+            size={size}
+            block={block}
+            onClick={() => continueRef.current?.()}
+          >
+            {prompt.label}
+            {prompt.total > 1 ? ` · step ${prompt.index + 1} of ${prompt.total}` : ''}
+          </Button>
+          <p className="text-[11.5px] leading-relaxed text-ink-muted">
+            {prompt.total > 1
+              ? 'Your wallet opens when you tap. Come back here afterwards — the next step waits for you rather than opening on its own.'
+              : 'Your wallet opens when you tap.'}
+          </p>
+        </div>
       )}
 
       <div aria-live="polite">
@@ -163,6 +241,22 @@ export function TxButton({
           </div>
         )}
       </div>
+      {state === 'broadcast' && hash && (
+        <div
+          role="alert"
+          className="space-y-2 rounded-[4px] border border-atelier/25 bg-atelier/[0.06] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink"
+        >
+          <p>{error}</p>
+          <a
+            href={explorerTxUrl(hash)}
+            target="_blank"
+            rel="noreferrer"
+            className="block font-mono text-[11.5px] underline underline-offset-2"
+          >
+            {shortenAddress(hash, 6)} ↗
+          </a>
+        </div>
+      )}
       {state === 'error' && (
         <p
           role="alert"

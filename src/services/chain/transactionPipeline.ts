@@ -22,21 +22,14 @@ import { wagmiConfig } from '@/providers/wagmi';
 import { supabase } from '@/providers/supabase';
 import { dgeNftAbi } from '@/contracts/abis';
 import type { TxResult } from '@/services/types';
-
-/**
- * Stages a write passes through, announced so the UI can say which one is
- * waiting.
- *
- * On a phone each wallet stage means leaving the browser for a wallet app and
- * coming back, and a token payment needs two of them. A single "Confirming…"
- * spinner covering all of it is indistinguishable from a hang — which is
- * exactly how it was reported.
- */
-export type TransactionStep = 'checking' | 'approving' | 'awaiting-signature' | 'confirming';
-
-export function announceStep(step: TransactionStep): void {
-  window.dispatchEvent(new CustomEvent('dc:transaction-step', { detail: { step } }));
-}
+import { BroadcastPendingError, announceStep, awaitGesture } from './txSteps';
+import {
+  closeWork,
+  openWork,
+  recordBroadcast,
+  recordStepStatus,
+  type PendingStep,
+} from './pendingWork';
 
 /**
  * Ceiling on waiting for a receipt.
@@ -47,6 +40,9 @@ export function announceStep(step: TransactionStep): void {
  * and short enough that a person is not left guessing.
  */
 const RECEIPT_TIMEOUT_MS = 10 * 60 * 1_000;
+
+export { BroadcastPendingError, announceStep, setStepGate } from './txSteps';
+export type { StepPrompt, TransactionStep } from './txSteps';
 
 export class TransactionGuardError extends Error {
   constructor(
@@ -150,30 +146,16 @@ async function ensureFunds(
 }
 
 /**
- * Waits for an approval to confirm, and insists that it succeeded.
+ * Whether an approval is actually needed, and what it would be.
  *
- * Both approval paths previously awaited a bare `waitForTransactionReceipt`,
- * which carries no timeout and no check on the result. Two failures followed
- * from that: a transaction the node never reports leaves the button pending
- * forever, with nothing on screen saying so; and a *reverted* approval was
- * treated as success, so the main call went ahead and failed on an allowance
- * that was never granted — reported as whatever the second failure happened to
- * say rather than the first.
+ * Read entirely in the browser, before any wallet is opened. Knowing the whole
+ * list of wallet requests up front is what lets the UI say "step 1 of 2" rather
+ * than discovering a second signature after the first has been given.
  */
-async function awaitApprovalReceipt(hash: `0x${string}`): Promise<void> {
-  const receipt = await waitForTransactionReceipt(wagmiConfig, {
-    hash,
-    timeout: RECEIPT_TIMEOUT_MS,
-  });
-  if (receipt.status !== 'success') {
-    throw new TransactionGuardError(
-      'The approval transaction reverted, so the transfer was not attempted.',
-      'APPROVAL_REVERTED',
-    );
-  }
-}
-
-async function submitApproval(account: Address, approval: Approval): Promise<void> {
+async function planApproval(
+  account: Address,
+  approval: Approval,
+): Promise<{ label: string; send: () => Promise<Hash> } | undefined> {
   if (approval.kind === 'erc20') {
     const allowance = (await readContract(wagmiConfig, {
       address: approval.token,
@@ -181,17 +163,20 @@ async function submitApproval(account: Address, approval: Approval): Promise<voi
       functionName: 'allowance',
       args: [account, approval.spender],
     })) as bigint;
-    if (allowance >= approval.amountOrTokenId) return;
-    const simulation = await simulateContract(wagmiConfig, {
-      account,
-      address: approval.token,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [approval.spender, approval.amountOrTokenId],
-    });
-    const hash = await writeContract(wagmiConfig, simulation.request);
-    await awaitApprovalReceipt(hash);
-    return;
+    if (allowance >= approval.amountOrTokenId) return undefined;
+    return {
+      label: 'Approve the payment allowance',
+      send: async () => {
+        const simulation = await simulateContract(wagmiConfig, {
+          account,
+          address: approval.token,
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [approval.spender, approval.amountOrTokenId],
+        });
+        return (await writeContract(wagmiConfig, simulation.request)) as Hash;
+      },
+    };
   }
 
   const approved = (await readContract(wagmiConfig, {
@@ -200,20 +185,84 @@ async function submitApproval(account: Address, approval: Approval): Promise<voi
     functionName: 'getApproved',
     args: [approval.amountOrTokenId],
   })) as Address;
-  if (approved.toLowerCase() === approval.spender.toLowerCase()) return;
-  const simulation = await simulateContract(wagmiConfig, {
-    account,
-    address: approval.token,
-    abi: dgeNftAbi,
-    functionName: 'approve',
-    args: [approval.spender, approval.amountOrTokenId],
-  });
-  const hash = await writeContract(wagmiConfig, simulation.request);
-  await awaitApprovalReceipt(hash);
+  if (approved.toLowerCase() === approval.spender.toLowerCase()) return undefined;
+  return {
+    label: 'Approve the gemstone transfer',
+    send: async () => {
+      const simulation = await simulateContract(wagmiConfig, {
+        account,
+        address: approval.token,
+        abi: dgeNftAbi,
+        functionName: 'approve',
+        args: [approval.spender, approval.amountOrTokenId],
+      });
+      return (await writeContract(wagmiConfig, simulation.request)) as Hash;
+    },
+  };
+}
+
+/**
+ * Runs one wallet request: gesture, broadcast, record, confirm.
+ *
+ * The order is the point. The hash is written to storage between `writeContract`
+ * resolving and anything being awaited, so a browser suspended while the wallet
+ * app is in front still knows, on return, that a transaction exists. Losing that
+ * is what let the UI offer a retry on work that had already succeeded.
+ */
+async function runStep(
+  workId: string,
+  index: number,
+  total: number,
+  step: { kind: 'approval' | 'call'; label: string; send: () => Promise<Hash> },
+): Promise<Hash> {
+  await awaitGesture({ index, total, label: step.label, kind: step.kind });
+
+  announceStep(step.kind === 'approval' ? 'approving' : 'awaiting-signature');
+  const hash = await step.send();
+  recordBroadcast(workId, index, hash);
+
+  announceStep('confirming');
+  let receipt;
+  try {
+    receipt = await waitForTransactionReceipt(wagmiConfig, { hash, timeout: RECEIPT_TIMEOUT_MS });
+  } catch (waitError) {
+    /*
+     * Broadcast, outcome unknown. Every branch here keeps the hash and leaves
+     * the record open: a timeout, a dropped RPC and a backgrounded tab are
+     * indistinguishable from here, and all three describe a transaction that may
+     * well succeed. Reporting a plain failure — which is what happened before,
+     * for everything except a timeout — invited a second attempt at work already
+     * in flight.
+     */
+    const reason =
+      waitError instanceof WaitForTransactionReceiptTimeoutError
+        ? 'It has not confirmed yet'
+        : 'The connection dropped while waiting';
+    throw new BroadcastPendingError(
+      `${reason}, but the transaction was sent. It will be checked when you return — do not send it again.`,
+      hash,
+      workId,
+    );
+  }
+
+  if (receipt.status !== 'success') {
+    recordStepStatus(workId, index, 'failed');
+    throw new TransactionGuardError(
+      step.kind === 'approval'
+        ? 'The approval transaction reverted, so the transfer was not attempted.'
+        : 'Transaction reverted.',
+      step.kind === 'approval' ? 'APPROVAL_REVERTED' : 'CONTRACT_REVERTED',
+    );
+  }
+  recordStepStatus(workId, index, 'confirmed');
+  return hash;
 }
 
 export function decodeTransactionError(error: unknown): Error {
   if (error instanceof TransactionGuardError) return error;
+  // Carries a hash, and must reach the UI intact — losing it here would put the
+  // caller back where it started, offering a retry on a live transaction.
+  if (error instanceof BroadcastPendingError) return error;
   if (error instanceof BaseError) {
     const reverted = error.walk(
       (candidate) => candidate instanceof ContractFunctionRevertedError,
@@ -231,17 +280,29 @@ export function decodeTransactionError(error: unknown): Error {
 }
 
 export async function runContractTransaction(input: ContractTransaction): Promise<TxResult> {
+  let work: { id: string } | undefined;
   try {
+    /*
+     * Everything that can be settled without the wallet happens first.
+     *
+     * Checks, allowance reads and the simulation all run while the browser is in
+     * the foreground, so by the time anyone is asked to open a wallet the
+     * request is fully formed and the number of signatures is known. Previously
+     * the second signature was discovered only after the first had been given,
+     * and was built while the tab was in the background — which is why the
+     * wallet opened with nothing to show.
+     */
     announceStep('checking');
     const account = await requireVerifiedWallet();
     await ensureChain();
     await ensureFunds(account, input.paymentAsset, input.paymentAmount);
+
+    const planned: { kind: 'approval' | 'call'; label: string; send: () => Promise<Hash> }[] = [];
     for (const approval of input.approvals ?? []) {
-      announceStep('approving');
-      await submitApproval(account, approval);
+      const step = await planApproval(account, approval);
+      if (step) planned.push({ kind: 'approval', ...step });
     }
 
-    announceStep('awaiting-signature');
     const simulation = await simulateContract(wagmiConfig, {
       account,
       address: input.address,
@@ -250,34 +311,42 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       args: input.args,
       value: input.value,
     });
-    const hash = (await writeContract(wagmiConfig, simulation.request)) as Hash;
-    announceStep('confirming');
-    const receipt = await waitForTransactionReceipt(wagmiConfig, {
-      hash,
-      timeout: RECEIPT_TIMEOUT_MS,
-    }).catch((waitError: unknown) => {
-      /*
-       * Only a genuine timeout is reported as one. Catching everything here
-       * told a user whose RPC hiccuped two seconds in that their transaction
-       * had been pending for ten minutes, and threw away the real cause — which
-       * was usually something a retry would have fixed.
-       */
-      if (waitError instanceof WaitForTransactionReceiptTimeoutError) {
-        // The transaction may still land later; it is the waiting that ended,
-        // not necessarily the transaction. Hand back the hash to follow it.
-        throw new TransactionGuardError(
-          `Still unconfirmed after 10 minutes. Track it on the explorer: ${hash}`,
-          'CONTRACT_REVERTED',
-        );
-      }
-      throw waitError;
+    planned.push({
+      kind: 'call',
+      label: planned.length > 0 ? 'Confirm the transaction' : 'Confirm in your wallet',
+      send: async () => (await writeContract(wagmiConfig, simulation.request)) as Hash,
     });
-    if (receipt.status !== 'success') {
-      throw new TransactionGuardError('Transaction reverted.', 'CONTRACT_REVERTED');
+
+    const opened = openWork({
+      flow: input.functionName,
+      label: input.functionName,
+      account,
+      chainId: env.chainId,
+      steps: planned.map<PendingStep>((step) => ({
+        kind: step.kind,
+        label: step.label,
+        status: 'waiting',
+      })),
+    });
+    work = opened;
+
+    let last: Hash | undefined;
+    for (const [index, step] of planned.entries()) {
+      last = await runStep(opened.id, index, planned.length, step);
     }
-    window.dispatchEvent(new CustomEvent('dc:transaction-confirmed', { detail: { hash } }));
-    return { hash, status: 'success' };
+
+    // Only once every step confirmed. A record left open is a record something
+    // still has to reconcile, which is exactly the state we want to keep.
+    closeWork(opened.id);
+    window.dispatchEvent(new CustomEvent('dc:transaction-confirmed', { detail: { hash: last } }));
+    return { hash: last!, status: 'success' };
   } catch (error) {
+    /*
+     * A broadcast that has not resolved keeps its record. Anything else never
+     * reached the chain, so the record is noise and would offer a resume for
+     * work that does not exist.
+     */
+    if (!(error instanceof BroadcastPendingError) && work) closeWork(work.id);
     throw decodeTransactionError(error);
   }
 }
