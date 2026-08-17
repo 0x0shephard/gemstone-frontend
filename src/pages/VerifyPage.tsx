@@ -398,14 +398,21 @@ export default function VerifyPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-        <Card className="p-0">
-          <div className="border-b border-line/[0.08] px-4 py-3 text-[12px] font-semibold text-ink-soft">
+        {/*
+          The queue is a sidebar on a wide screen and a picker on a narrow one.
+          Stacked, it ran to as many rows as there were stones — up to a hundred —
+          so choosing the first one put its grading form a hundred rows further
+          down the page, with nothing to suggest it had appeared at all. Capped
+          and scrollable, the form is always the next thing on screen.
+        */}
+        <Card className="flex max-h-[50dvh] flex-col p-0 lg:max-h-none">
+          <div className="shrink-0 border-b border-line/[0.08] px-4 py-3 text-[12px] font-semibold text-ink-soft">
             Awaiting grading
           </div>
           {queue.length === 0 ? (
             <p className="px-4 py-6 text-[13px] text-ink-muted">Nothing awaiting review.</p>
           ) : (
-            <ul>
+            <ul className="min-h-0 overflow-y-auto">
               {queue.map((item) => (
                 <li key={item.id}>
                   <button
@@ -427,7 +434,7 @@ export default function VerifyPage() {
         </Card>
 
         {selected ? (
-          <div className="space-y-5">
+          <div className="-order-1 space-y-5 lg:order-none">
             <Card className="space-y-4 p-5">
               <div>
                 <h2 className="font-display text-[17px] font-medium text-ink">

@@ -51,9 +51,22 @@ export function MobileDock() {
           role="dialog"
           aria-modal="true"
           aria-label="More destinations"
-          className="fixed inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-50 animate-dcslideup overflow-hidden rounded-[4px] border border-line/[0.12] bg-elevated shadow-[0_28px_80px_rgba(0,0,0,.6)] md:hidden"
+          /*
+            Bounded by the viewport, and scrollable inside.
+
+            Anchored only to the bottom, the panel grew to whatever its contents
+            needed and pushed its own top off the top of the screen — 327px of
+            sheet against 240px of room in a 320px-tall landscape window put the
+            header, and the close button in it, at y=-87. `overflow-hidden` then
+            made that unreachable rather than merely awkward: nothing could be
+            scrolled into view, so the only way out was the backdrop.
+
+            The header stays put and the destinations scroll, so the way to
+            dismiss it is always on screen.
+          */
+          className="fixed inset-x-3 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-50 flex max-h-[calc(100dvh-7rem)] animate-dcslideup flex-col overflow-hidden rounded-[4px] border border-line/[0.12] bg-elevated shadow-[0_28px_80px_rgba(0,0,0,.6)] md:hidden"
         >
-          <div className="flex items-center justify-between border-b border-line/[0.07] px-5 py-4">
+          <div className="flex shrink-0 items-center justify-between border-b border-line/[0.07] px-5 py-4">
             <BrandMark size={17} />
             <button
               type="button"
@@ -64,7 +77,7 @@ export function MobileDock() {
               ×
             </button>
           </div>
-          <nav className="grid grid-cols-2 gap-2 p-3">
+          <nav className="grid min-h-0 grid-cols-2 gap-2 overflow-y-auto p-3">
             {secondaryItems.map((item) => (
               <NavLink
                 key={item.to}

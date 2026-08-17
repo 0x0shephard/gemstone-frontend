@@ -11,6 +11,7 @@ import { env } from '@/config/env';
 import { fmtUsdBaseUnits } from '@/lib/format';
 import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
+import { ensureUploadableImage } from '@/lib/imageTranscode';
 import {
   activateSellerGem,
   getSellerSubmissions,
@@ -69,6 +70,7 @@ export default function SellerPage() {
   >('protocol_custodian');
   const [notes, setNotes] = useState('');
   const [certificates, setCertificates] = useState<File[]>([]);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [media, setMedia] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string }>();
@@ -103,6 +105,41 @@ export default function SellerPage() {
 
   const update = <K extends keyof SellerAttributes>(key: K, value: SellerAttributes[K]) =>
     setAttributes((current) => ({ ...current, [key]: value }));
+
+  /*
+   * Converts what the picker hands over into something the upload accepts.
+   *
+   * Done on selection rather than on submit: a seller who has filled in a whole
+   * form should not discover then that one of their photographs was the wrong
+   * format. iPhone photographs arrive as HEIC when the picker does not transcode
+   * them, and are re-encoded here — see `ensureUploadableImage`, which also
+   * shrinks anything over the size limit rather than letting the server refuse
+   * it after the upload.
+   */
+  async function acceptFiles(list: FileList | null, kind: 'certificates' | 'media') {
+    setFileNotice(null);
+    const chosen = Array.from(list ?? []).slice(0, kind === 'media' ? 10 : undefined);
+    const limit = kind === 'media' ? 10 * 1024 * 1024 : 20 * 1024 * 1024;
+    const accepted: File[] = [];
+    for (const file of chosen) {
+      // A PDF certificate is not an image and must pass through untouched.
+      if (file.type === 'application/pdf') {
+        if (file.size > limit) {
+          setFileNotice(`${file.name} is larger than 20 MB.`);
+          continue;
+        }
+        accepted.push(file);
+        continue;
+      }
+      try {
+        accepted.push(await ensureUploadableImage(file, limit));
+      } catch (error) {
+        setFileNotice(error instanceof Error ? error.message : `${file.name} could not be used.`);
+      }
+    }
+    if (kind === 'media') setMedia(accepted);
+    else setCertificates(accepted);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -332,30 +369,36 @@ export default function SellerPage() {
             </div>
             <label>
               <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
-                Certificates · PDF/JPEG/PNG · 20 MB each
+                Certificates · PDF/JPEG/PNG/HEIC · 20 MB each
               </span>
               <input
                 className={inputClass}
                 type="file"
                 required
                 multiple
-                accept=".pdf,.jpg,.jpeg,.png"
-                onChange={(event) => setCertificates(Array.from(event.target.files ?? []))}
+                accept=".pdf,.jpg,.jpeg,.png,.heic,.heif,image/heic,image/heif"
+                onChange={(event) => void acceptFiles(event.target.files, 'certificates')}
               />
             </label>
             <label>
               <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
-                Gem media · JPEG/PNG/WebP · max 10
+                Gem media · JPEG/PNG/WebP/HEIC · max 10
               </span>
               <input
                 className={inputClass}
                 type="file"
                 required
                 multiple
-                accept=".jpg,.jpeg,.png,.webp"
-                onChange={(event) => setMedia(Array.from(event.target.files ?? []).slice(0, 10))}
+                accept=".jpg,.jpeg,.png,.webp,.heic,.heif,image/heic,image/heif"
+                onChange={(event) => void acceptFiles(event.target.files, 'media')}
               />
             </label>
+            {/* Said next to the pickers, while there is still something to change. */}
+            {fileNotice && (
+              <p role="alert" className="text-[12px] leading-relaxed text-ruby sm:col-span-2">
+                {fileNotice}
+              </p>
+            )}
             <label className="sm:col-span-2">
               <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
                 Private reviewer notes
