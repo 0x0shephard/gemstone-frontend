@@ -146,7 +146,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
         <section
           role="dialog"
           aria-label="Account and wallet"
-          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[min(340px,calc(100vw-24px))] animate-dcslideup overflow-hidden rounded-[4px] border border-line/[0.12] bg-elevated shadow-[0_24px_80px_rgba(0,0,0,.65)]"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 max-h-[calc(100dvh-5rem)] w-[min(340px,calc(100vw-24px))] animate-dcslideup overflow-y-auto rounded-[4px] border border-line/[0.12] bg-elevated shadow-[0_24px_80px_rgba(0,0,0,.65)]"
         >
           <div className="dc-facet-border border-b border-line/[0.07] p-4">
             <div className="flex items-start gap-3">

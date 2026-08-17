@@ -1,0 +1,23 @@
+{
+  "name": "Digital Carat",
+  "short_name": "Digital Carat",
+  "description": "The vault for tokenized gemstones. Verified custody, on-chain reserves, and physical redemption.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F8F5F0",
+  "theme_color": "#F8F5F0",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

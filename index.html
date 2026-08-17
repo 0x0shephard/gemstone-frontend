@@ -11,6 +11,17 @@
     -->
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
+      Installability, which on iOS is the only route to Web Push. Safari grants
+      the Push API solely to a site added to the Home Screen as a standalone web
+      app, so without a manifest the notification control had nothing to offer
+      and simply disappeared. `apple-mobile-web-app-capable` is the older iOS
+      spelling of the same intent and is still what Safari reads.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Digital Carat" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta
       name="description"
       content="Digital Carat — the vault for tokenized gemstones. Verified custody, on-chain reserves, and physical redemption."

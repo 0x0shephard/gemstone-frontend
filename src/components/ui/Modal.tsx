@@ -45,7 +45,13 @@ export function Modal({
     >
       <div
         className={cn(
-          'dc-facet-border relative max-h-[calc(100vh-2rem)] w-full animate-dcmodal overflow-y-auto rounded-[4px] border border-line/[0.12] bg-elevated p-5 shadow-[0_30px_100px_rgba(0,0,0,.65)] sm:p-6',
+          /*
+            `dvh`, not `vh`. On a phone `vh` is the viewport with the browser
+            chrome retracted, so a dialog sized that way runs past the bottom of
+            what is actually visible and its actions sit under the keyboard —
+            reachable only by scrolling a dialog that does not look scrollable.
+          */
+          'dc-facet-border relative max-h-[calc(100dvh-2rem)] w-full animate-dcmodal overflow-y-auto rounded-[4px] border border-line/[0.12] bg-elevated p-5 shadow-[0_30px_100px_rgba(0,0,0,.65)] sm:p-6',
         )}
         style={{ maxWidth }}
         onClick={(e) => e.stopPropagation()}

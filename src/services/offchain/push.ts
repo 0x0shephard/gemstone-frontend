@@ -21,6 +21,25 @@ export type PushState =
   | 'subscribed'
   | 'unsubscribed';
 
+/**
+ * An iPhone or iPad that can do Web Push, but only once installed.
+ *
+ * Safari grants the Push API solely to a site added to the Home Screen as a
+ * standalone web app. In a normal Safari tab `PushManager` is simply absent, so
+ * the support check answers no and the control used to disappear — which reads
+ * as "this app has no notifications" rather than "one more step".
+ */
+export function needsHomeScreenInstall(): boolean {
+  if (typeof window === 'undefined' || pushSupported()) return false;
+  const ios = /iP(hone|ad|od)/.test(navigator.userAgent);
+  // iPadOS reports itself as a Mac; the touch points give it away.
+  const iPadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+  if (!ios && !iPadOS) return false;
+  // Already installed and still unsupported means the OS is too old for push,
+  // and telling someone to install what they have installed helps nobody.
+  return !window.matchMedia('(display-mode: standalone)').matches;
+}
+
 export function pushSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -94,7 +113,7 @@ export async function enablePush(): Promise<PushState> {
   // Keyed on the endpoint: re-running this on a device that is already
   // registered updates the row rather than accumulating duplicates, and clears
   // any earlier retirement.
-  await supabase.from('push_subscriptions').upsert(
+  const { error } = await supabase.from('push_subscriptions').upsert(
     {
       profile_id: data.user.id,
       endpoint: subscription.endpoint,
@@ -105,6 +124,24 @@ export async function enablePush(): Promise<PushState> {
     },
     { onConflict: 'endpoint' },
   );
+
+  /*
+   * The browser subscribing is half of it. Nothing can be sent to this device
+   * until the server holds its keys, so a failed write means push is off no
+   * matter what the browser thinks — and the error was previously discarded,
+   * leaving the panel saying "Notifications are on" for a device the sweep had
+   * never heard of. Likeliest exactly when it matters: a cellular drop, or a
+   * shared browser where the row belongs to another account.
+   *
+   * The local subscription is withdrawn too, so the two sides agree and the next
+   * attempt starts clean rather than finding a subscription with no row.
+   */
+  if (error) {
+    await subscription.unsubscribe().catch(() => undefined);
+    throw new Error(
+      'Notifications could not be registered on the server. Check your connection and try again.',
+    );
+  }
 
   return 'subscribed';
 }

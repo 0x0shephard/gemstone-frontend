@@ -344,3 +344,25 @@ textarea::placeholder {
     display: none;
   }
 }
+
+/*
+  iOS zooms into any focused form control whose text is under 16px, and does not
+  zoom back out. The app's controls are 12.5–14px by design, so focusing a field
+  anywhere — login, marketplace search, a modal, the seller form — shifted the
+  page under the sticky header and the mobile dock and left it there.
+
+  A rule rather than a pass over every input: the problem belongs to the platform
+  and applies to every control that exists or is added later, and a list of
+  files to remember is a list something eventually falls off.
+
+  Scoped to coarse pointers, so the designed sizes are untouched on desktop.
+  Checkboxes and radios are excluded because they render no text and sizing them
+  only disturbs their box.
+*/
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

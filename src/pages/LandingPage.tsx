@@ -9,6 +9,8 @@ import { ownershipPathSteps } from '@/content/ownershipPath';
 import { useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 
+import { SceneBoundary } from '@/components/three/SceneBoundary';
+
 const GemScene = lazy(() =>
   import('@/components/three/GemScene').then((m) => ({ default: m.GemScene })),
 );
@@ -120,9 +122,16 @@ export default function LandingPage() {
               />
             ))}
           </svg>
-          <Suspense fallback={<div className="h-full w-full" />}>
-            <GemScene />
-          </Suspense>
+          {/*
+            The boundary sits outside Suspense so it catches both a chunk that
+            will not load and a WebGL context that will not start. Either way the
+            rings and halo above remain and the page is unharmed.
+          */}
+          <SceneBoundary>
+            <Suspense fallback={<div className="h-full w-full" />}>
+              <GemScene />
+            </Suspense>
+          </SceneBoundary>
         </div>
       </section>
 

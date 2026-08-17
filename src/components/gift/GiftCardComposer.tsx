@@ -14,6 +14,7 @@ import {
   type GiftTemplate,
 } from './GiftCardArt';
 import { giftOperatorAddress } from '@/config/contracts';
+import { saveGiftHandoff, takeGiftHandoff } from '@/services/offchain/giftHandoff';
 import { dataService } from '@/services';
 import {
   createGiftCard,
@@ -56,12 +57,27 @@ const MAX_MESSAGE = 500;
  * flow at the signature has granted nothing and left no half-made card behind.
  */
 export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardComposerProps) {
-  const [step, setStep] = useState<Step>('compose');
+  /*
+   * A card that survived the Canva redirect, if there was one.
+   *
+   * Connecting Canva replaces the whole document, and the card's one-time code
+   * exists nowhere else — the server keeps only its hash. Losing it left a valid
+   * card nobody could ever claim, so it is parked before leaving and reclaimed
+   * here on the way back.
+   *
+   * Read exactly once: taking it clears it, and calling this from each state
+   * initialiser separately would hand the card to the first and nothing to the
+   * rest.
+   */
+  const [restored] = useState(() => takeGiftHandoff(String(gem.gemId)));
+  const [step, setStep] = useState<Step>(restored ? 'issued' : 'compose');
   const [recipientEmail, setRecipientEmail] = useState('');
-  const [recipientName, setRecipientName] = useState('');
-  const [message, setMessage] = useState('');
-  const [template, setTemplate] = useState<GiftTemplate>('classic');
-  const [issued, setIssued] = useState<CreatedGiftCard | null>(null);
+  const [recipientName, setRecipientName] = useState(restored?.recipientName ?? '');
+  const [message, setMessage] = useState(restored?.message ?? '');
+  const [template, setTemplate] = useState<GiftTemplate>(
+    (restored?.template as GiftTemplate | undefined) ?? 'classic',
+  );
+  const [issued, setIssued] = useState<CreatedGiftCard | null>(restored?.card ?? null);
   const [error, setError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
 
@@ -271,6 +287,8 @@ function IssuedCard({
   const [issuedAt] = useState(() => Date.now());
   const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [canvaState, setCanvaState] = useState<'idle' | 'working'>('idle');
+  // Set only when the browser refused the tab, so the link can be offered.
+  const [canvaLink, setCanvaLink] = useState<string>();
 
   /*
    * Two outcomes worth distinguishing. A first-time sender has no Canva grant
@@ -283,6 +301,22 @@ function IssuedCard({
     if (!element) return;
     setCanvaState('working');
     setNotice(undefined);
+
+    /*
+     * The tab is opened now, while the tap is still what is running.
+     *
+     * Rasterising the card and calling Canva both take a moment, and a phone
+     * treats a `window.open` after that as unrequested and blocks it — which the
+     * old code then reported as success, so a card that never opened anywhere
+     * was announced as opened. Claiming the tab up front and pointing it
+     * somewhere once the URL exists keeps the gesture intact.
+     *
+     * `noopener` cannot be passed here: it makes `open` return null, and the
+     * handle is the entire point. The reference is severed below instead.
+     */
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
+
     try {
       const design = await exportCardToCanva({
         pngBase64: await cardAsPngBase64(element),
@@ -290,11 +324,32 @@ function IssuedCard({
         width: CARD_WIDTH,
         height: CARD_HEIGHT,
       });
-      window.open(design.editUrl, '_blank', 'noopener');
-      setNotice('Opened in Canva. Your card is now in your Canva projects.');
+      if (tab) {
+        tab.location.href = design.editUrl;
+        setNotice('Opened in Canva. Your card is now in your Canva projects.');
+      } else {
+        // Blocked. Say so, and hand over the link rather than pretending.
+        setCanvaLink(design.editUrl);
+        setNotice(
+          'Your browser blocked the new tab. Use the link below to open the card in Canva.',
+        );
+      }
     } catch (canvaError) {
       if (needsCanvaConnection(canvaError)) {
         try {
+          /*
+           * Parked before the document is replaced. The code is shown once and
+           * stored only as a hash, so without this the redirect destroyed the
+           * only copy in existence and left a live card nobody could claim.
+           */
+          saveGiftHandoff({
+            gemId: String(gem.gemId),
+            card,
+            recipientName,
+            message,
+            template,
+          });
+          tab?.close();
           window.location.href = await startCanvaAuthorization(window.location.pathname);
           return;
         } catch (authError) {
@@ -487,6 +542,17 @@ function IssuedCard({
 
       <p className="break-all font-mono text-[11px] text-ink-dim">{claimUrl}</p>
       {notice && <p className="text-[12px] text-ruby">{notice}</p>}
+      {/* Only present when the tab was blocked, so the card is still reachable. */}
+      {canvaLink && (
+        <a
+          href={canvaLink}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[12px] font-semibold text-ink underline underline-offset-2"
+        >
+          Open the card in Canva
+        </a>
+      )}
 
       <Button block onClick={onClose}>
         Done
