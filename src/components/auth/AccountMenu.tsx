@@ -21,6 +21,8 @@ export function AccountMenu({ className }: AccountMenuProps) {
   const [signingOut, setSigningOut] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [message, setMessage] = useState('');
+  // Set when the server asks whether to replace an existing primary wallet.
+  const [relinkFor, setRelinkFor] = useState<Address | null>(null);
   const { user, loading, linkedWallet, signOut, linkWallet } = useAuth();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
@@ -64,18 +66,28 @@ export function AccountMenu({ className }: AccountMenuProps) {
     };
   }, [open]);
 
-  async function verifyWallet(walletAddress: Address) {
+  /*
+   * Asked in the page, not through `window.confirm`.
+   *
+   * A wallet's in-app browser is where this matters most — it is the one place
+   * connecting works smoothly — and a webview may suppress a native dialog
+   * entirely. A confirmation nobody sees reads as a signature that silently did
+   * nothing, and the relink can never be completed.
+   *
+   * Each attempt costs a signature, so the question is asked once and the answer
+   * carried into the second call.
+   */
+  async function verifyWallet(walletAddress: Address, confirmRelink = false) {
     setMessage('');
+    setRelinkFor(null);
     setVerifying(true);
-    let result = await linkWallet(walletAddress);
+    const result = await linkWallet(walletAddress, confirmRelink);
     if (result.requiresConfirmation) {
-      const confirmed = window.confirm(
-        'This profile already has a primary wallet. Replace it with the connected wallet?',
-      );
-      if (confirmed) result = await linkWallet(walletAddress, true);
-      else result = { ok: false, message: 'Wallet relinking cancelled.' };
+      setRelinkFor(walletAddress);
+      setMessage('');
+    } else {
+      setMessage(result.message);
     }
-    setMessage(result.message);
     setVerifying(false);
   }
 
@@ -274,6 +286,42 @@ export function AccountMenu({ className }: AccountMenuProps) {
                           >
                             {verifying ? 'Waiting for signature…' : 'Verify wallet with SIWE'}
                           </button>
+                        )}
+                        {/*
+                          The question the server asked, put where it can be
+                          seen and answered. Replacing a primary wallet is not
+                          reversible from here, so it is stated plainly and
+                          neither button is the default.
+                        */}
+                        {relinkFor && (
+                          <div className="mt-2 rounded-[4px] border border-amber/25 bg-amber/[0.06] p-2.5">
+                            <p className="text-[11.5px] leading-relaxed text-ink">
+                              This account already has a verified wallet. Replacing it makes the
+                              connected wallet your primary one — gifts, offers and redemptions will
+                              follow it from now on.
+                            </p>
+                            <div className="mt-2 flex gap-2">
+                              <button
+                                type="button"
+                                disabled={verifying}
+                                onClick={() => void verifyWallet(relinkFor, true)}
+                                className="h-8 flex-1 rounded-[4px] border border-atelier/35 bg-atelier/[0.1] text-[11.5px] font-semibold text-ink disabled:opacity-50"
+                              >
+                                Replace it
+                              </button>
+                              <button
+                                type="button"
+                                disabled={verifying}
+                                onClick={() => {
+                                  setRelinkFor(null);
+                                  setMessage('Wallet relinking cancelled.');
+                                }}
+                                className="h-8 flex-1 rounded-[4px] border border-line/[0.12] text-[11.5px] font-medium text-ink-muted disabled:opacity-50"
+                              >
+                                Keep the old one
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </>
                     )}

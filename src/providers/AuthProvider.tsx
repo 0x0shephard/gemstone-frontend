@@ -16,7 +16,7 @@ import { queryClient } from './queryClient';
 import { disablePush } from '@/services/offchain/push';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
-import { functionErrorMessage } from '@/lib/supabaseFunctions';
+import { functionErrorMessage, functionResponseBody } from '@/lib/supabaseFunctions';
 
 export interface AuthState {
   /** Whether Supabase env is present. When false, auth actions are disabled. */
@@ -245,10 +245,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: { message, signature, confirmRelink },
         });
         if (error || data?.error) {
+          /*
+           * Read from the response rather than from `data`. A 409 leaves `data`
+           * null and puts the body on the error, so this flag was always false —
+           * the caller never learned the server was asking a question, showed
+           * the refusal as final, and left no way to relink a wallet at all.
+           */
+          const body = await functionResponseBody(error, data);
           return {
             ok: false,
             message: await functionErrorMessage(error, data, 'Wallet verification failed.'),
-            requiresConfirmation: Boolean(data?.requiresConfirmation),
+            requiresConfirmation: body?.requiresConfirmation === true,
           };
         }
         setLinkedWallet(data.wallet_address);
