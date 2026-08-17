@@ -213,9 +213,18 @@ Deno.serve(async (request) => {
     if (updateError) throw updateError;
     if (!claimed) return json({ error: 'This submission was graded by someone else' }, 409);
 
-    const { data: record, error: recordError } = await admin
-      .from('valuations')
-      .insert({
+    /*
+     * The limit is enforced by the write itself, not by the check above it.
+     *
+     * `assertWithinDailyLimit` counts and returns, and the insert used to follow
+     * as a separate round trip — so two graders in the same organisation could
+     * both pass a check that said one remained, and both write. The limit exists
+     * to bound what a compromised account can do in a day, which is precisely
+     * the case where requests arrive at once. The earlier check is kept because
+     * it fails fast with a clear message; this is what makes it true.
+     */
+    const { data: recordId, error: recordError } = await admin.rpc('record_valuation', {
+      payload: {
         submission_id: submissionId,
         organization_id: membership.organizationId,
         graded_by: membership.profileId,
@@ -228,10 +237,14 @@ Deno.serve(async (request) => {
         valuation_hash: valuation.valuationHash,
         canonical_payload: valuation.canonicalPayload,
         nonce: valuation.nonce,
-      })
-      .select('id')
-      .single();
+      },
+    });
+    // DC001 is the limit being hit inside the lock — a real answer, not a fault.
+    if (recordError?.code === 'DC001') {
+      throw new ValuationLimitError(membership.dailyValuationLimit);
+    }
     if (recordError) throw recordError;
+    const record = { id: recordId as string };
 
     await audit(membership.profileId, 'verification.graded', 'seller_submission', submissionId, {
       organization: membership.organizationName,

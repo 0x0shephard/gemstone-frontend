@@ -410,11 +410,47 @@ async function persistStep(
 ) {
   const { error } = await admin.from('seller_submissions').update(values).eq('id', submissionId);
   if (error) throw error;
+  /*
+   * Progress renews the lease. Recording a completed step is the one moment we
+   * know this activation is alive and still working, so it is the honest place
+   * to extend it — rather than claiming a longer lease up front, which would
+   * also hold the operator for a run that has already crashed.
+   *
+   * Failure here is ignored on purpose: the step really did happen, and losing
+   * the lease is recoverable while losing the record of the step is not.
+   */
+  await renewOperatorLease(admin, submissionId);
 }
+
+/** Extends the lease, but only for the activation already holding it. */
+async function renewOperatorLease(admin: AdminClient, submissionId: string): Promise<void> {
+  const now = new Date();
+  await admin
+    .from('protocol_operator_leases')
+    .update({
+      expires_at: new Date(now.getTime() + OPERATOR_LEASE_MS).toISOString(),
+      updated_at: now.toISOString(),
+    })
+    .eq('lease_name', 'sepolia-seller-activation')
+    .eq('holder_id', submissionId);
+}
+
+/**
+ * How long the operator lease is held before it lapses.
+ *
+ * Long enough for one slow confirmation, short enough that an activation which
+ * dies mid-flight does not block the next one for long. Renewed at every step
+ * below, so the total length of an activation does not have to fit inside it —
+ * which it did not: five minutes covered a single transaction, and an
+ * activation makes five or six. Once the lease lapsed a second activation could
+ * claim it and drive the same operator key concurrently, contending for the
+ * nonce the lease exists to protect.
+ */
+const OPERATOR_LEASE_MS = 15 * 60_000;
 
 async function claimOperatorLease(admin: AdminClient, submissionId: string): Promise<void> {
   const now = new Date();
-  const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString();
+  const expiresAt = new Date(now.getTime() + OPERATOR_LEASE_MS).toISOString();
   const { data, error } = await admin
     .from('protocol_operator_leases')
     .update({

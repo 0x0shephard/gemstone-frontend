@@ -89,7 +89,14 @@ export async function ingestBidEvents(
   admin: AdminClient,
   chain: OperatorChain = operatorChain(),
   options: { budgetMs?: number; now?: () => number; phases?: PhaseLog } = {},
-): Promise<{ scannedThrough: bigint; inserted: number; caughtUp: boolean; blocksBehind: bigint }> {
+): Promise<{
+  scannedThrough: bigint;
+  inserted: number;
+  /** Observations dropped because a reorg removed the block they came from. */
+  removed: number;
+  caughtUp: boolean;
+  blocksBehind: bigint;
+}> {
   // No-op unless the caller wants the breakdown, which only the scheduled
   // endpoint does — the pricing path calls this and cares only about the result.
   const mark = (phase: string) => options.phases?.mark(phase);
@@ -114,6 +121,16 @@ export async function ingestBidEvents(
   let inserted = 0;
   let commits = 0;
   let pending: BidLog[] = [];
+  /*
+   * Every bid seen in the replayed window, whether or not it was new.
+   *
+   * The replay exists because the head can reorganise, but the scan only ever
+   * upserted: a bid recorded from a block that was later replaced stayed in the
+   * table for good, inflating the demand counts that drive pricing. Knowing what
+   * the chain says *now* about this range is what allows the ones it no longer
+   * contains to be removed.
+   */
+  const seenInReplay = new Set<string>();
 
   const result = await scanLogs(chain, {
     address: chain.addresses.primarySale,
@@ -130,6 +147,7 @@ export async function ingestBidEvents(
       })) {
         if (event.blockNumber === null || event.transactionHash === null || event.logIndex === null)
           continue;
+        seenInReplay.add(`${event.transactionHash}:${event.logIndex}`);
         pending.push({
           gemId: event.args.gemId as bigint,
           bidder: event.args.bidder as string,
@@ -159,12 +177,56 @@ export async function ingestBidEvents(
     },
   });
 
+  /*
+   * Drop bids the chain no longer contains.
+   *
+   * Only over blocks this pass actually re-read, and only once it reached the
+   * head: a run cut short by its budget has not seen the whole window, and
+   * deleting on that basis would remove bids that are perfectly real and simply
+   * beyond where it stopped.
+   */
+  const removed = result.caughtUp
+    ? await pruneReorgedBids(admin, from, result.scannedThrough, seenInReplay)
+    : 0;
+
   return {
     scannedThrough: result.scannedThrough,
     inserted,
+    removed,
     caughtUp: result.caughtUp,
     blocksBehind: result.blocksBehind,
   };
+}
+
+/**
+ * Removes recorded bids that the re-read of their own blocks did not produce.
+ *
+ * A reorg replaces blocks, and a bid in a replaced block never happened. The
+ * scan upserted and never deleted, so such a row survived indefinitely and kept
+ * voting in the demand counts that set prices — a stale observation is worse
+ * than a missing one, because nothing later corrects it.
+ */
+async function pruneReorgedBids(
+  admin: AdminClient,
+  fromBlock: bigint,
+  toBlock: bigint,
+  seen: Set<string>,
+): Promise<number> {
+  const { data: recorded, error } = await admin
+    .from('demand_bids')
+    .select('id,tx_hash,log_index')
+    .gte('block_number', Number(fromBlock))
+    .lte('block_number', Number(toBlock));
+  if (error) throw error;
+
+  const orphaned = (recorded ?? [])
+    .filter((row) => !seen.has(`${row.tx_hash}:${row.log_index}`))
+    .map((row) => row.id as string);
+  if (orphaned.length === 0) return 0;
+
+  const { error: deleteError } = await admin.from('demand_bids').delete().in('id', orphaned);
+  if (deleteError) throw deleteError;
+  return orphaned.length;
 }
 
 /** Resolves attributes and block times for a batch of bids, then records them. */

@@ -28,8 +28,21 @@ import {
  */
 const GRADABLE = ['awaiting_grading'];
 
-/** Signed-URL lifetime. Long enough to assess a stone, short enough not to be shareable. */
-const SIGNED_URL_TTL_SECONDS = 900;
+/**
+ * Signed-URL lifetime.
+ *
+ * A signed URL cannot be withdrawn once issued — it carries its own
+ * authorisation and Supabase offers no revocation — so this window *is* the
+ * access control. A verifier who is removed from an organisation, or whose
+ * organisation is deactivated, keeps whatever URLs they already hold until they
+ * lapse, and these point at certificates carrying a seller's name and appraisal
+ * history.
+ *
+ * Fifteen minutes was longer than any of that needs. Five matches the seller's
+ * own path, still comfortably outlasts loading a page of images, and is
+ * re-minted on every queue read for anyone still entitled to one.
+ */
+const SIGNED_URL_TTL_SECONDS = 300;
 
 Deno.serve(async (request) => {
   const early = preflight(request);

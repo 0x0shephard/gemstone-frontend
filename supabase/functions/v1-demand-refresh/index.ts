@@ -56,13 +56,15 @@ Deno.serve(async (request) => {
         504,
       );
     }
-    const { scannedThrough, inserted, caughtUp, blocksBehind } = ingested;
+    const { scannedThrough, inserted, removed, caughtUp, blocksBehind } = ingested;
     phases.mark('ingest');
     const demand = await currentDemand(admin);
     phases.mark('aggregate');
     return json({
       scannedThroughBlock: scannedThrough.toString(),
       newBids: inserted,
+      // Non-zero means a reorg replaced blocks this pass had already recorded.
+      reorgedBidsRemoved: removed,
       // A pass that ran out of budget is reported rather than presented as a
       // clean sweep. Without this the caller cannot tell "nothing to do" from
       // "still tens of thousands of blocks behind", which is the difference

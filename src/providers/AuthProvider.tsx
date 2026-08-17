@@ -13,6 +13,7 @@ import { createSiweMessage } from 'viem/siwe';
 import { useSignMessage } from 'wagmi';
 import { supabase } from './supabase';
 import { queryClient } from './queryClient';
+import { disablePush } from '@/services/offchain/push';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
 import { functionErrorMessage } from '@/lib/supabaseFunctions';
@@ -172,6 +173,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    /*
+     * The device stops being this account's, and this has to happen first.
+     *
+     * A push subscription is keyed by endpoint, which identifies the browser
+     * rather than the person. Left in place, the row still names the account
+     * that signed out while the device now belongs to whoever signs in next, so
+     * notifications meant for one person surface on another's screen. Clearing
+     * the query cache does nothing about it, because the subscription is server
+     * state — and removing the row goes through RLS, so it only works while the
+     * session that owns it still exists.
+     *
+     * Best-effort: a failure here must not leave someone still signed in.
+     */
+    await disablePush().catch(() => undefined);
+
     if (supabase) await supabase.auth.signOut();
     setUser(null);
     setSession(null);
