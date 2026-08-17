@@ -78,8 +78,18 @@ export default function MarketplacePage() {
         </div>
       </section>
 
-      <div className="rounded-[4px] border border-line/[0.07] bg-line/[0.018] p-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+      {/*
+        Search and sort share a row; the varieties get their own beneath.
+
+        All three were one row, and flexbox resolved it badly: `flex-1` is
+        `flex: 1 1 0%`, so the search began at zero width and grew only into
+        space left over, while the pills carried `flex-basis: auto` and claimed
+        their content width first. Past a handful of varieties nothing was left
+        over, the input collapsed to nothing, and its absolutely positioned icon
+        went on rendering — a magnifier sitting on top of the first pill.
+      */}
+      <div className="space-y-3 rounded-[4px] border border-line/[0.07] bg-line/[0.018] p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1">
             <span className="sr-only">Search marketplace</span>
             <svg
@@ -93,26 +103,27 @@ export default function MarketplacePage() {
               <circle cx="10.5" cy="10.5" r="6" />
               <path d="m15 15 4 4" />
             </svg>
+            {/* A floor as well as a share, so it can never be squeezed away. */}
             <input
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search name, gemstone type, origin or ID"
-              className="h-11 w-full rounded-[4px] border border-line/[0.09] bg-inset pl-10 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-dim focus:border-atelier/45"
+              className="h-11 w-full min-w-[12rem] rounded-[4px] border border-line/[0.09] bg-inset pl-10 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-dim focus:border-atelier/45"
             />
           </label>
-          <FilterPills options={filters} value={filter} onChange={setFilter} />
           <select
             aria-label="Sort marketplace listings"
             value={sort}
             onChange={(e) => setSort(e.target.value as Sort)}
-            className="h-11 rounded-[4px] border border-line/[0.09] bg-inset px-3 text-[12.5px] text-ink-soft outline-none focus:border-atelier/45"
+            className="h-11 shrink-0 rounded-[4px] border border-line/[0.09] bg-inset px-3 text-[12.5px] text-ink-soft outline-none focus:border-atelier/45"
           >
             <option value="value-desc">Value · high to low</option>
             <option value="value-asc">Value · low to high</option>
             <option value="reserve">Reserve · needs funding</option>
           </select>
         </div>
+        <FilterPills options={filters} value={filter} onChange={setFilter} />
       </div>
 
       {isLoading ? (
