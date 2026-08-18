@@ -84,6 +84,7 @@ export function NotificationBell() {
         onClick={() => setOpen((value) => !value)}
         className="relative flex h-10 w-10 items-center justify-center rounded-[4px] border border-line/[0.1] text-ink transition-colors hover:bg-line/[0.035]"
         aria-label={unread.length ? `Notifications, ${unread.length} unread` : 'Notifications'}
+        aria-haspopup="dialog"
         aria-expanded={open}
       >
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -106,12 +107,16 @@ export function NotificationBell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 flex max-h-[calc(100dvh-5rem)] w-[min(21rem,calc(100vw-2rem))] flex-col overflow-y-auto rounded-[4px] border border-line/[0.1] bg-card shadow-xl">
-          <div className="flex items-center justify-between border-b border-line/[0.06] px-4 py-3">
+        <div
+          role="dialog"
+          aria-label="Notifications"
+          className="dc-header-popover dc-header-popover-notifications z-50 flex flex-col overflow-hidden overscroll-contain rounded-[4px] border border-line/[0.1] bg-card shadow-xl"
+        >
+          <div className="flex shrink-0 flex-col items-start gap-2 border-b border-line/[0.06] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
             <span className="text-[11px] font-semibold uppercase tracking-[0.13em] text-ink-dim">
               Notifications
             </span>
-            <div className="flex items-center gap-3">
+            <div className="flex w-full items-center justify-end gap-3 sm:w-auto">
               {unread.length > 0 && (
                 <button
                   type="button"
@@ -133,9 +138,11 @@ export function NotificationBell() {
             </div>
           </div>
 
-          <PushToggle />
+          <div className="shrink-0">
+            <PushToggle />
+          </div>
 
-          <div className="max-h-[26rem] overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             {notifications.length === 0 ? (
               <p className="px-4 py-8 text-center text-[12.5px] text-ink-dim">
                 Nothing needs your attention.

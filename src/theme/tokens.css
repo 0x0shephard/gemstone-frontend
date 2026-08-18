@@ -12,6 +12,50 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  /*
+   * Header controls live near the right edge, so a desktop-style popover that
+   * is right-aligned to its trigger can start outside a narrow phone viewport.
+   * On phones, pin every header popover to the viewport gutters instead. From
+   * `sm` upward there is enough room to restore the compact trigger alignment.
+   *
+   * The height uses `dvh`, not `vh`, because mobile browser chrome changes the
+   * visible viewport while the page is open. Individual panels decide which
+   * part of their contents scrolls.
+   */
+  .dc-header-popover {
+    position: fixed;
+    inset-inline: 0.75rem;
+    top: calc(5.25rem + env(safe-area-inset-top, 0px));
+    width: auto;
+    max-width: calc(100vw - 1.5rem);
+    max-height: calc(100dvh - 6rem - env(safe-area-inset-bottom, 0px));
+  }
+
+  .dc-header-popover-account {
+    --dc-header-popover-width: 340px;
+  }
+
+  .dc-header-popover-notifications {
+    --dc-header-popover-width: 21rem;
+  }
+
+  .dc-header-popover-faucet {
+    --dc-header-popover-width: 290px;
+  }
+
+  @media (min-width: 640px) {
+    .dc-header-popover {
+      position: absolute;
+      inset-inline-start: auto;
+      inset-inline-end: 0;
+      top: calc(100% + 0.625rem);
+      width: min(var(--dc-header-popover-width), calc(100vw - 1.5rem));
+      max-height: calc(100dvh - 5rem - env(safe-area-inset-bottom, 0px));
+    }
+  }
+}
+
 /*
  * Brand palette.
  *

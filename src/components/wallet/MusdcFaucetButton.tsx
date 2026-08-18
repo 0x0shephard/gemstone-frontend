@@ -70,7 +70,7 @@ export function MusdcFaucetButton({ compact, className }: MusdcFaucetButtonProps
       {state !== 'idle' && state !== 'pending' && (
         <div
           className={cn(
-            'absolute right-0 top-[calc(100%+9px)] z-50 w-[min(290px,calc(100vw-24px))] animate-dcslideup rounded-[4px] border px-3.5 py-3 shadow-[0_18px_55px_rgba(0,0,0,.5)]',
+            'dc-header-popover dc-header-popover-faucet z-50 animate-dcslideup overflow-x-hidden overflow-y-auto overscroll-contain rounded-[4px] border px-3.5 py-3 shadow-[0_18px_55px_rgba(0,0,0,.5)]',
             state === 'success'
               ? 'border-emerald/25 bg-elevated text-emerald'
               : 'border-ruby/25 bg-elevated text-ruby',
