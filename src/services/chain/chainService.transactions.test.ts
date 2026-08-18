@@ -4,13 +4,18 @@ import { zeroAddress, zeroHash } from 'viem';
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(),
   multicall: vi.fn(),
+  getBlock: vi.fn(),
   runContractTransaction: vi.fn(),
   syncProjection: vi.fn(),
 }));
 
 vi.mock('@wagmi/core', () => ({
   getAccount: () => ({ address: undefined }),
-  getPublicClient: () => ({ readContract: mocks.readContract, multicall: mocks.multicall }),
+  getPublicClient: () => ({
+    readContract: mocks.readContract,
+    multicall: mocks.multicall,
+    getBlock: mocks.getBlock,
+  }),
 }));
 vi.mock('@/providers/wagmi', () => ({ wagmiConfig: {} }));
 /*
@@ -58,6 +63,7 @@ vi.mock('@/config/contracts', () => {
 });
 vi.mock('./transactionPipeline', () => ({
   runContractTransaction: mocks.runContractTransaction,
+  TransactionGuardError: class TransactionGuardError extends Error {},
 }));
 vi.mock('./projection', () => ({
   syncProjection: mocks.syncProjection,
@@ -86,6 +92,8 @@ beforeEach(() => {
   window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
   mocks.readContract.mockReset();
   mocks.multicall.mockReset();
+  mocks.getBlock.mockReset();
+  mocks.getBlock.mockResolvedValue({ timestamp: 1n });
   mocks.runContractTransaction.mockReset();
   mocks.runContractTransaction.mockResolvedValue(txResult);
   mocks.syncProjection.mockReset();
@@ -439,6 +447,23 @@ describe('chain transaction construction', () => {
         args: [10n],
       }),
     );
+  });
+
+  it('refuses an expired swap before asking the wallet for approval', async () => {
+    mocks.readContract.mockResolvedValueOnce([
+      manifest.addresses.Treasury,
+      2n,
+      3n,
+      zeroAddress,
+      0n,
+      true,
+      100n,
+      true,
+    ]);
+    mocks.getBlock.mockResolvedValueOnce({ timestamp: 101n });
+
+    await expect(chainService.acceptSwap({ offerId: 9n })).rejects.toThrow(/expired/i);
+    expect(mocks.runContractTransaction).not.toHaveBeenCalled();
   });
 
   it('constructs redemption, cancellation, and reserve-funding calls', async () => {

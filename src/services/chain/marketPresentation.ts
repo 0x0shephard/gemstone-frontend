@@ -1,6 +1,7 @@
 import { formatUnits, type Address } from 'viem';
 import { NATIVE_ASSET } from '@/config/contracts';
 import type { ProjectedEvent } from './projection';
+import type { SwapRequest } from '../types';
 
 export interface AssetDescriptor {
   symbol: string;
@@ -46,4 +47,23 @@ export function latestBidEventsForAddress(
     latestByGem.set(String(event.args.gemId), event);
   }
   return [...latestByGem.values()];
+}
+
+/**
+ * Keeps the open board honest without stranding escrowed gemstones.
+ *
+ * Accepted and cancelled records are history, not open requests. An expired
+ * offer is different: the contract still holds the proposer's offered NFT until
+ * they cancel it, so only that proposer should see it in the cleanup queue.
+ */
+export function groupActionableSwaps(swaps: SwapRequest[], viewer?: string) {
+  const normalized = viewer?.toLowerCase();
+  return {
+    active: swaps.filter((swap) => swap.status === 'Active'),
+    expiredOwned: normalized
+      ? swaps.filter(
+          (swap) => swap.status === 'Expired' && swap.proposer.toLowerCase() === normalized,
+        )
+      : [],
+  };
 }

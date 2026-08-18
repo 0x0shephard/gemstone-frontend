@@ -25,7 +25,6 @@ import type { Config } from 'wagmi';
 
 interface RelayerLike {
   restartTransport?: () => Promise<void>;
-  connected?: boolean;
 }
 
 /** The relayer, wherever this version of the stack happens to keep it. */
@@ -47,27 +46,40 @@ function findRelayer(provider: unknown): RelayerLike | undefined {
 export function reviveWalletConnectOnReturn(config: Config): () => void {
   if (typeof document === 'undefined') return () => {};
 
+  let restarting: Promise<void> | undefined;
   const wake = async () => {
     if (document.visibilityState !== 'visible') return;
     const connector = config.connectors.find((entry) => entry.id === 'walletConnect');
     if (!connector?.getProvider) return;
     try {
       const relayer = findRelayer(await connector.getProvider());
-      // Already connected means the socket survived, which is the common case on
-      // a desktop and the lucky case on a phone.
-      if (!relayer?.restartTransport || relayer.connected) return;
-      await relayer.restartTransport();
+      if (!relayer?.restartTransport) return;
+
+      /*
+       * Do not trust `relayer.connected` here. On iOS it can remain true after
+       * the underlying WebSocket was suspended, which is the exact state where
+       * MetaMask has approved but the browser keeps showing a spinner. A
+       * transport restart is idempotent, and coalescing keeps the visibility and
+       * focus events from racing each other on the same return.
+       */
+      restarting ??= relayer.restartTransport().finally(() => {
+        restarting = undefined;
+      });
+      await restarting;
     } catch {
       // A revival that fails leaves things exactly as they were.
     }
   };
 
   document.addEventListener('visibilitychange', wake);
+  // Mobile Safari sometimes restores focus without another visibility event.
+  window.addEventListener('focus', wake);
   // `pageshow` covers the back/forward cache, where a restored page can carry a
   // socket that was closed while it was frozen.
   window.addEventListener('pageshow', wake);
   return () => {
     document.removeEventListener('visibilitychange', wake);
+    window.removeEventListener('focus', wake);
     window.removeEventListener('pageshow', wake);
   };
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { BrandMark } from '@/components/ui/BrandMark';
 import { ChainSyncStatus } from '@/components/chain/ChainSyncStatus';
@@ -36,7 +37,7 @@ export function MobileDock() {
     .filter((item) => !primaryMobileItems.some((primary) => primary.to === item.to));
   const moreActive = secondaryItems.some((item) => pathname === item.to);
 
-  return (
+  return createPortal(
     <>
       {open && (
         <div
@@ -142,6 +143,7 @@ export function MobileDock() {
           <span>More</span>
         </button>
       </nav>
-    </>
+    </>,
+    document.body,
   );
 }

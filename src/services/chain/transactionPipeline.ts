@@ -22,7 +22,12 @@ import { wagmiConfig } from '@/providers/wagmi';
 import { supabase } from '@/providers/supabase';
 import { dgeNftAbi } from '@/contracts/abis';
 import type { TxResult } from '@/services/types';
-import { BroadcastPendingError, announceStep, awaitGesture } from './txSteps';
+import {
+  BroadcastPendingError,
+  WalletResponseTimeoutError,
+  announceStep,
+  awaitGesture,
+} from './txSteps';
 import {
   closeWork,
   openWork,
@@ -40,6 +45,8 @@ import {
  * and short enough that a person is not left guessing.
  */
 const RECEIPT_TIMEOUT_MS = 10 * 60 * 1_000;
+/** A wallet request must resolve or fail; it may not leave the app spinning forever. */
+const WALLET_RESPONSE_TIMEOUT_MS = 2 * 60 * 1_000;
 
 export { BroadcastPendingError, announceStep, setStepGate } from './txSteps';
 export type { StepPrompt, TransactionStep } from './txSteps';
@@ -218,7 +225,19 @@ async function runStep(
   await awaitGesture({ index, total, label: step.label, kind: step.kind });
 
   announceStep(step.kind === 'approval' ? 'approving' : 'awaiting-signature');
-  const hash = await step.send();
+  let timeoutId: number | undefined;
+  const walletTimeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(
+      () => reject(new WalletResponseTimeoutError()),
+      WALLET_RESPONSE_TIMEOUT_MS,
+    );
+  });
+  let hash: Hash;
+  try {
+    hash = await Promise.race([step.send(), walletTimeout]);
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+  }
   recordBroadcast(workId, index, hash);
 
   announceStep('confirming');
@@ -272,6 +291,7 @@ export function decodeTransactionError(error: unknown): Error {
   // Carries a hash, and must reach the UI intact — losing it here would put the
   // caller back where it started, offering a retry on a live transaction.
   if (error instanceof BroadcastPendingError) return error;
+  if (error instanceof WalletResponseTimeoutError) return error;
   if (error instanceof BaseError) {
     const reverted = error.walk(
       (candidate) => candidate instanceof ContractFunctionRevertedError,
@@ -293,7 +313,19 @@ export function decodeTransactionError(error: unknown): Error {
           'APPROVAL_REVERTED',
         );
       }
-      const reason = reverted.data?.errorName ?? reverted.reason ?? 'Contract transaction reverted';
+      if (selector === '0x177e802f' || reverted.data?.errorName === 'ERC721InsufficientApproval') {
+        return new TransactionGuardError(
+          'The gemstone transfer is not approved yet. Approve the escrow contract and continue.',
+          'APPROVAL_REVERTED',
+        );
+      }
+      const errorName = reverted.data?.errorName;
+      const reason =
+        errorName === 'Expired'
+          ? 'This offer has expired and can no longer be accepted.'
+          : errorName === 'InvalidOffer'
+            ? 'This offer is no longer open. Refresh the list to see its current state.'
+            : (errorName ?? reverted.reason ?? 'Contract transaction reverted');
       return new TransactionGuardError(reason, 'CONTRACT_REVERTED');
     }
     if (/rejected|denied/i.test(error.shortMessage)) {

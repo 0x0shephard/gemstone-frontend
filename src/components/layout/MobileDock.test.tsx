@@ -21,6 +21,13 @@ function dockAt(path: string) {
 }
 
 describe('MobileDock', () => {
+  it('renders at the document root so page transforms cannot move the fixed dock', () => {
+    dockAt('/marketplace');
+    expect(
+      screen.getByRole('navigation', { name: 'Primary mobile navigation' }).parentElement,
+    ).toBe(document.body);
+  });
+
   it('highlights Portfolio on /profile with no tab', () => {
     const { active } = dockAt('/profile');
     expect(active(/portfolio/i)).toBe(true);

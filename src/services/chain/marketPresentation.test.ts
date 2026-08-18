@@ -3,8 +3,10 @@ import type { ProjectedEvent } from './projection';
 import {
   describePaymentAsset,
   formatSwapCash,
+  groupActionableSwaps,
   latestBidEventsForAddress,
 } from './marketPresentation';
+import type { SwapRequest } from '../types';
 
 const bidder = '0x1111111111111111111111111111111111111111';
 
@@ -43,5 +45,24 @@ describe('market presentation', () => {
     expect(formatSwapCash(125_500_000n, 125_500_000_000_000_000_000n, descriptor, false)).toBe(
       'Accepter pays 125.5 mUSDC ($125.5)',
     );
+  });
+
+  it('separates open swaps from expired escrow that only the proposer can clear', () => {
+    const proposer = '0x1111111111111111111111111111111111111111';
+    const swaps = [
+      { offerId: 1n, proposer, status: 'Active' },
+      { offerId: 2n, proposer, status: 'Expired' },
+      { offerId: 3n, proposer, status: 'Accepted' },
+      { offerId: 4n, proposer, status: 'Cancelled' },
+    ] as unknown as SwapRequest[];
+
+    expect(groupActionableSwaps(swaps, proposer)).toEqual({
+      active: [swaps[0]],
+      expiredOwned: [swaps[1]],
+    });
+    expect(groupActionableSwaps(swaps, '0x2222222222222222222222222222222222222222')).toEqual({
+      active: [swaps[0]],
+      expiredOwned: [],
+    });
   });
 });

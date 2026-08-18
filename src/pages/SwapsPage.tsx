@@ -15,6 +15,7 @@ import { shortenAddress } from '@/lib/format';
 import type { SwapRequest } from '@/services/types';
 import { useAccount } from 'wagmi';
 import type { Address } from 'viem';
+import { groupActionableSwaps } from '@/services/chain/marketPresentation';
 
 /*
  * Named for what the swap is waiting on rather than for the contract's internal
@@ -70,6 +71,83 @@ function SwapSide({
   );
 }
 
+function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address }) {
+  const canCancel = viewer?.toLowerCase() === swap.proposer.toLowerCase();
+  const canAccept =
+    swap.status === 'Active' && viewer?.toLowerCase() === swap.requestedOwner.toLowerCase();
+
+  return (
+    <Card className="p-4 sm:p-5">
+      <div className="grid gap-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+        <SwapSide
+          role="Offered by"
+          account={swap.proposer}
+          name={swap.giveName}
+          displayId={swap.giveDisplayId}
+        />
+        <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
+        <div className="flex min-w-0 items-center gap-3 border-l border-line/[0.07] pl-4 sm:border-0 sm:pl-0">
+          <GemThumb
+            gem={swap.gem}
+            height={52}
+            rounded="rounded-[4px]"
+            showTag={false}
+            showCarat={false}
+            className="w-[52px] shrink-0"
+          />
+          <SwapSide
+            role="Requested from"
+            account={swap.requestedOwner}
+            name={swap.gem.name}
+            displayId={swap.gem.displayId}
+          />
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 border-t border-line/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBadge color={swap.statusColor} dot={swap.status === 'Active'}>
+              {SWAP_STATUS_LABEL[swap.status]}
+            </StatusBadge>
+            <span className="text-[13px] font-medium text-emerald">{swap.diff}</span>
+          </div>
+          {swap.status === 'Expired' && (
+            <p className="mt-2 max-w-md text-[11.5px] leading-relaxed text-ink-muted">
+              This offer expired, but the escrow still holds your offered gemstone. Cancel it to
+              return the gemstone to your wallet.
+            </p>
+          )}
+        </div>
+        {(canCancel || canAccept) && (
+          <div className="flex flex-wrap items-center gap-2">
+            {canCancel && (
+              <TxButton
+                size="sm"
+                variant="ghost"
+                action={() => dataService.cancelSwap({ offerId: swap.offerId })}
+                pendingLabel="Cancelling…"
+                telemetryFlow="swap_cancel"
+              >
+                {swap.status === 'Expired' ? 'Return my gemstone' : 'Cancel'}
+              </TxButton>
+            )}
+            {canAccept && (
+              <TxButton
+                size="sm"
+                action={() => dataService.acceptSwap({ offerId: swap.offerId })}
+                pendingLabel="Accepting…"
+                telemetryFlow="swap_accept"
+              >
+                Accept swap
+              </TxButton>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export default function SwapsPage() {
   const { data: swaps, isLoading, isError } = useSwaps();
   const { address } = useAccount();
@@ -78,6 +156,7 @@ export default function SwapsPage() {
   const modals = useGemModals();
   const [offeredId, setOfferedId] = useState('');
   const offered = ownedGems.find((g) => g.gemId.toString() === offeredId);
+  const { active: activeSwaps, expiredOwned } = groupActionableSwaps(swaps ?? [], address);
 
   return (
     <div className="grid gap-6 xl:grid-cols-[.82fr_1.4fr]">
@@ -124,81 +203,37 @@ export default function SwapsPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-display text-[17px] font-medium text-ink">Open swap requests</h3>
-          <span className="font-mono text-[11px] text-ink-dim">{swaps?.length ?? 0} active</span>
+          <span className="font-mono text-[11px] text-ink-dim">{activeSwaps.length} active</span>
         </div>
         {isLoading ? (
           <Skeleton className="h-40" />
         ) : isError ? (
           <ErrorState />
-        ) : !swaps || swaps.length === 0 ? (
+        ) : activeSwaps.length === 0 ? (
           <EmptyState title="No open swaps" hint="Propose one to get started." />
         ) : (
-          swaps.map((s) => {
-            const canCancel = address?.toLowerCase() === s.proposer.toLowerCase();
-            const canAccept = address?.toLowerCase() === s.requestedOwner.toLowerCase();
-            return (
-              <Card key={s.offerId.toString()} className="p-4 sm:p-5">
-                <div className="grid gap-4 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                  <SwapSide
-                    role="Offered by"
-                    account={s.proposer}
-                    name={s.giveName}
-                    displayId={s.giveDisplayId}
-                  />
-                  <span className="hidden text-[20px] text-ink-dim sm:block">⇄</span>
-                  <div className="flex min-w-0 items-center gap-3 border-l border-line/[0.07] pl-4 sm:border-0 sm:pl-0">
-                    <GemThumb
-                      gem={s.gem}
-                      height={52}
-                      rounded="rounded-[4px]"
-                      showTag={false}
-                      showCarat={false}
-                      className="w-[52px] shrink-0"
-                    />
-                    <SwapSide
-                      role="Requested from"
-                      account={s.requestedOwner}
-                      name={s.gem.name}
-                      displayId={s.gem.displayId}
-                    />
-                  </div>
-                </div>
-                <div className="mt-4 flex flex-col gap-3 border-t border-line/[0.06] pt-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <StatusBadge color={s.statusColor} dot={s.status === 'Active'}>
-                      {SWAP_STATUS_LABEL[s.status]}
-                    </StatusBadge>
-                    <span className="text-[13px] font-medium text-emerald">{s.diff}</span>
-                  </div>
-                  {(canCancel || canAccept) && (
-                    <div className="flex flex-wrap items-center gap-2">
-                      {canCancel && (
-                        <TxButton
-                          size="sm"
-                          variant="ghost"
-                          action={() => dataService.cancelSwap({ offerId: s.offerId })}
-                          pendingLabel="Cancelling…"
-                          telemetryFlow="swap_cancel"
-                        >
-                          Cancel
-                        </TxButton>
-                      )}
-                      {canAccept && (
-                        <TxButton
-                          size="sm"
-                          action={() => dataService.acceptSwap({ offerId: s.offerId })}
-                          pendingLabel="Accepting…"
-                          telemetryFlow="swap_accept"
-                        >
-                          Accept swap
-                        </TxButton>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </Card>
-            );
-          })
+          activeSwaps.map((swap) => (
+            <SwapCard key={swap.offerId.toString()} swap={swap} viewer={address} />
+          ))
+        )}
+
+        {!isLoading && !isError && expiredOwned.length > 0 && (
+          <section className="space-y-3 pt-3" aria-labelledby="expired-swaps-heading">
+            <div>
+              <h3
+                id="expired-swaps-heading"
+                className="font-display text-[17px] font-medium text-ink"
+              >
+                Expired swaps to clear
+              </h3>
+              <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
+                These are not open offers. Cancel them to release your escrowed gemstones.
+              </p>
+            </div>
+            {expiredOwned.map((swap) => (
+              <SwapCard key={swap.offerId.toString()} swap={swap} viewer={address} />
+            ))}
+          </section>
         )}
       </div>
 

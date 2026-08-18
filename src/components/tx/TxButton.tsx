@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { TxResult } from '@/services/types';
 import {
   BroadcastPendingError,
+  WalletResponseTimeoutError,
   setStepGate,
   type StepPrompt,
   type TransactionStep,
@@ -23,7 +24,8 @@ import { useQueryClient } from '@tanstack/react-query';
  * outcome is unknown. It is deliberately terminal for this button — retrying
  * from here is how the same purchase gets paid for twice.
  */
-type TxState = 'idle' | 'awaiting-gesture' | 'pending' | 'success' | 'error' | 'broadcast';
+type TxState =
+  'idle' | 'awaiting-gesture' | 'pending' | 'success' | 'error' | 'broadcast' | 'unknown';
 
 /**
  * What each stage is actually waiting on.
@@ -149,11 +151,21 @@ export function TxButton({
         setError(e.message);
         setState('broadcast');
         captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'broadcast' });
+      } else if (e instanceof WalletResponseTimeoutError) {
+        setError(e.message);
+        setState('unknown');
+        captureProductEvent('transaction_failed', {
+          flow: telemetryFlow,
+          result: 'wallet_timeout',
+        });
       } else {
         setError(e instanceof Error ? e.message : 'Transaction failed');
         setState('error');
         captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'error' });
       }
+      // A wallet can broadcast successfully even if its relay returns an error.
+      // Refreshing chain-backed data removes work that actually completed.
+      void queryClient.invalidateQueries();
     } finally {
       setStepGate(undefined);
       continueRef.current = undefined;
@@ -167,24 +179,27 @@ export function TxButton({
         so a second click would have run the same purchase or listing again
         against a wallet that had already paid.
       */}
-      {state !== 'success' && state !== 'broadcast' && state !== 'awaiting-gesture' && (
-        <Button
-          variant={variant}
-          size={size}
-          block={block}
-          disabled={disabled || state === 'pending'}
-          onClick={run}
-        >
-          {state === 'pending' ? (
-            <>
-              <Spinner />
-              {step ? STEP_LABEL[step] : pendingLabel}
-            </>
-          ) : (
-            children
-          )}
-        </Button>
-      )}
+      {state !== 'success' &&
+        state !== 'broadcast' &&
+        state !== 'unknown' &&
+        state !== 'awaiting-gesture' && (
+          <Button
+            variant={variant}
+            size={size}
+            block={block}
+            disabled={disabled || state === 'pending'}
+            onClick={run}
+          >
+            {state === 'pending' ? (
+              <>
+                <Spinner />
+                {step ? STEP_LABEL[step] : pendingLabel}
+              </>
+            ) : (
+              children
+            )}
+          </Button>
+        )}
 
       {/*
         One tap per wallet request. The wallet is opened from this handler, so
@@ -257,7 +272,7 @@ export function TxButton({
           </a>
         </div>
       )}
-      {state === 'error' && (
+      {(state === 'error' || state === 'unknown') && (
         <p
           role="alert"
           className="rounded-[4px] border border-ruby/20 bg-ruby/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ruby"

@@ -78,3 +78,19 @@ export class BroadcastPendingError extends Error {
     this.name = 'BroadcastPendingError';
   }
 }
+
+/**
+ * The wallet app was opened, but its response never made it back to the page.
+ *
+ * There is deliberately no retry signal here. The wallet may have submitted the
+ * transaction even though the relay lost the reply, so repeating immediately is
+ * less safe than checking wallet activity and refreshing the chain-backed view.
+ */
+export class WalletResponseTimeoutError extends Error {
+  constructor() {
+    super(
+      'The wallet did not return a result. Check MetaMask Activity, then refresh this page before trying again.',
+    );
+    this.name = 'WalletResponseTimeoutError';
+  }
+}

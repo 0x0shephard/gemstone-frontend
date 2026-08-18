@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TxButton } from './TxButton';
 import type { TxResult } from '@/services/types';
+import { WalletResponseTimeoutError } from '@/services/chain/txSteps';
 
 vi.mock('@/lib/telemetry', () => ({ captureProductEvent: () => {} }));
 vi.mock('@/config/chains', () => ({
@@ -66,5 +67,18 @@ describe('TxButton', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('Insufficient payment-asset balance.'),
     );
     expect(screen.getByRole('button', { name: /pay/i })).toBeEnabled();
+  });
+
+  it('stops buffering without offering an unsafe retry when the wallet never replies', async () => {
+    renderButton({
+      action: async () => {
+        throw new WalletResponseTimeoutError();
+      },
+    });
+    await userEvent.click(screen.getByRole('button', { name: /pay/i }));
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(/check metamask activity/i),
+    );
+    expect(screen.queryByRole('button', { name: /pay/i })).not.toBeInTheDocument();
   });
 });

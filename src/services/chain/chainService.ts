@@ -62,7 +62,11 @@ import type {
 import { syncProjection, type ProjectionSnapshot } from './projection';
 import { readMetadata, trait } from './metadata';
 import { gatewayUrl, resolveIpfsGateways } from '@/config/ipfs';
-import { runContractTransaction, type Approval } from './transactionPipeline';
+import {
+  runContractTransaction,
+  TransactionGuardError,
+  type Approval,
+} from './transactionPipeline';
 import {
   describePaymentAsset,
   formatSwapCash,
@@ -1413,6 +1417,33 @@ export const chainService: IDataService = {
       functionName: 'offers',
       args: [request.offerId],
     })) as readonly [Address, bigint, bigint, Address, bigint, boolean, bigint, boolean];
+    if (!offer[7]) {
+      throw new TransactionGuardError(
+        'This swap is no longer open. Refresh the list to see its current state.',
+        'CONTRACT_REVERTED',
+      );
+    }
+    const [latestBlock, requestedOwner] = await Promise.all([
+      client.getBlock(),
+      client.readContract({
+        ...contract('DGENFT'),
+        functionName: 'ownerOf',
+        args: [offer[2]],
+      }) as Promise<Address>,
+    ]);
+    if (offer[6] <= latestBlock.timestamp) {
+      throw new TransactionGuardError(
+        'This swap has expired. Ask the proposer to cancel it and create a new one.',
+        'CONTRACT_REVERTED',
+      );
+    }
+    const connected = getAccount(wagmiConfig).address;
+    if (connected && !isAddressEqual(connected, requestedOwner)) {
+      throw new TransactionGuardError(
+        `Connect the wallet that owns requested token #${offer[2].toString()} to accept this swap.`,
+        'WRONG_WALLET',
+      );
+    }
     const approvals: Approval[] = [
       {
         kind: 'erc721' as const,
