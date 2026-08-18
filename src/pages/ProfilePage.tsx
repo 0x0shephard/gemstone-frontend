@@ -33,7 +33,7 @@ export default function ProfilePage() {
   const { address } = useAccount();
   const { user } = useAuth();
   const { status: kyc } = useKyc();
-  const { data: profile, isLoading } = useProfile(address);
+  const { data: profile, isLoading, isError, error, refetch } = useProfile(address);
   const { data: pendingProceeds, refetch: refetchPendingProceeds } =
     usePendingTreasuryPayout(address);
   const modals = useGemModals();
@@ -135,6 +135,33 @@ export default function ProfilePage() {
             No wallet is connected, so this page has nothing to read. Connect the wallet that holds
             your tokens — signing in alone does not link one.
           </p>
+        </Card>
+      )}
+
+      {/*
+        A failed read is not an empty portfolio, and until now the two looked
+        identical: every figure below falls back to zero when `profile` is
+        undefined, so a chain that could not be reached rendered as a wallet that
+        owns nothing. Telling someone they hold no tokens when the truth is that
+        nobody could find out is the worst of the two mistakes.
+      */}
+      {isError && (
+        <Card className="border-ruby/25 bg-ruby/[0.05] p-4">
+          <h3 className="text-[13px] font-semibold text-ink">Your portfolio could not be read</h3>
+          <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
+            This is a problem reaching the chain, not a statement about what you own — nothing below
+            is reliable until it succeeds.
+          </p>
+          {error instanceof Error && (
+            <p className="mt-2 break-words font-mono text-[11px] text-ink-dim">{error.message}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="dc-btn-anim mt-3 h-9 rounded-[4px] border border-line/[0.12] px-3 text-[12px] font-semibold text-ink"
+          >
+            Try again
+          </button>
         </Card>
       )}
 
