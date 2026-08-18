@@ -20,4 +20,10 @@ if (typeof window !== 'undefined') {
     const { state } = (event as CustomEvent<{ state?: string }>).detail ?? {};
     if (state === 'synced' || state === 'stale') void queryClient.invalidateQueries();
   });
+  // Fired after the new projection snapshot has actually been published. The
+  // lower-level `synced` event occurs just before that assignment, so relying on
+  // it alone can refetch the portfolio one tick too early on a cold phone.
+  window.addEventListener('dc:chain-snapshot-ready', () => {
+    void queryClient.invalidateQueries();
+  });
 }

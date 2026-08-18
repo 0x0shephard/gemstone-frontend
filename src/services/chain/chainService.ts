@@ -136,6 +136,12 @@ function projection(force = false): Promise<ProjectionSnapshot> {
     projectionPromise = syncProjection(client)
       .then((snapshot) => {
         settledSnapshot = snapshot;
+        /*
+         * `syncProjection` announces `synced` before returning. Consumers that
+         * refetch on that event can therefore run one tick too early and still
+         * see no settled snapshot. Announce readiness only after publishing it.
+         */
+        window.dispatchEvent(new CustomEvent('dc:chain-snapshot-ready'));
         return snapshot;
       })
       .catch((error) => {
@@ -866,7 +872,39 @@ export const chainService: IDataService = {
         [...walletOwned, ...escrowedListings].map((gem) => [gem.gemId.toString(), gem]),
       ).values(),
     ];
-    const snapshot = await projection();
+    const ownedStats = {
+      portfolioValueUsd: owned.reduce((sum, gem) => sum + gem.value, 0),
+      ownedCount: owned.length,
+      reserveShortfallUsd: owned.reduce(
+        (sum, gem) => sum + Number(formatUnits(gem.reserveShortfallUsd, 18)),
+        0,
+      ),
+    };
+
+    /*
+     * Ownership is live contract state and is already complete at this point.
+     * Event projection supplies bids, offers, swaps, redemptions and history, but
+     * a cold phone may need minutes to replay it. Waiting here withheld a known
+     * holding and left the always-mounted KPI cards showing their fallback zeros,
+     * which looked exactly like a successful empty portfolio.
+     *
+     * Return the authoritative holding immediately. The background projection
+     * emits `dc:chain-snapshot-ready` after publishing its snapshot, which
+     * invalidates this query and fills the event-backed tabs on the next pass.
+     */
+    const snapshot = settledSnapshot;
+    if (!snapshot) {
+      void projection().catch(() => undefined);
+      return {
+        owned,
+        bids: [],
+        offers: [],
+        swaps: [],
+        redemptions: [],
+        activity: [],
+        stats: { ...ownedStats, activeBids: 0 },
+      };
+    }
     const bidEvents = latestBidEventsForAddress(snapshot.events, address);
     const now = BigInt(Math.floor(Date.now() / 1_000));
     const bids = (
@@ -984,13 +1022,8 @@ export const chainService: IDataService = {
         : [],
       activity: activityFor(snapshot, address),
       stats: {
-        portfolioValueUsd: owned.reduce((sum, gem) => sum + gem.value, 0),
-        ownedCount: owned.length,
+        ...ownedStats,
         activeBids: bids.filter((bid) => bid.secondsLeft > 0).length,
-        reserveShortfallUsd: owned.reduce(
-          (sum, gem) => sum + Number(formatUnits(gem.reserveShortfallUsd, 18)),
-          0,
-        ),
       },
     };
   },

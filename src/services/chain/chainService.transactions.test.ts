@@ -141,6 +141,48 @@ describe('chain profile reads', () => {
 
     await expect(chainService.getProfile(owner)).rejects.toThrow('mobile ownerOf request failed');
   });
+
+  it('returns owned tokens without waiting for the event projection', async () => {
+    const owner = '0x5f8db7637281c6d614ea4344d21752d5ba96d3e2' as const;
+    const mintedGem = { ...registryGem(usd(1_000)), tokenId: 18n, status: 5 };
+
+    mocks.multicall.mockResolvedValue([
+      { status: 'success', result: mintedGem },
+      { status: 'failure', error: new Error('InvalidGem') },
+    ]);
+    mocks.readContract.mockImplementation(
+      async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+        if (functionName === 'getGem') {
+          if (args?.[0] === 1n) return mintedGem;
+          throw new Error('InvalidGem');
+        }
+        if (functionName === 'ownerOf') return owner;
+        if (
+          functionName === 'reserveBalanceUsd' ||
+          functionName === 'shortfallUsd' ||
+          functionName === 'requiredReserveUsd'
+        ) {
+          return 0n;
+        }
+        if (functionName === 'canRedeem') return true;
+        if (functionName === 'secondaryFeeBps') return 250;
+        if (functionName === 'listings') return [zeroAddress, 0n];
+        throw new Error(`Unexpected read: ${functionName}`);
+      },
+    );
+    mocks.syncProjection.mockReturnValue(new Promise(() => undefined));
+
+    const profile = await Promise.race([
+      chainService.getProfile(owner),
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error('profile waited for projection')), 100),
+      ),
+    ]);
+
+    expect(profile.stats.ownedCount).toBe(1);
+    expect(profile.owned.map((gem) => gem.tokenId)).toEqual([18n]);
+    expect(profile.activity).toEqual([]);
+  });
 });
 
 describe('chain transaction construction', () => {
