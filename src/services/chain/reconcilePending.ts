@@ -1,6 +1,7 @@
 import { getPublicClient } from '@wagmi/core';
 import type { Hash, PublicClient } from 'viem';
 import { wagmiConfig } from '@/providers/wagmi';
+import { activeChain } from '@/config/chains';
 import {
   closeWork,
   hasBroadcastStep,
@@ -48,7 +49,10 @@ export async function reconcilePendingWork(): Promise<void> {
   const outstanding = listPendingWork().filter(hasBroadcastStep);
   if (outstanding.length === 0) return;
 
-  const client = getPublicClient(wagmiConfig) as PublicClient | undefined;
+  // Same reason as the data service: a receipt is looked up on the chain the
+  // transaction was sent to, which is the app's, not wherever the wallet drifted.
+  const client = getPublicClient(wagmiConfig, { chainId: activeChain.id }) as
+    PublicClient | undefined;
   if (!client) return;
 
   let anySettled = false;

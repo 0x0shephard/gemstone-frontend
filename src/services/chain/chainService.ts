@@ -17,6 +17,7 @@ import {
   type DeploymentManifest,
 } from '@/config/contracts';
 import { env } from '@/config/env';
+import { activeChain } from '@/config/chains';
 import { ownershipPathSteps } from '@/content/ownershipPath';
 import { contracts } from '@/contracts';
 import { decorate } from '@/lib/gem';
@@ -78,7 +79,18 @@ type RegistryGem = readonly [Address, Address, string, Hash, bigint, bigint, Has
 };
 
 const manifest: DeploymentManifest = requireDeploymentManifest();
-const client = getPublicClient(wagmiConfig) as PublicClient;
+/*
+ * Pinned to the chain the app targets, never to the one the wallet happens to be
+ * on. `getPublicClient` without a chain follows the connection, which was
+ * harmless only while a single chain was configured — the moment another was
+ * added so a wrong network could be detected, every read from a wallet sitting
+ * on mainnet went to mainnet, where none of these contracts exist. The portfolio
+ * then reported an empty wallet rather than an unreachable one.
+ *
+ * Reads describe the protocol, which lives in exactly one place. Only writes care
+ * where the wallet is, and `ensureChain` moves it there first.
+ */
+const client = getPublicClient(wagmiConfig, { chainId: activeChain.id }) as PublicClient;
 let projectionPromise: Promise<ProjectionSnapshot> | undefined;
 let settledSnapshot: ProjectionSnapshot | undefined;
 let gemIdsPromise: Promise<bigint[]> | undefined;
