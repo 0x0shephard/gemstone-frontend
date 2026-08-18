@@ -7,6 +7,7 @@ import {
   trustWallet,
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
+import { http } from 'viem';
 import { env, walletConnectConfigured } from '@/config/env';
 import { activeChain, supportedChains } from '@/config/chains';
 import { createRpcTransport, resolveRpcUrls } from '@/config/rpc';
@@ -74,6 +75,20 @@ export const wagmiConfig = getDefaultConfig({
   chains: supportedChains,
   transports: {
     [activeChain.id]: rpcTransport,
+    /*
+     * The other configured chains get a default transport rather than ours.
+     *
+     * They are listed so a wallet arriving on the wrong network can be seen and
+     * switched away from, not so the app reads from them — and pointing them at
+     * the Sepolia RPC would answer questions about a chain with the wrong data.
+     * `http()` with no URL uses the chain's own public endpoint, which is never
+     * asked for anything beyond identifying where the wallet is.
+     */
+    ...Object.fromEntries(
+      supportedChains
+        .filter((chain) => chain.id !== activeChain.id)
+        .map((chain) => [chain.id, http()]),
+    ),
   },
   multiInjectedProviderDiscovery: false,
   ssr: false,

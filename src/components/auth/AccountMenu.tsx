@@ -277,6 +277,20 @@ export function AccountMenu({ className }: AccountMenuProps) {
                             <WalletAddress address={address} label="Your receiving address" />
                           </div>
                         )}
+                        {/*
+                          Said rather than left blank. The verify button hides on
+                          the wrong network, which on its own reads as the step
+                          having vanished — and this is the state a WalletConnect
+                          session lands in, since it brings whatever chain the
+                          wallet already had.
+                        */}
+                        {wrongNetwork && !walletVerified && address && (
+                          <p className="mt-2 rounded-[4px] border border-amber/25 bg-amber/[0.06] p-2.5 text-[11.5px] leading-relaxed text-ink">
+                            Your wallet is on a different network. Switch it to {activeChain.name} —
+                            use “Fix” above, or change networks in your wallet — and the
+                            verification step will appear.
+                          </p>
+                        )}
                         {!wrongNetwork && !walletVerified && address && (
                           <button
                             type="button"
