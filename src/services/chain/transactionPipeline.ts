@@ -11,7 +11,9 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   WaitForTransactionReceiptTimeoutError,
+  encodeFunctionData,
   erc20Abi,
+  toHex,
   type Abi,
   type Address,
   type Hash,
@@ -38,6 +40,11 @@ import {
 } from './pendingWork';
 import { getTransactionAuthSnapshot } from '@/providers/authSnapshot';
 import { PreflightTimeoutError, withPreflightTimeout } from './preflight';
+import {
+  requestWalletConnectTransaction,
+  walletConnectSupportsChain,
+  type WalletConnectProviderLike,
+} from './walletConnectRouting';
 
 /**
  * Ceiling on waiting for a receipt.
@@ -156,6 +163,15 @@ async function ensureChain(): Promise<void> {
   const account = getAccount(wagmiConfig);
   if (account.chainId === env.chainId) return;
 
+  if (account.connector?.id === 'walletConnect' && account.connector.getProvider) {
+    const provider = (await account.connector.getProvider()) as WalletConnectProviderLike;
+    if (walletConnectSupportsChain(provider, env.chainId)) return;
+    throw new TransactionGuardError(
+      `Reconnect the wallet and approve ${activeChain.name} when asked. The current WalletConnect session did not authorise it.`,
+      'WRONG_WALLET',
+    );
+  }
+
   /*
    * A chain switch is a wallet interaction, not a read-only preflight check.
    * Starting it after awaited auth work meant the original button gesture was
@@ -181,6 +197,35 @@ async function ensureChain(): Promise<void> {
       'WRONG_WALLET',
     );
   }
+}
+
+interface PreparedWrite {
+  address: Address;
+  abi: Abi;
+  functionName: string;
+  args?: readonly unknown[];
+  value?: bigint;
+}
+
+/** Submit a simulated write, routing multichain WalletConnect sessions directly. */
+async function submitPreparedWrite(account: Address, request: PreparedWrite): Promise<Hash> {
+  const connector = getAccount(wagmiConfig).connector;
+  if (connector?.id !== 'walletConnect' || !connector.getProvider) {
+    return (await writeContract(wagmiConfig, request as never)) as Hash;
+  }
+
+  const provider = (await connector.getProvider()) as WalletConnectProviderLike;
+  const data = encodeFunctionData({
+    abi: request.abi,
+    functionName: request.functionName,
+    args: request.args,
+  } as never);
+  return requestWalletConnectTransaction(provider, env.chainId, {
+    from: account,
+    to: request.address,
+    data,
+    ...(request.value && request.value > 0n ? { value: toHex(request.value) } : {}),
+  });
 }
 
 async function ensureFunds(
@@ -232,7 +277,7 @@ async function planApproval(
           functionName: 'approve',
           args: [approval.spender, approval.amountOrTokenId],
         });
-        return (await writeContract(wagmiConfig, simulation.request)) as Hash;
+        return submitPreparedWrite(account, simulation.request);
       },
     };
   }
@@ -468,7 +513,7 @@ export async function runContractTransaction(input: ContractTransaction): Promis
             CHAIN_PREFLIGHT_TIMEOUT_MS,
           ))
         ).request;
-        return (await writeContract(wagmiConfig, request)) as Hash;
+        return submitPreparedWrite(account, request);
       },
     });
 
