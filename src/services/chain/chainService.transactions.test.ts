@@ -3,13 +3,14 @@ import { zeroAddress, zeroHash } from 'viem';
 
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(),
+  multicall: vi.fn(),
   runContractTransaction: vi.fn(),
   syncProjection: vi.fn(),
 }));
 
 vi.mock('@wagmi/core', () => ({
   getAccount: () => ({ address: undefined }),
-  getPublicClient: () => ({ readContract: mocks.readContract }),
+  getPublicClient: () => ({ readContract: mocks.readContract, multicall: mocks.multicall }),
 }));
 vi.mock('@/providers/wagmi', () => ({ wagmiConfig: {} }));
 /*
@@ -82,7 +83,9 @@ const registryGem = (priceUsd: bigint) => ({
 });
 
 beforeEach(() => {
+  window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
   mocks.readContract.mockReset();
+  mocks.multicall.mockReset();
   mocks.runContractTransaction.mockReset();
   mocks.runContractTransaction.mockResolvedValue(txResult);
   mocks.syncProjection.mockReset();
@@ -95,6 +98,48 @@ beforeEach(() => {
       cached: false,
       partiallySynced: false,
     },
+  });
+});
+
+describe('chain profile reads', () => {
+  it('reports a failed gem-discovery read instead of caching an empty registry', async () => {
+    const rpcError = new Error('mobile RPC disconnected');
+    mocks.multicall.mockResolvedValue([{ status: 'failure', error: rpcError }]);
+    mocks.readContract.mockRejectedValue(rpcError);
+
+    await expect(chainService.getGems()).rejects.toThrow('mobile RPC disconnected');
+  });
+
+  it('reports a failed ownership read instead of returning an empty portfolio', async () => {
+    const owner = '0x5f8db7637281c6d614ea4344d21752d5ba96d3e2' as const;
+    const mintedGem = { ...registryGem(usd(1_000)), tokenId: 18n, status: 5 };
+
+    mocks.multicall.mockResolvedValue([
+      { status: 'success', result: mintedGem },
+      { status: 'failure', error: new Error('InvalidGem') },
+    ]);
+    mocks.readContract.mockImplementation(
+      async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+        if (functionName === 'getGem') {
+          if (args?.[0] === 1n) return mintedGem;
+          throw new Error('InvalidGem');
+        }
+        if (functionName === 'ownerOf') throw new Error('mobile ownerOf request failed');
+        if (
+          functionName === 'reserveBalanceUsd' ||
+          functionName === 'shortfallUsd' ||
+          functionName === 'requiredReserveUsd'
+        ) {
+          return 0n;
+        }
+        if (functionName === 'canRedeem') return true;
+        if (functionName === 'secondaryFeeBps') return 250;
+        if (functionName === 'listings') return [zeroAddress, 0n];
+        throw new Error(`Unexpected read: ${functionName}`);
+      },
+    );
+
+    await expect(chainService.getProfile(owner)).rejects.toThrow('mobile ownerOf request failed');
   });
 });
 

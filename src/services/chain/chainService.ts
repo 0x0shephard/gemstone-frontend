@@ -1,5 +1,7 @@
 import { getAccount, getPublicClient } from '@wagmi/core';
 import {
+  BaseError,
+  ContractFunctionRevertedError,
   formatUnits,
   isAddress,
   isAddressEqual,
@@ -158,6 +160,18 @@ function settledEvents(): ProjectionSnapshot['events'] {
 const GEM_PROBE_WINDOW = 25;
 const GEM_PROBE_LIMIT = 5_000;
 
+/** Only the registry's explicit end-of-sequence error means an id is absent. */
+function isInvalidGem(error: unknown): boolean {
+  if (error instanceof BaseError) {
+    const reverted = error.walk(
+      (candidate) => candidate instanceof ContractFunctionRevertedError,
+    ) as ContractFunctionRevertedError | null;
+    if (reverted?.data?.errorName === 'InvalidGem') return true;
+  }
+  // Some RPCs return a decoded custom-error name without viem's nested cause.
+  return error instanceof Error && /\bInvalidGem\b/.test(error.message);
+}
+
 /**
  * `GemRegistry` exposes no enumeration and keeps `_nextGemId` private, but ids are
  * sequential from 1 and registered gems are never removed, so the live set can be
@@ -176,9 +190,31 @@ async function discoverGemIds(): Promise<bigint[]> {
       })),
       allowFailure: true,
     });
-    const lastIndex = results.findIndex((result) => result.status !== 'success');
-    ids.push(...window.slice(0, lastIndex === -1 ? results.length : lastIndex));
-    if (lastIndex !== -1) break;
+    const firstFailure = results.findIndex((result) => result.status !== 'success');
+    if (firstFailure === -1) {
+      ids.push(...window);
+      continue;
+    }
+
+    ids.push(...window.slice(0, firstFailure));
+
+    /*
+     * `allowFailure` reports both a real `InvalidGem` and a transient RPC failure
+     * as the same failed slot. Treating either one as the end of the registry made
+     * a flaky mobile read cache an empty id list and therefore a convincing empty
+     * portfolio. Verify the remainder directly: only `InvalidGem` ends discovery;
+     * transport, rate-limit and decoding failures must reach React Query's error
+     * state so the user can retry them.
+     */
+    for (const gemId of window.slice(firstFailure)) {
+      try {
+        await readRegistryGem(gemId);
+        ids.push(gemId);
+      } catch (error) {
+        if (isInvalidGem(error)) return ids;
+        throw error;
+      }
+    }
   }
   return ids;
 }
@@ -274,13 +310,16 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   let listingSeller: Address | undefined;
   let listedPriceUsd: bigint | undefined;
   if (registryGem.tokenId > 0n) {
-    owner = (await client
-      .readContract({
-        ...contract('DGENFT'),
-        functionName: 'ownerOf',
-        args: [registryGem.tokenId],
-      })
-      .catch(() => undefined)) as Address | undefined;
+    /*
+     * A failed ownership read is unknown ownership, never "no owner". Swallowing
+     * this error let `getProfile` report zero tokens even though the NFT existed.
+     * Redeemed gems are filtered by registry status above, before this call.
+     */
+    owner = (await client.readContract({
+      ...contract('DGENFT'),
+      functionName: 'ownerOf',
+      args: [registryGem.tokenId],
+    })) as Address;
     const listing = (await client
       .readContract({
         ...contract('Marketplace'),
@@ -523,8 +562,9 @@ async function getAuctions(): Promise<Auction[]> {
  * the unlisted ones would hide most of the collection. Unminted stones do not
  * belong here at all — they live in the auction, which is the only way to mint.
  *
- * A token whose NFT has been burned by redemption is dropped: `ownerOf` reverts,
- * which is the only reliable signal, since the registry keeps the record.
+ * A token burned by redemption is dropped by `readGem` from its terminal registry
+ * status. An ownership read failure is allowed to reject the query; it must not be
+ * presented as evidence that the token does not exist.
  */
 async function getListings(): Promise<DecoratedGem[]> {
   const ids = await gemIds();
@@ -802,23 +842,16 @@ export const chainService: IDataService = {
   getSwapRequests: getSwaps,
   getRedemptions,
   getProfile: async (address): Promise<ProfileData> => {
-    const [gems, listings] = await Promise.all([allGems(), getListings()]);
+    /*
+     * `allGems` already resolves current ownership and listing state. Calling
+     * `getListings` beside it repeated every registry, reserve, metadata and
+     * `ownerOf` read, doubling the chance that a phone's transient RPC failure
+     * would sink the portfolio. Reuse the same authoritative snapshot instead.
+     */
+    const gems = await allGems();
+    const listings = gems.filter((gem) => Boolean(gem.owner));
     const walletOwned = address
-      ? (
-          await Promise.all(
-            gems.map(async (gem) => {
-              if (!gem.tokenId) return;
-              const owner = (await client
-                .readContract({
-                  ...contract('DGENFT'),
-                  functionName: 'ownerOf',
-                  args: [gem.tokenId],
-                })
-                .catch(() => zeroAddress)) as Address;
-              return isAddressEqual(owner, address as Address) ? gem : undefined;
-            }),
-          )
-        ).filter((gem): gem is DecoratedGem => Boolean(gem))
+      ? gems.filter((gem) => gem.owner && isAddressEqual(gem.owner, address as Address))
       : [];
     const escrowedListings = address
       ? listings.filter(
