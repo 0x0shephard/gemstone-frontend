@@ -41,6 +41,7 @@ import {
 import { getTransactionAuthSnapshot } from '@/providers/authSnapshot';
 import { PreflightTimeoutError, withPreflightTimeout } from './preflight';
 import {
+  isWalletConnectConnector,
   requestWalletConnectTransaction,
   walletConnectSupportsChain,
   type WalletConnectProviderLike,
@@ -163,7 +164,7 @@ async function ensureChain(): Promise<void> {
   const account = getAccount(wagmiConfig);
   if (account.chainId === env.chainId) return;
 
-  if (account.connector?.id === 'walletConnect' && account.connector.getProvider) {
+  if (isWalletConnectConnector(account.connector) && account.connector?.getProvider) {
     const provider = (await account.connector.getProvider()) as WalletConnectProviderLike;
     if (walletConnectSupportsChain(provider, env.chainId)) return;
     throw new TransactionGuardError(
@@ -210,7 +211,7 @@ interface PreparedWrite {
 /** Submit a simulated write, routing multichain WalletConnect sessions directly. */
 async function submitPreparedWrite(account: Address, request: PreparedWrite): Promise<Hash> {
   const connector = getAccount(wagmiConfig).connector;
-  if (connector?.id !== 'walletConnect' || !connector.getProvider) {
+  if (!isWalletConnectConnector(connector) || !connector?.getProvider) {
     return (await writeContract(wagmiConfig, request as never)) as Hash;
   }
 

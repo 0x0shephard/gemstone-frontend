@@ -27,7 +27,13 @@ export interface WalletEnvironment {
 }
 
 export type WalletKind =
-  'injected' | 'coinbase' | 'metaMask' | 'rainbow' | 'trust' | 'walletConnect';
+  | 'injected'
+  | 'coinbase'
+  | 'metaMask'
+  | 'metaMaskWalletConnect'
+  | 'rainbow'
+  | 'trust'
+  | 'walletConnect';
 
 export interface WalletGroup {
   groupName: string;
@@ -78,15 +84,16 @@ export function selectWallets(environment: WalletEnvironment): WalletGroup[] {
    * exists inside the SDK does not survive the detour. MetaMask opens with
    * nothing to sign.
    *
-   * WalletConnect leads here instead. It reaches the same wallet through a `wc:`
-   * link that only wallets claim, over a relay session that survives the app
-   * switch — which is the whole difficulty on a phone.
+   * The dedicated mobile entry still uses WalletConnect underneath, but sends
+   * its pairing URI straight to MetaMask. That keeps the relay session that
+   * survives an app switch without making the user wait for a second wallet
+   * picker first.
    */
   const phoneWithoutWallet = touchPrimary && !hasInjected;
 
   const primary: WalletKind[] = [];
   if (showInjected) primary.push('injected');
-  if (walletConnect && phoneWithoutWallet) primary.push('walletConnect');
+  if (walletConnect && phoneWithoutWallet) primary.push('metaMaskWalletConnect');
   primary.push('coinbase');
   if (walletConnect && !metaMaskIsDuplicate && !phoneWithoutWallet) primary.push('metaMask');
 

@@ -8,9 +8,11 @@ afterEach(() => {
 
 function configWithRelayer(restartTransport: () => Promise<void>, connected = true): Config {
   return {
+    state: { connections: new Map(), current: null },
     connectors: [
       {
         id: 'walletConnect',
+        type: 'walletConnect',
         getProvider: async () => ({
           signer: { client: { core: { relayer: { connected, restartTransport } } } },
         }),
@@ -41,5 +43,27 @@ describe('WalletConnect revival', () => {
     window.dispatchEvent(new Event('focus'));
     await Promise.resolve();
     expect(restart).toHaveBeenCalledTimes(1);
+  });
+
+  it('revives a branded WalletConnect connector by its connector type', async () => {
+    const restart = vi.fn(async () => {});
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    const config = {
+      state: { connections: new Map(), current: null },
+      connectors: [
+        {
+          id: 'metaMaskWalletConnect',
+          type: 'walletConnect',
+          getProvider: async () => ({
+            signer: { client: { core: { relayer: { restartTransport: restart } } } },
+          }),
+        },
+      ],
+    } as unknown as Config;
+    const cleanup = reviveWalletConnectOnReturn(config);
+
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+    cleanup();
   });
 });

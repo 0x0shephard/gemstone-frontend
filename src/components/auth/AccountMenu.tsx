@@ -9,6 +9,7 @@ import { useAuth } from '@/providers/AuthProvider';
 import { cn } from '@/lib/cn';
 import { detectWalletEnvironment } from '@/providers/walletSelection';
 import { WalletAddress } from '@/components/wallet/WalletAddress';
+import { isWalletConnectConnector } from '@/services/chain/walletConnectRouting';
 
 interface AccountMenuProps {
   className?: string;
@@ -24,7 +25,7 @@ export function AccountMenu({ className }: AccountMenuProps) {
   // Set when the server asks whether to replace an existing primary wallet.
   const [relinkFor, setRelinkFor] = useState<Address | null>(null);
   const { user, loading, linkedWallet, signOut, linkWallet } = useAuth();
-  const { address, isConnected } = useAccount();
+  const { address, connector, isConnected } = useAccount();
   const chainId = useChainId();
 
   const name =
@@ -38,7 +39,10 @@ export function AccountMenu({ className }: AccountMenuProps) {
     .map((part) => part[0])
     .join('')
     .toUpperCase();
-  const wrongNetwork = isConnected && chainId !== activeChain.id;
+  // A multichain WalletConnect session routes each request explicitly. Its
+  // wallet UI can stay on mainnet while the app safely signs on Sepolia.
+  const wrongNetwork =
+    isConnected && !isWalletConnectConnector(connector) && chainId !== activeChain.id;
   /*
    * A touch device with no injected provider: a phone browser rather than a
    * wallet's in-app browser, which is the only configuration where connecting

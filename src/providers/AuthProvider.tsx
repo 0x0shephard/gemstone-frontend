@@ -4,13 +4,14 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { getAddress, type Address } from 'viem';
 import { createSiweMessage } from 'viem/siwe';
-import { useSignMessage } from 'wagmi';
+import { useAccount, useSignMessage } from 'wagmi';
 import { supabase } from './supabase';
 import { queryClient } from './queryClient';
 import { disablePush } from '@/services/offchain/push';
@@ -18,6 +19,23 @@ import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
 import { functionErrorMessage, functionResponseBody } from '@/lib/supabaseFunctions';
 import { setTransactionAuthSnapshot } from './authSnapshot';
+import {
+  isWalletConnectConnector,
+  requestWalletConnectSignature,
+  walletConnectSupportsChain,
+  type WalletConnectProviderLike,
+} from '@/services/chain/walletConnectRouting';
+
+interface SiweNonce {
+  nonce: string;
+  expiresAt: string;
+}
+
+interface CachedSiweNonce {
+  key: string;
+  promise: Promise<SiweNonce>;
+  expiresAt: number;
+}
 
 export interface AuthState {
   /** Whether Supabase env is present. When false, auth actions are disabled. */
@@ -51,6 +69,8 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { signMessageAsync } = useSignMessage();
+  const { address: connectedAddress, connector } = useAccount();
+  const siweNonce = useRef<CachedSiweNonce | null>(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -60,6 +80,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [authError, setAuthError] = useState<string | null>(() =>
     oauthRedirectError(window.location.hash),
+  );
+
+  const prepareSiweNonce = useCallback((profileId: string): Promise<SiweNonce> => {
+    if (!supabase) return Promise.reject(new Error('Auth is not configured.'));
+    const domain = window.location.host;
+    const uri = window.location.origin;
+    const key = `${profileId}:${domain}:${uri}:${env.chainId}`;
+    const cached = siweNonce.current;
+    if (cached?.key === key && cached.expiresAt > Date.now() + 30_000) return cached.promise;
+
+    const entry: CachedSiweNonce = {
+      key,
+      expiresAt: Date.now() + 9 * 60_000,
+      promise: Promise.resolve({ nonce: '', expiresAt: '' }),
+    };
+    entry.promise = supabase.functions
+      .invoke<SiweNonce>('v1-siwe-nonce', { body: { domain, uri, chainId: env.chainId } })
+      .then(async ({ data, error }) => {
+        if (error || !data?.nonce) {
+          throw new Error(await functionErrorMessage(error, data, 'Could not issue a SIWE nonce.'));
+        }
+        entry.expiresAt = new Date(data.expiresAt).getTime();
+        return data;
+      })
+      .catch((error: unknown) => {
+        if (siweNonce.current === entry) siweNonce.current = null;
+        throw error;
+      });
+    siweNonce.current = entry;
+    return entry.promise;
+  }, []);
+
+  const takeSiweNonce = useCallback(
+    async (profileId: string): Promise<SiweNonce> => {
+      const promise = prepareSiweNonce(profileId);
+      const data = await promise;
+      if (siweNonce.current?.promise === promise) siweNonce.current = null;
+      return data;
+    },
+    [prepareSiweNonce],
   );
 
   useEffect(() => {
@@ -111,6 +171,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sub.subscription.unsubscribe();
     };
   }, [loadPrimaryWallet]);
+
+  /*
+   * Issue the nonce as soon as a signed-in account connects. The previous flow
+   * waited for this network round trip after the Verify tap, so iOS had already
+   * lost the user gesture by the time the signature request was ready to open
+   * MetaMask. A nonce is single-use and valid for ten minutes; the cache is
+   * consumed by `linkWallet` and never shared between profiles or origins.
+   */
+  useEffect(() => {
+    if (!user || !connectedAddress) return;
+    if (linkedWallet?.toLowerCase() === connectedAddress.toLowerCase()) return;
+    void prepareSiweNonce(user.id).catch(() => undefined);
+  }, [connectedAddress, linkedWallet, prepareSiweNonce, user]);
 
   useEffect(() => {
     if (!authConfigured) return;
@@ -226,18 +299,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!supabase || !user) return { ok: false, message: 'Sign in before linking a wallet.' };
       const domain = window.location.host;
       const uri = window.location.origin;
-      const { data: nonceData, error: nonceError } = await supabase.functions.invoke(
-        'v1-siwe-nonce',
-        { body: { domain, uri, chainId: env.chainId } },
-      );
-      if (nonceError || !nonceData?.nonce) {
+      let nonceData: SiweNonce;
+      try {
+        nonceData = await takeSiweNonce(user.id);
+      } catch (error) {
         return {
           ok: false,
-          message: await functionErrorMessage(
-            nonceError,
-            nonceData,
-            'Could not issue a SIWE nonce.',
-          ),
+          message: error instanceof Error ? error.message : 'Could not issue a SIWE nonce.',
         };
       }
       const issuedAt = new Date();
@@ -254,7 +322,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         expirationTime,
       });
       try {
-        const signature = await signMessageAsync({ message });
+        const signature = await (async () => {
+          if (!isWalletConnectConnector(connector) || !connector?.getProvider) {
+            return signMessageAsync({ message });
+          }
+          const provider = (await connector.getProvider()) as WalletConnectProviderLike;
+          if (!walletConnectSupportsChain(provider, env.chainId)) {
+            throw new Error(
+              `Reconnect the wallet and approve chain ${env.chainId}. The current WalletConnect session did not authorise it.`,
+            );
+          }
+          return requestWalletConnectSignature(provider, env.chainId, address, message);
+        })();
         const { data, error } = await supabase.functions.invoke('v1-siwe-verify', {
           body: { message, signature, confirmRelink },
         });
@@ -266,6 +345,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
            * the refusal as final, and left no way to relink a wallet at all.
            */
           const body = await functionResponseBody(error, data);
+          if (body?.requiresConfirmation === true) {
+            // The first nonce was consumed before the server asked the user to
+            // confirm a relink. Prepare the second one while they read that
+            // prompt so the replacement signature is immediate too.
+            void prepareSiweNonce(user.id).catch(() => undefined);
+          }
           return {
             ok: false,
             message: await functionErrorMessage(error, data, 'Wallet verification failed.'),
@@ -281,7 +366,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
     },
-    [signMessageAsync, user],
+    [connector, prepareSiweNonce, signMessageAsync, takeSiweNonce, user],
   );
 
   const value = useMemo<AuthState>(

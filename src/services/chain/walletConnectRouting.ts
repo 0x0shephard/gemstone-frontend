@@ -1,4 +1,4 @@
-import type { Address, Hash, Hex } from 'viem';
+import { stringToHex, type Address, type Hash, type Hex } from 'viem';
 
 interface WalletConnectNamespace {
   accounts?: string[];
@@ -27,6 +27,12 @@ export interface RoutedWalletTransaction {
 }
 
 const caipChain = (chainId: number) => `eip155:${chainId}`;
+
+export function isWalletConnectConnector(
+  connector: { id?: string; type?: string } | null | undefined,
+): boolean {
+  return connector?.id === 'walletConnect' || connector?.type === 'walletConnect';
+}
 
 /** Whether the existing WalletConnect session authorised a particular chain. */
 export function walletConnectSupportsChain(
@@ -68,4 +74,24 @@ export async function requestWalletConnectTransaction(
     throw new Error('The wallet returned an invalid transaction hash.');
   }
   return result as Hash;
+}
+
+/** Sign on an authorised session chain without changing MetaMask's global UI. */
+export async function requestWalletConnectSignature(
+  provider: WalletConnectProviderLike,
+  chainId: number,
+  account: Address,
+  message: string,
+): Promise<Hex> {
+  if (!provider.signer?.request) {
+    throw new Error('The WalletConnect session cannot request a signature. Reconnect the wallet.');
+  }
+  const result = await provider.signer.request(
+    { method: 'personal_sign', params: [stringToHex(message), account] },
+    caipChain(chainId),
+  );
+  if (typeof result !== 'string' || !/^0x[0-9a-fA-F]+$/.test(result)) {
+    throw new Error('The wallet returned an invalid signature.');
+  }
+  return result as Hex;
 }

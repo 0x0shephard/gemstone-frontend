@@ -12,6 +12,7 @@ import { env, walletConnectConfigured } from '@/config/env';
 import { activeChain, supportedChains } from '@/config/chains';
 import { createRpcTransport, resolveRpcUrls } from '@/config/rpc';
 import { detectWalletEnvironment, selectWallets, type WalletKind } from './walletSelection';
+import { mobileMetaMaskWallet } from './mobileMetaMaskWallet';
 
 const rpcTransport = createRpcTransport(
   resolveRpcUrls(activeChain.id, env.rpcUrl, env.rpcFallbackUrl),
@@ -47,6 +48,7 @@ const WALLETS: Record<WalletKind, WalletCreator> = {
   injected: browserWallet,
   coinbase: coinbaseWallet,
   metaMask: metaMaskWallet,
+  metaMaskWalletConnect: mobileMetaMaskWallet,
   rainbow: rainbowWallet,
   trust: trustWallet,
   walletConnect: walletConnectWallet,

@@ -1,4 +1,5 @@
 import type { Config } from 'wagmi';
+import { isWalletConnectConnector } from '@/services/chain/walletConnectRouting';
 
 /**
  * Wakes the WalletConnect relay socket after the phone comes back to the browser.
@@ -49,7 +50,10 @@ export function reviveWalletConnectOnReturn(config: Config): () => void {
   let restarting: Promise<void> | undefined;
   const wake = async () => {
     if (document.visibilityState !== 'visible') return;
-    const connector = config.connectors.find((entry) => entry.id === 'walletConnect');
+    const connected = config.state.connections.get(config.state.current ?? '')?.connector;
+    const connector = isWalletConnectConnector(connected)
+      ? connected
+      : config.connectors.find(isWalletConnectConnector);
     if (!connector?.getProvider) return;
     try {
       const relayer = findRelayer(await connector.getProvider());

@@ -96,7 +96,7 @@ describe('one door to MetaMask', () => {
     expect(offered).toContain('metaMask');
   });
 
-  it('leads with WalletConnect on a phone, not the MetaMask SDK', () => {
+  it('leads with direct MetaMask WalletConnect on a phone, not the MetaMask SDK', () => {
     /*
      * The reported failure: MetaMask opened with nothing to sign. RainbowKit
      * chooses the connector by environment — `!injected && !isMobile()` — so on
@@ -113,8 +113,10 @@ describe('one door to MetaMask', () => {
     const offered = groups.flatMap((group) => group.kinds);
     expect(offered).not.toContain('metaMask');
     expect(offered).not.toContain('injected');
-    // And it must lead, not sit under "More wallets" where nobody looks.
-    expect(groups[0].kinds).toContain('walletConnect');
+    // And the direct WalletConnect-backed MetaMask path must lead, without also
+    // offering the slower generic wallet-picker route.
+    expect(groups[0].kinds).toContain('metaMaskWalletConnect');
+    expect(offered).not.toContain('walletConnect');
   });
 
   it('offers only the in-app wallet inside MetaMask on a phone', () => {
