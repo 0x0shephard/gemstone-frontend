@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TxButton } from './TxButton';
 import type { TxResult } from '@/services/types';
-import { WalletResponseTimeoutError } from '@/services/chain/txSteps';
+import { WalletResponseTimeoutError, awaitGesture } from '@/services/chain/txSteps';
 
 vi.mock('@/lib/telemetry', () => ({ captureProductEvent: () => {} }));
 vi.mock('@/config/chains', () => ({
@@ -80,5 +80,25 @@ describe('TxButton', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/check metamask activity/i),
     );
     expect(screen.queryByRole('button', { name: /pay/i })).not.toBeInTheDocument();
+  });
+
+  it('requires a fresh tap before asking a phone wallet to switch networks', async () => {
+    const action = vi.fn(async () => {
+      await awaitGesture({
+        index: 0,
+        total: 1,
+        label: 'Switch wallet to Sepolia',
+        kind: 'network',
+      });
+      return RESULT;
+    });
+    renderButton({ action });
+
+    await userEvent.click(screen.getByRole('button', { name: /pay/i }));
+    const switchButton = await screen.findByRole('button', { name: 'Switch wallet to Sepolia' });
+    expect(action).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(switchButton);
+    await screen.findByRole('link');
   });
 });

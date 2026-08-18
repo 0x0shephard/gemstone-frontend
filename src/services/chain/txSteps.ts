@@ -19,7 +19,8 @@ import type { Hash } from 'viem';
  * spinner covering all of it is indistinguishable from a hang — which is
  * exactly how it was reported.
  */
-export type TransactionStep = 'checking' | 'approving' | 'awaiting-signature' | 'confirming';
+export type TransactionStep =
+  'checking' | 'switching-network' | 'approving' | 'awaiting-signature' | 'confirming';
 
 export function announceStep(step: TransactionStep): void {
   window.dispatchEvent(new CustomEvent('dc:transaction-step', { detail: { step } }));
@@ -40,7 +41,7 @@ export interface StepPrompt {
   index: number;
   total: number;
   label: string;
-  kind: 'approval' | 'call';
+  kind: 'network' | 'approval' | 'call';
 }
 
 type StepGate = (prompt: StepPrompt) => Promise<void>;

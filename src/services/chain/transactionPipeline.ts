@@ -17,6 +17,7 @@ import {
   type Hash,
 } from 'viem';
 import { env } from '@/config/env';
+import { activeChain } from '@/config/chains';
 import { NATIVE_ASSET } from '@/config/contracts';
 import { wagmiConfig } from '@/providers/wagmi';
 import { supabase } from '@/providers/supabase';
@@ -153,8 +154,32 @@ async function requireVerifiedWallet(): Promise<Address> {
 
 async function ensureChain(): Promise<void> {
   const account = getAccount(wagmiConfig);
-  if (account.chainId !== env.chainId) {
-    await switchChain(wagmiConfig, { chainId: env.chainId });
+  if (account.chainId === env.chainId) return;
+
+  /*
+   * A chain switch is a wallet interaction, not a read-only preflight check.
+   * Starting it after awaited auth work meant the original button gesture was
+   * gone by the time iOS tried to open MetaMask, so WalletConnect waited for a
+   * response to a request the wallet never displayed. Give it its own fresh tap
+   * exactly like approvals and contract calls.
+   */
+  await awaitGesture({
+    index: 0,
+    total: 1,
+    label: `Switch wallet to ${activeChain.name}`,
+    kind: 'network',
+  });
+  announceStep('switching-network');
+  const switched = await withPreflightTimeout(
+    switchChain(wagmiConfig, { chainId: env.chainId }),
+    `The wallet did not finish switching to ${activeChain.name}. Reopen the wallet, select ${activeChain.name}, and try again; no transaction was sent.`,
+    WALLET_RESPONSE_TIMEOUT_MS,
+  );
+  if (switched.id !== env.chainId) {
+    throw new TransactionGuardError(
+      `Switch the connected wallet to ${activeChain.name} before continuing.`,
+      'WRONG_WALLET',
+    );
   }
 }
 
@@ -378,11 +403,7 @@ export async function runContractTransaction(input: ContractTransaction): Promis
      */
     announceStep('checking');
     const account = await requireVerifiedWallet();
-    await withPreflightTimeout(
-      ensureChain(),
-      'The wallet network check did not respond. Return to the browser, refresh, and try again; no transaction was sent.',
-      CHAIN_PREFLIGHT_TIMEOUT_MS,
-    );
+    await ensureChain();
     await withPreflightTimeout(
       ensureFunds(account, input.paymentAsset, input.paymentAmount),
       'The balance check did not respond. Check your connection and try again; no transaction was sent.',

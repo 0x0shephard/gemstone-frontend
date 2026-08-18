@@ -37,6 +37,7 @@ type TxState =
  */
 const STEP_LABEL: Record<TransactionStep, string> = {
   checking: 'Checking your wallet…',
+  'switching-network': 'Switch networks in your wallet…',
   approving: 'Approve the allowance in your wallet…',
   'awaiting-signature': 'Confirm in your wallet…',
   confirming: 'Waiting for the network…',
@@ -229,9 +230,11 @@ export function TxButton({
         {state === 'pending' && (
           <div className="flex items-start gap-2.5 rounded-[4px] border border-atelier/20 bg-atelier/[0.055] px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-atelier" />
-            {step === 'approving' || step === 'awaiting-signature'
-              ? 'Open your wallet app if it did not come to the front. A payment in mUSDC needs two signatures — one to approve the allowance, one to send.'
-              : 'The app will simulate the action, request any approval and wait for confirmation.'}
+            {step === 'switching-network'
+              ? 'Open your wallet app if it did not come to the front and approve the network switch. Return here afterwards to continue.'
+              : step === 'approving' || step === 'awaiting-signature'
+                ? 'Open your wallet app if it did not come to the front. Multi-step actions ask once for approval and once for the transaction.'
+                : 'The app will simulate the action, request any approval and wait for confirmation.'}
           </div>
         )}
         {state === 'success' && hash && (
