@@ -17,6 +17,7 @@ import { disablePush } from '@/services/offchain/push';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
 import { functionErrorMessage, functionResponseBody } from '@/lib/supabaseFunctions';
+import { setTransactionAuthSnapshot } from './authSnapshot';
 
 export interface AuthState {
   /** Whether Supabase env is present. When false, auth actions are disabled. */
@@ -61,6 +62,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     oauthRedirectError(window.location.hash),
   );
 
+  useEffect(() => {
+    setTransactionAuthSnapshot({
+      loading,
+      userId: session?.user.id ?? null,
+      linkedWallet,
+    });
+    return () => setTransactionAuthSnapshot({ loading: true, userId: null, linkedWallet: null });
+  }, [linkedWallet, loading, session?.user.id]);
+
   const loadPrimaryWallet = useCallback(async (profileId: string) => {
     if (!supabase) return;
     const { data } = await supabase
@@ -89,8 +99,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) void loadPrimaryWallet(s.user.id);
-      else setLinkedWallet(null);
+      if (s?.user) {
+        // Never let a wallet link loaded for the previous session be reused by
+        // the synchronous transaction snapshot while the next link is loading.
+        setLinkedWallet(null);
+        void loadPrimaryWallet(s.user.id);
+      } else setLinkedWallet(null);
     });
     return () => {
       mounted = false;

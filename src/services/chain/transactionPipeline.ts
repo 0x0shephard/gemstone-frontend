@@ -35,6 +35,8 @@ import {
   recordStepStatus,
   type PendingStep,
 } from './pendingWork';
+import { getTransactionAuthSnapshot } from '@/providers/authSnapshot';
+import { PreflightTimeoutError, withPreflightTimeout } from './preflight';
 
 /**
  * Ceiling on waiting for a receipt.
@@ -47,6 +49,8 @@ import {
 const RECEIPT_TIMEOUT_MS = 10 * 60 * 1_000;
 /** A wallet request must resolve or fail; it may not leave the app spinning forever. */
 const WALLET_RESPONSE_TIMEOUT_MS = 2 * 60 * 1_000;
+const AUTH_PREFLIGHT_TIMEOUT_MS = 12_000;
+const CHAIN_PREFLIGHT_TIMEOUT_MS = 20_000;
 
 export { BroadcastPendingError, announceStep, setStepGate } from './txSteps';
 export type { StepPrompt, TransactionStep } from './txSteps';
@@ -95,26 +99,48 @@ async function requireVerifiedWallet(): Promise<Address> {
       'AUTH_REQUIRED',
     );
   }
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    throw new TransactionGuardError('Sign in before submitting a transaction.', 'AUTH_REQUIRED');
-  }
-
   const account = getAccount(wagmiConfig);
   if (!account.address || !account.isConnected) {
     throw new TransactionGuardError('Connect a wallet to continue.', 'WALLET_REQUIRED');
   }
 
-  const { data: walletLink, error } = await supabase
-    .from('wallet_links')
-    .select('wallet_address')
-    .eq('profile_id', session.user.id)
-    .eq('wallet_address', account.address.toLowerCase())
-    .eq('is_primary', true)
-    .not('verified_at', 'is', null)
-    .maybeSingle();
+  /*
+   * AuthProvider already loaded this server-verified link for the visible UI.
+   * Reusing it removes a redundant Supabase round trip from the most fragile
+   * part of a mobile flow: immediately after returning from MetaMask.
+   */
+  const auth = getTransactionAuthSnapshot();
+  if (
+    !auth.loading &&
+    auth.userId &&
+    auth.linkedWallet?.toLowerCase() === account.address.toLowerCase()
+  ) {
+    return account.address;
+  }
+
+  const {
+    data: { session },
+  } = await withPreflightTimeout(
+    supabase.auth.getSession(),
+    'The signed-in session check did not respond. Refresh this page and try again; no transaction was sent.',
+    AUTH_PREFLIGHT_TIMEOUT_MS,
+  );
+  if (!session) {
+    throw new TransactionGuardError('Sign in before submitting a transaction.', 'AUTH_REQUIRED');
+  }
+
+  const { data: walletLink, error } = await withPreflightTimeout(
+    supabase
+      .from('wallet_links')
+      .select('wallet_address')
+      .eq('profile_id', session.user.id)
+      .eq('wallet_address', account.address.toLowerCase())
+      .eq('is_primary', true)
+      .not('verified_at', 'is', null)
+      .maybeSingle(),
+    'The wallet verification check did not respond. Refresh this page and try again; no transaction was sent.',
+    AUTH_PREFLIGHT_TIMEOUT_MS,
+  );
 
   if (error || !walletLink) {
     throw new TransactionGuardError(
@@ -292,6 +318,7 @@ export function decodeTransactionError(error: unknown): Error {
   // caller back where it started, offering a retry on a live transaction.
   if (error instanceof BroadcastPendingError) return error;
   if (error instanceof WalletResponseTimeoutError) return error;
+  if (error instanceof PreflightTimeoutError) return error;
   if (error instanceof BaseError) {
     const reverted = error.walk(
       (candidate) => candidate instanceof ContractFunctionRevertedError,
@@ -351,12 +378,24 @@ export async function runContractTransaction(input: ContractTransaction): Promis
      */
     announceStep('checking');
     const account = await requireVerifiedWallet();
-    await ensureChain();
-    await ensureFunds(account, input.paymentAsset, input.paymentAmount);
+    await withPreflightTimeout(
+      ensureChain(),
+      'The wallet network check did not respond. Return to the browser, refresh, and try again; no transaction was sent.',
+      CHAIN_PREFLIGHT_TIMEOUT_MS,
+    );
+    await withPreflightTimeout(
+      ensureFunds(account, input.paymentAsset, input.paymentAmount),
+      'The balance check did not respond. Check your connection and try again; no transaction was sent.',
+      CHAIN_PREFLIGHT_TIMEOUT_MS,
+    );
 
     const planned: { kind: 'approval' | 'call'; label: string; send: () => Promise<Hash> }[] = [];
     for (const approval of input.approvals ?? []) {
-      const step = await planApproval(account, approval);
+      const step = await withPreflightTimeout(
+        planApproval(account, approval),
+        'The approval check did not respond. Check your connection and try again; no transaction was sent.',
+        CHAIN_PREFLIGHT_TIMEOUT_MS,
+      );
       if (step) planned.push({ kind: 'approval', ...step });
     }
 
@@ -386,7 +425,13 @@ export async function runContractTransaction(input: ContractTransaction): Promis
      * a signature is better than after one.
      */
     const needsApprovalFirst = planned.length > 0;
-    const simulation = needsApprovalFirst ? undefined : await simulateCall();
+    const simulation = needsApprovalFirst
+      ? undefined
+      : await withPreflightTimeout(
+          simulateCall(),
+          'The transaction safety check did not respond. Check your connection and try again; no transaction was sent.',
+          CHAIN_PREFLIGHT_TIMEOUT_MS,
+        );
 
     planned.push({
       kind: 'call',
@@ -394,7 +439,14 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       send: async () => {
         // Simulated here when approvals came first, so the allowance granted by
         // the step above is in place and the simulation describes reality.
-        const request = (simulation ?? (await simulateCall())).request;
+        const request = (
+          simulation ??
+          (await withPreflightTimeout(
+            simulateCall(),
+            'The transaction safety check did not respond. Check your connection and try again; no transaction was sent.',
+            CHAIN_PREFLIGHT_TIMEOUT_MS,
+          ))
+        ).request;
         return (await writeContract(wagmiConfig, request)) as Hash;
       },
     });
