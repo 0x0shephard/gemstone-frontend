@@ -1,74 +1,92 @@
+import type { MetamaskConnectEVM } from '@metamask/connect-evm';
 import { describe, expect, it, vi } from 'vitest';
-import type { CreateConnectorFn } from 'wagmi';
-import { connectWithoutChainSwitch, metaMaskMobileUri } from './mobileMetaMaskWallet';
+import { createConfig, http } from 'wagmi';
+import { mainnet, sepolia } from 'wagmi/chains';
+import { metaMaskConnectConnector, mobileMetaMaskWallet } from './mobileMetaMaskWallet';
 
-describe('mobile MetaMask WalletConnect', () => {
-  const pairingUri =
-    'wc:abc123@2?relay-protocol=irn&symKey=0123456789abcdef&expiryTimestamp=1780000000';
+const account = '0x0000000000000000000000000000000000000001' as const;
 
-  it.each([
-    [
-      'Android Chrome',
-      'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36',
-    ],
-    ['Android Firefox', 'Mozilla/5.0 (Android 15; Mobile; rv:142.0) Gecko/142.0 Firefox/142.0'],
-    [
-      'Samsung Internet',
-      'Mozilla/5.0 (Linux; Android 15; SAMSUNG SM-S938B) AppleWebKit/537.36 SamsungBrowser/28.0 Chrome/130.0 Mobile Safari/537.36',
-    ],
-  ])('uses the tab-preserving MetaMask scheme in %s', (_browser, userAgent) => {
-    expect(metaMaskMobileUri(pairingUri, { userAgent })).toBe(
-      `metamask://wc?uri=${encodeURIComponent(pairingUri)}`,
-    );
+function configuredConnector(restoredAccounts: string[] = []) {
+  const request = vi.fn(async ({ method }: { method: string }) => {
+    if (method === 'eth_accounts') return restoredAccounts;
+    if (method === 'eth_chainId') return '0xaa36a7';
+    return undefined;
+  });
+  const client = {
+    accounts: restoredAccounts,
+    connect: vi.fn(async () => ({ accounts: [account], chainId: '0xaa36a7' })),
+    disconnect: vi.fn(async () => undefined),
+    getChainId: vi.fn(() => '0xaa36a7'),
+    getProvider: vi.fn(() => ({ request })),
+    switchChain: vi.fn(async () => undefined),
+  } as unknown as MetamaskConnectEVM;
+  const createClient = vi.fn(async () => client);
+  const config = createConfig({
+    chains: [sepolia, mainnet],
+    connectors: [metaMaskConnectConnector({ createClient })],
+    transports: {
+      [sepolia.id]: http('https://rpc.sepolia.example'),
+      [mainnet.id]: http('https://rpc.mainnet.example'),
+    },
   });
 
-  it('still recognises Android when Chrome requests a desktop user agent', () => {
-    expect(
-      metaMaskMobileUri(pairingUri, {
-        userAgent:
-          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36',
-        userAgentData: { platform: 'Android' },
+  return { client, connector: config.connectors[0], createClient };
+}
+
+describe('mobile MetaMask Connect', () => {
+  it('uses MetaMask Connect rather than identifying as WalletConnect', () => {
+    const { connector } = configuredConnector();
+    expect(connector.id).toBe('metaMaskConnect');
+    expect(connector.type).toBe('metaMask');
+  });
+
+  it('requests Sepolia first and authorises all configured networks in one session', async () => {
+    const { client, connector, createClient } = configuredConnector();
+
+    const result = await connector.connect({ chainId: sepolia.id });
+
+    expect(client.connect).toHaveBeenCalledWith({ chainIds: ['0xaa36a7', '0x1'] });
+    expect(result).toMatchObject({ accounts: [account], chainId: sepolia.id });
+    expect(createClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        analytics: { enabled: false, integrationType: 'wagmi-rainbowkit' },
+        api: {
+          supportedNetworks: {
+            '0x1': 'https://rpc.mainnet.example',
+            '0xaa36a7': 'https://rpc.sepolia.example',
+          },
+        },
+        skipAutoAnnounce: true,
       }),
-    ).toBe(`metamask://wc?uri=${encodeURIComponent(pairingUri)}`);
-  });
-
-  it.each([
-    [
-      'iPhone Safari',
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 Version/18.6 Mobile/15E148 Safari/604.1',
-    ],
-    [
-      'iPhone Chrome',
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 CriOS/140.0.7339.101 Mobile/15E148 Safari/604.1',
-    ],
-  ])("uses MetaMask's iOS universal link in %s", (_browser, userAgent) => {
-    expect(metaMaskMobileUri(pairingUri, { userAgent })).toBe(
-      `https://metamask.app.link/wc?uri=${encodeURIComponent(pairingUri)}`,
     );
   });
 
-  it('keeps the universal link as a safe fallback when no browser exists', () => {
-    expect(metaMaskMobileUri(pairingUri, undefined)).toBe(
-      `https://metamask.app.link/wc?uri=${encodeURIComponent(pairingUri)}`,
-    );
+  it('restores an approved session without sending another wallet prompt', async () => {
+    const { client, connector } = configuredConnector([account]);
+
+    const result = await connector.connect({ isReconnecting: true });
+
+    expect(client.connect).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ accounts: [account], chainId: sepolia.id });
+    await expect(connector.isAuthorized()).resolves.toBe(true);
   });
 
-  it('finishes pairing without issuing a second global-chain switch', async () => {
-    const connect = vi.fn(async (parameters?: Record<string, unknown>) => ({
-      accounts: ['0x0000000000000000000000000000000000000001'],
-      chainId: 1,
-      parameters,
-    }));
-    const base = (() => ({
-      id: 'walletConnect',
-      name: 'WalletConnect',
-      type: 'walletConnect',
-      connect,
-    })) as unknown as CreateConnectorFn;
-    const connector = connectWithoutChainSwitch(base)({} as never);
+  it('exposes the durable connector through the MetaMask wallet row', () => {
+    const wallet = mobileMetaMaskWallet({ projectId: 'not-used-by-metamask-connect' });
+    expect(wallet.id).toBe('metaMaskConnect');
+    expect(wallet.mobile?.getUri?.('metamask://connect')).toBe('metamask://connect');
 
-    await connector.connect({ chainId: 11155111, isReconnecting: false });
-
-    expect(connect).toHaveBeenCalledWith({ isReconnecting: false });
+    const connector = wallet.createConnector({
+      rkDetails: { id: wallet.id, name: wallet.name, isRainbowKitConnector: true },
+    } as never);
+    const config = createConfig({
+      chains: [sepolia],
+      connectors: [connector],
+      transports: { [sepolia.id]: http('https://rpc.sepolia.example') },
+    });
+    expect(config.connectors[0]).toMatchObject({
+      id: 'metaMaskConnect',
+      rkDetails: { isRainbowKitConnector: true },
+    });
   });
 });

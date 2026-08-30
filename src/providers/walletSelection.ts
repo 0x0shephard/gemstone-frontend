@@ -27,13 +27,7 @@ export interface WalletEnvironment {
 }
 
 export type WalletKind =
-  | 'injected'
-  | 'coinbase'
-  | 'metaMask'
-  | 'metaMaskWalletConnect'
-  | 'rainbow'
-  | 'trust'
-  | 'walletConnect';
+  'injected' | 'coinbase' | 'metaMask' | 'rainbow' | 'trust' | 'walletConnect';
 
 export interface WalletGroup {
   groupName: string;
@@ -74,28 +68,19 @@ export function selectWallets(environment: WalletEnvironment): WalletGroup[] {
 
   /*
    * A phone browser with no wallet of its own, where the dedicated MetaMask
-   * entry is the one thing that must not lead.
+   * entry must lead.
    *
-   * RainbowKit picks the connector by environment: `shouldUseWalletConnect` is
-   * `!injected && !isMobile()`, so on a phone that entry is *not* WalletConnect
-   * — it is MetaMask's own SDK, which hands off through a `metamask.app.link`
-   * universal link. The operating system treats that as a URL any browser can
-   * claim, offers a choice between Chrome and MetaMask, and a session that only
-   * exists inside the SDK does not survive the detour. MetaMask opens with
-   * nothing to sign.
-   *
-   * The dedicated mobile entry still uses WalletConnect underneath, but sends
-   * its pairing URI straight to MetaMask. That keeps the relay session that
-   * survives an app switch without making the user wait for a second wallet
-   * picker first.
+   * The MetaMask entry now uses MetaMask Connect rather than RainbowKit's
+   * deprecated SDK or a WalletConnect pairing. MetaMask Connect owns the
+   * cross-app hand-off and restores its session after Chrome/Safari returns,
+   * so this is the preferred path on every phone without an injected wallet.
    */
   const phoneWithoutWallet = touchPrimary && !hasInjected;
 
   const primary: WalletKind[] = [];
   if (showInjected) primary.push('injected');
-  if (walletConnect && phoneWithoutWallet) primary.push('metaMaskWalletConnect');
+  if (!metaMaskIsDuplicate) primary.push('metaMask');
   primary.push('coinbase');
-  if (walletConnect && !metaMaskIsDuplicate && !phoneWithoutWallet) primary.push('metaMask');
 
   const more: WalletKind[] = !walletConnect
     ? []
@@ -109,18 +94,6 @@ export function selectWallets(environment: WalletEnvironment): WalletGroup[] {
         { groupName: 'More wallets', kinds: more },
       ]
     : [{ groupName: 'Available wallets', kinds: primary }];
-}
-
-/**
- * True when the device can reach no wallet the app can talk to.
- *
- * Only reachable on a touch device with no injected provider and no
- * WalletConnect — the configuration that silently blocks every phone. Coinbase
- * still works in that state, so this is about warning the operator rather than
- * the user.
- */
-export function walletSupportIsDegraded(environment: WalletEnvironment): boolean {
-  return environment.touchPrimary && !environment.hasInjected && !environment.walletConnect;
 }
 
 /**

@@ -2,7 +2,6 @@ import { getDefaultConfig, type WalletList } from '@rainbow-me/rainbowkit';
 import {
   coinbaseWallet,
   injectedWallet,
-  metaMaskWallet,
   rainbowWallet,
   trustWallet,
   walletConnectWallet,
@@ -47,8 +46,7 @@ type WalletCreator = WalletList[number]['wallets'][number];
 const WALLETS: Record<WalletKind, WalletCreator> = {
   injected: browserWallet,
   coinbase: coinbaseWallet,
-  metaMask: metaMaskWallet,
-  metaMaskWalletConnect: mobileMetaMaskWallet,
+  metaMask: mobileMetaMaskWallet,
   rainbow: rainbowWallet,
   trust: trustWallet,
   walletConnect: walletConnectWallet,

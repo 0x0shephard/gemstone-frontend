@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectWallets, walletSupportIsDegraded } from './walletSelection';
+import { selectWallets } from './walletSelection';
 
 /**
  * Defaults `injectedIsMetaMask` to false so each case states only what it is
@@ -50,7 +50,10 @@ describe('wallet selection', () => {
   it('adds the WalletConnect wallets only once a project id exists', () => {
     const without = kinds({ walletConnect: false, hasInjected: true, touchPrimary: false });
     expect(without).not.toContain('walletConnect');
-    expect(without).not.toContain('metaMask');
+    expect(without).not.toContain('rainbow');
+    expect(without).not.toContain('trust');
+    // MetaMask Connect is MetaMask's own transport and needs no Reown id.
+    expect(without).toContain('metaMask');
 
     const with_ = kinds({ walletConnect: true, hasInjected: true, touchPrimary: false });
     expect(with_).toEqual(
@@ -96,13 +99,11 @@ describe('one door to MetaMask', () => {
     expect(offered).toContain('metaMask');
   });
 
-  it('leads with direct MetaMask WalletConnect on a phone, not the MetaMask SDK', () => {
+  it('leads with durable MetaMask Connect on a phone', () => {
     /*
-     * The reported failure: MetaMask opened with nothing to sign. RainbowKit
-     * chooses the connector by environment — `!injected && !isMobile()` — so on
-     * a phone the dedicated entry is MetaMask's SDK, which hands off through a
-     * `metamask.app.link` universal link. The OS offers that URL to any browser
-     * that claims it, and the session does not survive the detour.
+     * The reported failure was MetaMask approving while the browser remained
+     * disconnected. The dedicated entry now uses MetaMask Connect's persisted
+     * session instead of the deprecated SDK or WalletConnect transport.
      */
     const groups = selectWallets({
       walletConnect: true,
@@ -111,11 +112,8 @@ describe('one door to MetaMask', () => {
       touchPrimary: true,
     });
     const offered = groups.flatMap((group) => group.kinds);
-    expect(offered).not.toContain('metaMask');
     expect(offered).not.toContain('injected');
-    // And the direct WalletConnect-backed MetaMask path must lead, without also
-    // offering the slower generic wallet-picker route.
-    expect(groups[0].kinds).toContain('metaMaskWalletConnect');
+    expect(groups[0].kinds[0]).toBe('metaMask');
     expect(offered).not.toContain('walletConnect');
   });
 
@@ -130,37 +128,5 @@ describe('one door to MetaMask', () => {
     });
     expect(offered).toContain('injected');
     expect(offered).not.toContain('metaMask');
-  });
-});
-
-describe('degraded support', () => {
-  it('flags the configuration that leaves phones with the least', () => {
-    expect(
-      walletSupportIsDegraded({
-        walletConnect: false,
-        hasInjected: false,
-        injectedIsMetaMask: false,
-        touchPrimary: true,
-      }),
-    ).toBe(true);
-  });
-
-  it('is not flagged once WalletConnect is configured, or on desktop', () => {
-    expect(
-      walletSupportIsDegraded({
-        walletConnect: true,
-        hasInjected: false,
-        injectedIsMetaMask: false,
-        touchPrimary: true,
-      }),
-    ).toBe(false);
-    expect(
-      walletSupportIsDegraded({
-        walletConnect: false,
-        hasInjected: false,
-        injectedIsMetaMask: false,
-        touchPrimary: false,
-      }),
-    ).toBe(false);
   });
 });

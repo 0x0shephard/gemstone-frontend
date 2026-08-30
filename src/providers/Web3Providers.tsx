@@ -20,10 +20,9 @@ export default function Web3Providers({ children }: { children: ReactNode }) {
 
   /*
    * Reconciling what was already broadcast is only half of coming back from a
-   * wallet. The other half is the socket the answer arrives on: while the tab
-   * sat in the background the operating system may have closed it, and a reply
-   * published to the relay meanwhile was queued for a connection that no longer
-   * exists. Nudging the transport awake is what lets it be collected.
+   * wallet. The other half is restoring the remote session and registering it
+   * with wagmi after Chrome or Safari resumes. WalletConnect may also need its
+   * relay transport nudged awake before that state can be read.
    */
   useEffect(() => reviveWalletConnectOnReturn(wagmiConfig), []);
 

@@ -94,6 +94,35 @@ describe('WalletConnect revival', () => {
     cleanup();
   });
 
+  it('restores MetaMask Connect after the browser loses the original connect task', async () => {
+    const reconnectAction = vi.fn(async (config: Config) => {
+      config.state.current = 'metamask-connect-uid';
+      config.state.status = 'connected';
+    });
+    const connector = {
+      id: 'metaMaskConnect',
+      type: 'metaMask',
+      isAuthorized: vi.fn(async () => true),
+      getProvider: vi.fn(async () => ({})),
+    };
+    const config = {
+      state: { connections: new Map(), current: null, status: 'disconnected' },
+      connectors: [connector],
+    } as unknown as Config;
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    const cleanup = reviveWalletConnectOnReturn(config, {
+      reconnectAction,
+      retryDelaysMs: [0],
+    });
+
+    await vi.waitFor(() => expect(reconnectAction).toHaveBeenCalledTimes(1));
+    expect(reconnectAction).toHaveBeenCalledWith(config, {
+      connectors: [config.connectors[0]],
+    });
+    cleanup();
+  });
+
   it('waits for relay delivery before recovering a newly authorised session', async () => {
     const restart = vi.fn(async () => {});
     const reconnectAction = vi.fn(async () => {});

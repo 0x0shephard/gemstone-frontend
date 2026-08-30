@@ -3,7 +3,7 @@ import { reconnect } from 'wagmi/actions';
 import { isWalletConnectConnector } from '@/services/chain/walletConnectRouting';
 
 /**
- * Wakes the WalletConnect relay socket after the phone comes back to the browser.
+ * Restores remote wallet state after the phone comes back to the browser.
  *
  * Connecting on a phone means leaving the browser entirely: the wallet opens,
  * approves, and hands control back. While the tab is in the background the
@@ -14,11 +14,12 @@ import { isWalletConnectConnector } from '@/services/chain/walletConnectRouting'
  * socket which no longer exists. From the outside that is a spinner that never
  * stops, which is precisely the reported symptom.
  *
- * Restarting the transport makes the client redial and drain what the relay held
- * for it. The wallet can then be authorised even though the original connect
- * promise belonged to a browser task the phone discarded. In that state wagmi
- * still needs the approved session registered explicitly, so this recovery also
- * performs a bounded reconnect once authorisation appears.
+ * WalletConnect needs its transport restarted so it can drain relay messages.
+ * MetaMask Connect persists and restores its own remote session. Either client
+ * can be authorised even though the original connect promise belonged to a
+ * browser task the phone discarded. In that state wagmi still needs the
+ * approved session registered explicitly, so this recovery performs a bounded
+ * reconnect once authorisation appears.
  *
  * Deliberately defensive. It reaches through the provider to the relayer, which
  * is deeper than a public API should have to go, so every step is optional and a
@@ -112,9 +113,9 @@ export function reviveWalletConnectOnReturn(
 
   const wakeOnce = async () => {
     const connected = config.state.connections.get(config.state.current ?? '')?.connector;
-    const connector = isWalletConnectConnector(connected)
-      ? connected
-      : config.connectors.find(isWalletConnectConnector);
+    const canRecover = (candidate: Connector | undefined) =>
+      candidate?.id === 'metaMaskConnect' || isWalletConnectConnector(candidate);
+    const connector = canRecover(connected) ? connected : config.connectors.find(canRecover);
     if (!connector?.getProvider) return;
 
     let provider: unknown;

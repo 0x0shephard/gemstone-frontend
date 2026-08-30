@@ -27,6 +27,7 @@
     "@fontsource/jetbrains-mono": "^5.1.1",
     "@fontsource/manrope": "^5.1.1",
     "@hookform/resolvers": "^3.9.1",
+    "@metamask/connect-evm": "^2.1.1",
     "@rainbow-me/rainbowkit": "^2.2.1",
     "@react-three/drei": "^9.117.3",
     "@react-three/fiber": "^8.17.10",
