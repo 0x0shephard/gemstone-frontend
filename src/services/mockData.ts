@@ -210,10 +210,8 @@ export const activity: ActivityItem[] = [
 ];
 
 export const feeTiers: FeeTier[] = [
-  { tier: 'Tier 1', range: 'Under $100k', pct: '2.1%' },
-  { tier: 'Tier 2', range: '$100k – $200k', pct: '1.4%' },
-  { tier: 'Tier 3', range: '$200k – $300k', pct: '0.9%' },
-  { tier: 'Tier 4', range: 'Over $300k', pct: '0.6%' },
+  { tier: 'Reserve 1', range: 'Under $1,000', pct: '10%' },
+  { tier: 'Reserve 2', range: '$1,000 and above', pct: '4%' },
 ];
 
 export const treasurySplit: TreasurySplitItem[] = [

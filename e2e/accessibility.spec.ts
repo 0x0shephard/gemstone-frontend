@@ -11,12 +11,13 @@ test('public marketplace has no critical accessibility violations', async ({ pag
 test('landing page keeps the complete ownership path in chain mode', async ({ page }) => {
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: 'Lifecycle of the NFT' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Lifecycle of the Token' })).toBeVisible();
   for (const heading of [
     'KYC, Gemological Review and Custody',
-    'Minting NFTs',
-    'Trading NFTs',
-    'Redemption Process',
+    'Auction and Minting',
+    'Trading the Token',
+    'Redemption',
+    'Payments',
   ]) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
   }

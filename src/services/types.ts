@@ -159,6 +159,7 @@ export interface HowStep {
   num: string;
   title: string;
   body: string;
+  points?: readonly string[];
 }
 
 export interface PaymentAsset {

@@ -8,21 +8,46 @@ export const ownershipPathSteps: readonly HowStep[] = [
   {
     num: '01',
     title: 'KYC, Gemological Review and Custody',
-    body: 'Once a seller that has complied with our KYC protocol proposes a stone for sale, the stone is evaluated by a professional gemologist that certifies it according to our gemstone valuation matrix. It is then deposited at the bank that confirms its custody and then is listed for minting on our platform.',
+    body: 'After the seller completes KYC, an approved custodian receives the gemstone and a professional laboratory grades it against the Digital Carat valuation matrix.',
+    points: [
+      'The lab records the gemstone characteristics and approved valuation.',
+      'An approved stone opens a 24-hour auction at that valuation.',
+    ],
   },
   {
     num: '02',
-    title: 'Minting NFTs',
-    body: 'Minting a gemstone into an NFT happens by auction. At minting, part of the first sale value is stored as reserve on the NFT to cover vault fees.',
+    title: 'Auction and Minting',
+    body: 'Auctions run in repeating 24-hour cycles. The highest qualifying bid wins when a cycle closes, and settlement mints the ERC-721 token to the winner.',
+    points: [
+      'The approved valuation is the auction floor.',
+      'A cycle with no qualifying bid can reopen for another 24 hours.',
+    ],
   },
   {
     num: '03',
-    title: 'Trading NFTs',
-    body: 'The owner of an NFT can list it on the Marketplace to be sold at auction, he can swap it for another NFT or offer it to someone special…',
+    title: 'Trading the Token',
+    body: 'A minted token can be listed at an owner-selected price. Other holders can buy it, make a timed offer, or propose a token-for-token swap.',
+    points: [
+      'Owners review offers and swaps from their portfolio.',
+      'Completed activity remains available in portfolio history.',
+    ],
   },
   {
     num: '04',
-    title: 'Redemption Process',
-    body: 'In case you want to redeem the gemstone of your NFT, activate the redeem my gemstone function and follow the steps. The gemstone will be sent to the pick-up location of your choice in Istanbul and the NFT will burn after the custodian actions gemstone delivered function on his end.',
+    title: 'Redemption',
+    body: 'The token owner requests redemption, chooses collection or insured delivery, and confirms the fulfilment details. The token locks while the custodian prepares the gemstone.',
+    points: [
+      'The custodian confirms only after physical handover.',
+      'Confirmation burns the token permanently and completes the claim.',
+    ],
+  },
+  {
+    num: '05',
+    title: 'Payments',
+    body: 'Payments use the assets enabled in the protocol registry. The current Sepolia deployment supports ETH and mock USDC, and every transaction shows the selected asset before signing.',
+    points: [
+      'Native ETH payments need no token approval.',
+      'ERC-20 payments request approval before the transaction.',
+    ],
   },
 ];

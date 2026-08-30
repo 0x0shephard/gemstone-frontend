@@ -1079,14 +1079,26 @@ export const chainService: IDataService = {
       `$${Number(formatUnits(value, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
     return brackets.map((raw, index) => {
-      const bracket = raw as readonly [bigint, bigint, number];
-      const [minimum, maximum, reserveBps] = bracket;
+      /*
+       * viem decodes a Solidity struct as an object keyed by the ABI field
+       * names. Treating it as a tuple worked in TypeScript only because of the
+       * assertion above; at runtime the object was not iterable and every fee
+       * tier request failed.
+       */
+      const bracket = raw as {
+        minPriceUsd: bigint;
+        maxPriceUsd: bigint;
+        reserveBps: number;
+      };
+      const minimum = bracket.minPriceUsd;
+      const maximum = bracket.maxPriceUsd;
+      const reserveBps = bracket.reserveBps;
       const range =
         maximum === maxUint256
           ? `${usdLabel(minimum)} and above`
           : minimum === 0n
             ? `Under ${usdLabel(maximum)}`
-            : `${usdLabel(minimum)} – ${usdLabel(maximum)}`;
+            : `${usdLabel(minimum)} - ${usdLabel(maximum)}`;
       return {
         tier: `Reserve ${index + 1}`,
         range,

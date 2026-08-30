@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { GemCard } from '@/components/gem/GemCard';
 import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { ownershipPathSteps } from '@/content/ownershipPath';
-import { useLanding } from '@/hooks/useData';
+import { useFeeTiers, useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 
 import { SceneBoundary } from '@/components/three/SceneBoundary';
@@ -17,10 +17,22 @@ const GemScene = lazy(() =>
 
 /** Who acts at each stage of the lifecycle. Presentation only; the copy is shared. */
 const STEP_ACTORS = [
-  'Seller · Gemologist · Custodian',
-  'Primary sale',
-  'Marketplace',
-  'Holder · Custodian',
+  'Seller, laboratory, custodian',
+  'Primary auction',
+  'Token holder, marketplace',
+  'Token holder, custodian',
+  'Buyer, payment registry',
+];
+
+const CUSTODY_BENEFITS = [
+  {
+    title: 'Trade ownership safely',
+    body: 'Buy or sell the token while the specific gemstone remains protected in third-party custody.',
+  },
+  {
+    title: 'Redeem the gemstone',
+    body: 'Start a verified fulfilment process whenever you decide to take possession of the physical stone.',
+  },
 ];
 
 const REDEMPTION_STEPS: [string, string, boolean?][] = [
@@ -33,10 +45,11 @@ const REDEMPTION_STEPS: [string, string, boolean?][] = [
 
 export default function LandingPage() {
   const { data } = useLanding();
-  useScrollReveal([data]);
+  const { data: feeTiers, isLoading: feeTiersLoading, isError: feeTiersError } = useFeeTiers();
+  useScrollReveal([data, feeTiers]);
 
   return (
-    <div className="min-h-screen bg-vault">
+    <div className="min-h-[100dvh] bg-vault">
       <TopNav />
 
       {/* Hero */}
@@ -45,7 +58,7 @@ export default function LandingPage() {
         {/* `min-w-0`: a grid item defaults to `min-width: auto` and so refuses to
             shrink below its content's min-content width. The long CTA labels
             below are `whitespace-nowrap` by default, which made that 397px on a
-            390px phone — overflowing the column, clipping the body copy, and
+            390px phone, overflowing the column, clipping the body copy, and
             pushing the gemstone render off centre. */}
         <div className="relative order-2 min-w-0 md:order-1">
           <div className="mb-7 inline-flex items-center gap-2 border-l-2 border-ink-muted pl-3 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-muted">
@@ -57,38 +70,20 @@ export default function LandingPage() {
             Trade gemstones. Secure your claim.
           </h1>
           <p className="mt-6 max-w-xl text-[15px] leading-[1.75] text-ink-muted sm:text-[16px]">
-            Each Token represent the ownership of a unique gemstone stored in a safe deposit vault
-            at our partner bank in Turkey. This enables you to trade the ownership of your gemstones
-            or redeem it while having a third party securing your physical asset.
+            A Digital Carat token represents a specific gemstone held in secure, third-party custody
+            at a partner bank.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <Link to="/marketplace" className="w-full sm:w-auto">
-              <Button size="lg" className="h-auto w-full whitespace-normal py-3 sm:w-auto">
-                Are you a buyer? Discover our Marketplace
+              <Button size="lg" className="w-full sm:w-auto">
+                Browse marketplace
               </Button>
             </Link>
             <Link to="/seller" className="w-full sm:w-auto">
-              <Button
-                variant="ghost"
-                size="lg"
-                className="h-auto w-full whitespace-normal py-3 sm:w-auto"
-              >
-                Are you a gemstone seller? Discover our KYC Protocol
+              <Button variant="ghost" size="lg" className="w-full sm:w-auto">
+                Start seller KYC
               </Button>
             </Link>
-          </div>
-
-          <div className="mt-12 grid grid-cols-2 border-y border-line/[0.075] sm:grid-cols-4">
-            {data?.trustSignals.map((t) => (
-              <div
-                key={t.title}
-                className="border-line/[0.065] px-0 py-3.5 pr-3 sm:border-r sm:px-3 sm:first:pl-0 sm:last:border-r-0"
-              >
-                <span className="mb-2 block h-1 w-5 rounded-full" style={{ background: t.color }} />
-                <div className="text-[11.5px] font-semibold text-ink-soft">{t.title}</div>
-                <div className="mt-0.5 text-[10.5px] leading-snug text-ink-dim">{t.sub}</div>
-              </div>
-            ))}
           </div>
         </div>
 
@@ -135,33 +130,92 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* The claim has two outcomes while the stone stays in professional custody. */}
+      <section className="border-y border-line/[0.06] bg-card">
+        <div className="mx-auto grid max-w-content gap-8 px-6 py-10 md:grid-cols-[0.8fr_1.2fr] md:px-10 md:py-12">
+          <div data-reveal>
+            <h2 className="max-w-[18ch] font-display text-[24px] font-medium tracking-[-0.03em] text-ink md:text-[28px]">
+              Custody protects both paths
+            </h2>
+            <p className="mt-3 max-w-[48ch] text-[13.5px] leading-relaxed text-ink-muted">
+              Independent custody keeps the physical gemstone secure while its owner decides whether
+              to trade the token or redeem the stone.
+            </p>
+          </div>
+          <div
+            data-reveal
+            className="grid gap-px overflow-hidden rounded-[4px] bg-line/[0.08] sm:grid-cols-2"
+          >
+            {CUSTODY_BENEFITS.map((benefit) => (
+              <div key={benefit.title} className="bg-vault p-5 sm:p-6">
+                <h3 className="text-[14px] font-semibold text-ink">{benefit.title}</h3>
+                <p className="mt-2 text-[12.5px] leading-relaxed text-ink-muted">{benefit.body}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 border-t border-line/[0.07] pt-6 sm:grid-cols-4 md:col-span-2">
+            {data?.trustSignals.map((signal) => (
+              <div
+                key={signal.title}
+                className="border-line/[0.065] py-3 pr-3 sm:border-r sm:px-4 sm:first:pl-0 sm:last:border-r-0"
+              >
+                <span
+                  aria-hidden
+                  className="mb-2 block h-1 w-5 rounded-full"
+                  style={{ background: signal.color }}
+                />
+                <div className="text-[11.5px] font-semibold text-ink-soft">{signal.title}</div>
+                <div className="mt-0.5 text-[10.5px] leading-snug text-ink-dim">{signal.sub}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Gates. Each step is enforced by a different role. */}
       <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-10">
           <h2 className="max-w-[20ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            Lifecycle of Token
+            Lifecycle of the Token
           </h2>
           <p className="mt-3 max-w-[72ch] text-[14px] leading-relaxed text-ink-muted">
-            Before becoming an NFT, a gemstone goes through our KYC of sellers and a professional
-            gemological review before being listed for minting.
+            Before a gemstone can be minted as an ERC-721 token, the seller completes KYC, an
+            approved custodian receives the stone, and a professional laboratory verifies its
+            characteristics and valuation.
           </p>
         </div>
         <div
           data-reveal
-          className="grid overflow-hidden rounded-[4px] border border-line/[0.08] sm:grid-cols-2 lg:grid-cols-4"
+          className="overflow-hidden rounded-[4px] border border-line/[0.08] bg-card"
         >
           {ownershipPathSteps.map((step, i) => (
             <div
               key={step.num}
-              className="flex flex-col gap-2.5 border-b border-r border-line/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
+              className="grid gap-3 border-b border-line/[0.06] p-5 last:border-b-0 sm:grid-cols-[42px_minmax(0,0.8fr)_minmax(0,1.2fr)] sm:gap-5 sm:p-6"
             >
               <div className="font-mono text-[10px] tracking-[0.1em] text-ink-dim">{step.num}</div>
-              <h3 className="font-display text-[15px] font-medium tracking-[-0.015em] text-ink">
-                {step.title}
-              </h3>
-              <p className="text-[12.5px] leading-relaxed text-ink-muted">{step.body}</p>
-              <div className="mt-auto pt-3 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-dim">
-                {STEP_ACTORS[i]}
+              <div>
+                <h3 className="font-display text-[15px] font-medium tracking-[-0.015em] text-ink">
+                  {step.title}
+                </h3>
+                <div className="mt-2 font-mono text-[9.5px] uppercase tracking-[0.1em] text-ink-dim">
+                  {STEP_ACTORS[i]}
+                </div>
+              </div>
+              <div>
+                <p className="text-[12.5px] leading-relaxed text-ink-muted">{step.body}</p>
+                {step.points && (
+                  <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {step.points.map((point) => (
+                      <li
+                        key={point}
+                        className="border-l border-atelier/45 pl-3 text-[11.5px] leading-relaxed text-ink-dim"
+                      >
+                        {point}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           ))}
@@ -172,33 +226,71 @@ export default function LandingPage() {
       <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-9">
           <h2 className="max-w-[26ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            How the escrow at minting works
+            How the reserve value at minting works
           </h2>
           <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
-            Once minted, part of the minted value is escrowed to be used as monthly vault fees. Once
-            redeemed, the escrowed amount is credited back to the Digital Wallet of the owner. Every
-            NFT escrows at minting a reserve that covers vault, insurance and logistics fees. This
-            reserve is taken proportionally to the stone Value.
+            A reserve margin is added to the gemstone&apos;s approved value and funded when the
+            token is minted. It supports eligible custody, insurance, swap, and redemption costs
+            carried by that gemstone throughout its token lifecycle.
           </p>
         </div>
-        <div
-          data-reveal
-          className="grid overflow-hidden rounded-[4px] border border-line/[0.08] sm:grid-cols-2 lg:grid-cols-4"
-        >
-          {[
-            ['10%', 'Reserve on stones valued under $1,000'],
-            ['4%', 'Reserve on stones valued $1,000 and above'],
-            [data?.treasurySplit?.[0]?.pct ?? '80%', 'Of every primary sale goes to the seller'],
-            ['2%', 'Secondary fee, taken from the sale price'],
-          ].map(([value, label]) => (
-            <div
-              key={label}
-              className="border-b border-r border-line/[0.06] bg-card p-6 last:border-r-0 lg:border-b-0"
-            >
-              <div className="font-mono text-[30px] tracking-[-0.04em] text-ink">{value}</div>
-              <div className="mt-2 text-[12.5px] leading-relaxed text-ink-muted">{label}</div>
-            </div>
-          ))}
+        <div data-reveal className="grid gap-6 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
+          <div className="rounded-[4px] border border-line/[0.08] bg-card p-6">
+            <h3 className="font-display text-[16px] font-medium text-ink">
+              One reserve, several costs
+            </h3>
+            <p className="mt-3 text-[12.5px] leading-relaxed text-ink-muted">
+              The reserve remains attached to the gemstone&apos;s protocol record. At redemption,
+              the custodian confirms physical handover before the token burns and remaining reserve
+              assets are released under the active contract rules.
+            </p>
+            <p className="mt-4 border-l border-atelier/45 pl-3 text-[11.5px] leading-relaxed text-ink-dim">
+              The transaction quote is authoritative. It calculates any reserve shortfall from the
+              live contract before a buyer signs.
+            </p>
+          </div>
+          <div className="overflow-hidden rounded-[4px] border border-line/[0.08] bg-card">
+            <table className="w-full border-collapse text-left">
+              <caption className="sr-only">Active reserve margin schedule</caption>
+              <thead className="bg-panel">
+                <tr>
+                  <th className="px-4 py-3 font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-dim sm:px-5">
+                    Token value
+                  </th>
+                  <th className="px-4 py-3 text-right font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-dim sm:px-5">
+                    Reserve margin
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {feeTiersLoading ? (
+                  <tr>
+                    <td colSpan={2} className="px-4 py-6 text-[12.5px] text-ink-muted sm:px-5">
+                      Reading the active reserve schedule...
+                    </td>
+                  </tr>
+                ) : feeTiersError || !feeTiers?.length ? (
+                  <tr>
+                    <td colSpan={2} className="px-4 py-6 text-[12.5px] text-ruby sm:px-5">
+                      The reserve schedule is temporarily unavailable. Transaction quotes still use
+                      the active contract.
+                    </td>
+                  </tr>
+                ) : (
+                  feeTiers.map((tier) => (
+                    <tr key={tier.tier} className="border-t border-line/[0.06]">
+                      <td className="px-4 py-4 text-[12.5px] text-ink-soft sm:px-5">
+                        {tier.range}
+                      </td>
+                      <td className="px-4 py-4 text-right font-mono text-[16px] text-ink sm:px-5">
+                        {tier.pct}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 

@@ -193,6 +193,32 @@ describe('chain profile reads', () => {
   });
 });
 
+describe('chain fee tier reads', () => {
+  it('decodes named reserve bracket structs returned by viem', async () => {
+    mocks.readContract.mockImplementation(
+      ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+        if (functionName === 'reserveBracketCount') return 2n;
+        if (functionName === 'reserveBracket' && args?.[0] === 0n) {
+          return { minPriceUsd: 0n, maxPriceUsd: usd(1_000), reserveBps: 1_000 };
+        }
+        if (functionName === 'reserveBracket' && args?.[0] === 1n) {
+          return {
+            minPriceUsd: usd(1_000),
+            maxPriceUsd: (1n << 256n) - 1n,
+            reserveBps: 400,
+          };
+        }
+        throw new Error(`Unexpected read: ${functionName}`);
+      },
+    );
+
+    await expect(chainService.getFeeTiers()).resolves.toEqual([
+      { tier: 'Reserve 1', range: 'Under $1,000', pct: '10%' },
+      { tier: 'Reserve 2', range: '$1,000 and above', pct: '4%' },
+    ]);
+  });
+});
+
 describe('chain transaction construction', () => {
   it('quotes buy-now with reserve shortfall and approves the primary sale contract', async () => {
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
