@@ -1,4 +1,4 @@
-import type { MetamaskConnectEVM } from '@metamask/connect-evm';
+import type { MetamaskConnectEVM, createEVMClient } from '@metamask/connect-evm';
 import { describe, expect, it, vi } from 'vitest';
 import { createConfig, http } from 'wagmi';
 import { mainnet, sepolia } from 'wagmi/chains';
@@ -20,7 +20,7 @@ function configuredConnector(restoredAccounts: string[] = []) {
     getProvider: vi.fn(() => ({ request })),
     switchChain: vi.fn(async () => undefined),
   } as unknown as MetamaskConnectEVM;
-  const createClient = vi.fn(async () => client);
+  const createClient = vi.fn<typeof createEVMClient>(async () => client);
   const config = createConfig({
     chains: [sepolia, mainnet],
     connectors: [metaMaskConnectConnector({ createClient })],
@@ -59,6 +59,7 @@ describe('mobile MetaMask Connect', () => {
         skipAutoAnnounce: true,
       }),
     );
+    expect(createClient.mock.calls[0][0]).not.toHaveProperty('ui');
   });
 
   it('restores an approved session without sending another wallet prompt', async () => {

@@ -225,10 +225,6 @@ export function metaMaskConnectConnector(
               analytics: { enabled: false, integrationType: 'wagmi-rainbowkit' },
               eventHandlers: handlers,
               skipAutoAnnounce: true,
-              ui: {
-                preferExtension: false,
-                showInstallModal: true,
-              },
             });
           }
           instance = await instancePromise;
