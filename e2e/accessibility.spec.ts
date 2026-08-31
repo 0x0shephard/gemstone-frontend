@@ -52,11 +52,12 @@ test('mobile navigation keeps primary destinations and secondary routes reachabl
   const dock = page.getByRole('navigation', { name: 'Primary mobile navigation' });
   await expect(dock.getByRole('link', { name: 'Market' })).toBeVisible();
   await expect(dock.getByRole('link', { name: 'Auctions' })).toBeVisible();
-  await expect(dock.getByRole('link', { name: 'Swap' })).toBeVisible();
-  await expect(dock.getByRole('link', { name: 'Vault' })).toBeVisible();
+  await expect(dock.getByRole('link', { name: 'Bids' })).toBeVisible();
+  await expect(dock.getByRole('link', { name: 'Portfolio' })).toBeVisible();
 
   await dock.getByRole('button', { name: 'More' }).click();
   const menu = page.getByRole('dialog', { name: 'More destinations' });
+  await expect(menu.getByRole('link', { name: /swaps/i })).toBeVisible();
   await expect(menu.getByRole('link', { name: /redeem/i })).toBeVisible();
   await expect(menu.getByRole('link', { name: /seller portal/i })).toBeVisible();
 

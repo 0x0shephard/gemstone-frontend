@@ -34,6 +34,7 @@ jobs:
         with:
           repository: 0x0shephard/gemstone-contracts
           path: gemstone
+          submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
       - name: Contract integration and fuzz/invariant suite
         working-directory: gemstone
