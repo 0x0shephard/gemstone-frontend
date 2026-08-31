@@ -108,7 +108,13 @@ export async function enablePush(): Promise<PushState> {
   });
 
   const { data } = await supabase.auth.getUser();
-  if (!data.user) return 'unsubscribed';
+  if (!data.user) {
+    // Do not leave a local subscription that has no server row. On the next
+    // visit `pushState` would otherwise report "subscribed" even though no
+    // notification could ever reach this device.
+    await subscription.unsubscribe().catch(() => undefined);
+    return 'unsubscribed';
+  }
 
   // Keyed on the endpoint: re-running this on a device that is already
   // registered updates the row rather than accumulating duplicates, and clears
@@ -155,7 +161,15 @@ export async function disablePush(): Promise<PushState> {
   // Server first. Unsubscribing locally before the row is gone would leave the
   // sweep pushing to an endpoint nobody is listening on until it 410s.
   if (supabase) {
-    await supabase.from('push_subscriptions').delete().eq('endpoint', subscription.endpoint);
+    const { error } = await supabase
+      .from('push_subscriptions')
+      .delete()
+      .eq('endpoint', subscription.endpoint);
+    if (error) {
+      throw new Error(
+        'Notifications could not be disabled on the server. Check your connection and try again.',
+      );
+    }
   }
   await subscription.unsubscribe();
   return 'unsubscribed';

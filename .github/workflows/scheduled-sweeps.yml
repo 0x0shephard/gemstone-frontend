@@ -25,11 +25,10 @@ name: Scheduled sweeps
 #   DEMAND_REFRESH_SECRET
 #   NOTIFY_SWEEP_SECRET
 #
-# The demand ingest also depends on a Supabase secret, LOGS_RPC_URL, pointing at
-# a provider that allows wide `eth_getLogs` ranges. It falls back to the operator
-# RPC, whose plan caps ranges at 10 blocks — a width at which a history scan
-# needs more requests per day than the chain produces blocks, so it can never
-# converge no matter how long it is left running.
+# The edge functions use LOGS_RPC_URL when supplied and otherwise fall back to a
+# public, wide-range Sepolia endpoint. Never point LOGS_RPC_URL at the operator
+# RPC if its plan caps `eth_getLogs` to tiny ranges: a successful scan can still
+# fall farther behind the chain on every run.
 
 on:
   schedule:
@@ -112,15 +111,31 @@ jobs:
             echo "::notice::NOTIFY_SWEEP_SECRET is not set; skipping notifications"
             exit 0
           fi
-          BODY=$(curl -sS --fail-with-body --max-time 600 \
-            -X POST "$URL/v1-notify-sweep" \
-            -H "x-notify-sweep-secret: $SECRET") || {
-              echo "::error::notification sweep failed: $BODY"
-              exit 1
-            }
-          echo "$BODY"
-          BEHIND=$(printf '%s' "$BODY" | python3 -c \
-            'import json,sys; d=json.load(sys.stdin); print("" if d.get("caughtUp", True) else json.dumps(d.get("blocksBehind",{})))')
-          if [ -n "$BEHIND" ]; then
-            echo "::warning::notification sweep has not caught up: $BEHIND"
-          fi
+          # One invocation has a deliberate edge-runtime time budget. When a
+          # deployment starts with history to scan, drain multiple resumable
+          # passes in this same job instead of waiting for another best-effort
+          # GitHub cron tick. Database uniqueness makes repeated event windows
+          # idempotent.
+          MAX_NOTIFY_PASSES=10
+          for PASS in $(seq 1 "$MAX_NOTIFY_PASSES"); do
+            BODY=$(curl -sS --fail-with-body --max-time 90 \
+              -X POST "$URL/v1-notify-sweep" \
+              -H "x-notify-sweep-secret: $SECRET") || {
+                echo "::error::notification sweep failed on pass $PASS: $BODY"
+                exit 1
+              }
+            echo "Notification pass $PASS/$MAX_NOTIFY_PASSES: $BODY"
+
+            CAUGHT_UP=$(printf '%s' "$BODY" | python3 -c \
+              'import json,sys; print("true" if json.load(sys.stdin).get("caughtUp") is True else "false")')
+            if [ "$CAUGHT_UP" = "true" ]; then
+              exit 0
+            fi
+
+            BEHIND=$(printf '%s' "$BODY" | python3 -c \
+              'import json,sys; print(json.dumps(json.load(sys.stdin).get("blocksBehind",{})))')
+            echo "::warning::notification pass $PASS has not caught up: $BEHIND"
+          done
+
+          echo "::error::notification sweep did not catch up after $MAX_NOTIFY_PASSES passes: $BEHIND"
+          exit 1

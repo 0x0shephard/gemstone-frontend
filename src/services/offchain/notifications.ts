@@ -49,9 +49,9 @@ const decode = (row: NotificationRow): AppNotification => ({
 /**
  * Recent notifications for the signed-in reader, newest first.
  *
- * Returns nothing rather than throwing when auth is unconfigured or nobody is
- * signed in: this renders in the navigation bar on every page, including the
- * public ones, and a bell is not worth an error boundary.
+ * Returns nothing when auth is not configured. A configured backend error is
+ * allowed to propagate so the bell can distinguish "no notifications" from
+ * "notifications could not be loaded" and offer a retry.
  */
 export async function listNotifications(limit = 30): Promise<AppNotification[]> {
   if (!supabase) return [];
@@ -61,23 +61,28 @@ export async function listNotifications(limit = 30): Promise<AppNotification[]> 
     .is('dismissed_at', null)
     .order('created_at', { ascending: false })
     .limit(limit);
-  if (error) return [];
+  if (error) throw error;
   return (data ?? []).map((row) => decode(row as NotificationRow));
 }
 
 /** Marks one notification read. */
 export async function markNotificationRead(id: string): Promise<void> {
   if (!supabase) return;
-  await supabase.from('notifications').update({ read_at: new Date().toISOString() }).eq('id', id);
+  const { error } = await supabase
+    .from('notifications')
+    .update({ read_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw error;
 }
 
 /** Marks everything currently unread as read. */
 export async function markAllNotificationsRead(): Promise<void> {
   if (!supabase) return;
-  await supabase
+  const { error } = await supabase
     .from('notifications')
     .update({ read_at: new Date().toISOString() })
     .is('read_at', null);
+  if (error) throw error;
 }
 
 /**
@@ -90,17 +95,19 @@ export async function markAllNotificationsRead(): Promise<void> {
  */
 export async function dismissNotification(id: string): Promise<void> {
   if (!supabase) return;
-  await supabase
+  const { error } = await supabase
     .from('notifications')
     .update({ dismissed_at: new Date().toISOString() })
     .eq('id', id);
+  if (error) throw error;
 }
 
 /** Clears everything currently visible. */
 export async function clearAllNotifications(): Promise<void> {
   if (!supabase) return;
-  await supabase
+  const { error } = await supabase
     .from('notifications')
     .update({ dismissed_at: new Date().toISOString() })
     .is('dismissed_at', null);
+  if (error) throw error;
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   disablePush,
   enablePush,
+  needsHomeScreenInstall,
   pushState,
   pushSupported,
   type PushState,
@@ -14,8 +15,9 @@ import {
  * moment someone opens their notifications is the moment the offer is legible:
  * they are already looking at the thing they would otherwise have missed.
  *
- * Shows nothing at all when the browser cannot do push, or when no application
- * key is configured. An control that cannot work is worse than no control.
+ * Shows installation guidance on iOS Safari, where Web Push exists only for an
+ * app launched from the Home Screen. Other unsupported or unconfigured
+ * browsers remain hidden.
  */
 export function PushToggle() {
   const [state, setState] = useState<PushState | null>(null);
@@ -24,17 +26,39 @@ export function PushToggle() {
 
   useEffect(() => {
     let cancelled = false;
-    void pushState().then((next) => {
-      if (!cancelled) setState(next);
-    });
+    void pushState()
+      .then((next) => {
+        if (!cancelled) setState(next);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setFailure(
+          error instanceof Error ? error.message : 'Notification support could not be checked.',
+        );
+        // Keep the control visible on a capable browser so the user can retry
+        // from a gesture after a transient service-worker failure.
+        setState('unsubscribed');
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (!pushSupported() || state === null || state === 'unsupported' || state === 'unconfigured') {
+  if (state === null) {
     return null;
   }
+
+  if (needsHomeScreenInstall()) {
+    return (
+      <p className="border-b border-line/[0.06] px-4 py-2.5 text-[11.5px] leading-relaxed text-ink-muted">
+        To receive notifications on iPhone or iPad, open Safari’s Share menu, choose{' '}
+        <strong className="font-semibold text-ink">Add to Home Screen</strong>, then open Digital
+        Carat from its new icon and turn notifications on here.
+      </p>
+    );
+  }
+
+  if (!pushSupported() || state === 'unsupported' || state === 'unconfigured') return null;
 
   if (state === 'denied') {
     return (

@@ -101,9 +101,10 @@ export interface ScanRange {
 /**
  * Splits a block span into provider-safe `eth_getLogs` chunks.
  *
- * Providers cap the span per request, commonly at 1,000 blocks. Chunk width only
- * ever ratchets down on rejection — growing back into a width the provider has
- * already refused makes every successful chunk cost a second, failing request.
+ * Providers cap the span per request at anything from ten to tens of thousands
+ * of blocks. Chunk width only ever ratchets down on rejection — growing back
+ * into a width the provider has already refused makes every successful chunk
+ * cost a second, failing request.
  */
 export function planScanRanges(from: bigint, to: bigint, maxSpan: bigint): ScanRange[] {
   if (maxSpan <= 0n) throw new Error('Scan span must be positive');

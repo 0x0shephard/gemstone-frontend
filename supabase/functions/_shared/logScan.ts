@@ -23,8 +23,12 @@ import type { OperatorChain } from './chain.ts';
  *   starting over.
  */
 
-/** Under every common provider cap; only ratchets down from here. */
-export const INITIAL_SPAN = 1_000n;
+/**
+ * Covers the whole notification bootstrap window in one request on the
+ * wide-range fallback. Providers with a lower cap explain that limit in their
+ * rejection and the scanner immediately ratchets down to it.
+ */
+export const INITIAL_SPAN = 50_000n;
 
 /** First pause after a rate limit; doubles while the limit keeps being hit. */
 const INITIAL_BACKOFF_MS = 250;

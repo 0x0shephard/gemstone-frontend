@@ -39,7 +39,12 @@ export function NotificationBell() {
   const rootRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
 
-  const { data: notifications = [] } = useQuery({
+  const {
+    data: notifications = [],
+    error: notificationError,
+    isFetching: notificationsFetching,
+    refetch: refetchNotifications,
+  } = useQuery({
     queryKey: ['notifications', user?.id ?? 'anonymous'],
     queryFn: () => listNotifications(),
     // Nothing to read when signed out, and the table would refuse anyway.
@@ -54,6 +59,8 @@ export function NotificationBell() {
   const readAll = useMutation({ mutationFn: markAllNotificationsRead, onSuccess: invalidate });
   const dismissOne = useMutation({ mutationFn: dismissNotification, onSuccess: invalidate });
   const clearAll = useMutation({ mutationFn: clearAllNotifications, onSuccess: invalidate });
+  const notificationActionError =
+    readOne.error ?? readAll.error ?? dismissOne.error ?? clearAll.error;
 
   // Dismiss on an outside click or Escape, so the panel does not sit open over
   // the page after attention has moved on.
@@ -143,11 +150,37 @@ export function NotificationBell() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-            {notifications.length === 0 ? (
+            {notificationError && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-3 border-b border-ruby/15 bg-ruby/[0.035] px-4 py-3"
+              >
+                <span className="text-[11.5px] leading-relaxed text-ruby">
+                  Notifications could not be loaded. Your alerts have not been cleared.
+                </span>
+                <button
+                  type="button"
+                  disabled={notificationsFetching}
+                  onClick={() => void refetchNotifications()}
+                  className="shrink-0 rounded-[4px] border border-ruby/20 px-2.5 py-1 text-[11px] font-semibold text-ruby disabled:opacity-50"
+                >
+                  {notificationsFetching ? 'Retrying…' : 'Retry'}
+                </button>
+              </div>
+            )}
+            {notificationActionError && (
+              <p
+                role="alert"
+                className="border-b border-ruby/15 bg-ruby/[0.035] px-4 py-3 text-[11.5px] leading-relaxed text-ruby"
+              >
+                That notification change could not be saved. Check your connection and try again.
+              </p>
+            )}
+            {notifications.length === 0 && !notificationError ? (
               <p className="px-4 py-8 text-center text-[12.5px] text-ink-dim">
                 Nothing needs your attention.
               </p>
-            ) : (
+            ) : notifications.length > 0 ? (
               notifications.map((notification) => {
                 const body = (
                   <>
@@ -218,7 +251,7 @@ export function NotificationBell() {
                   </div>
                 );
               })
-            )}
+            ) : null}
           </div>
         </div>
       )}

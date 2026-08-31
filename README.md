@@ -150,13 +150,20 @@ npx supabase secrets set \
   SITE_ORIGIN=http://localhost:5173 \
   CHAIN_ID=11155111 \
   SEPOLIA_RPC_URL=... \
+  LOGS_RPC_URL=... \
   SEPOLIA_OPERATOR_PRIVATE_KEY=... \
   GEM_REGISTRY_ADDRESS=0x... \
   PRIMARY_SALE_AUCTION_ADDRESS=0x... \
   DEPLOYMENT_BLOCK=... \
   IPFS_PINNING_JWT=... \
   DEMAND_REFRESH_SECRET=... \
-  AUCTION_REFRESH_SECRET=...
+  AUCTION_REFRESH_SECRET=... \
+  NOTIFY_SWEEP_SECRET=... \
+  RESEND_API_KEY=... \
+  MAIL_FROM='Digital Carat <alerts@digitalcarat.io>' \
+  VAPID_PUBLIC_KEY=... \
+  VAPID_PRIVATE_KEY=... \
+  VAPID_SUBJECT=mailto:support@digitalcarat.io
 npx supabase functions deploy v1-siwe-nonce
 npx supabase functions deploy v1-siwe-verify
 npx supabase functions deploy v1-seller-submit
@@ -167,6 +174,8 @@ npx supabase functions deploy v1-verification-grade
 npx supabase functions deploy v1-verification-settings
 npx supabase functions deploy v1-demand-refresh
 npx supabase functions deploy v1-auction-refresh
+npx supabase functions deploy v1-notify-sweep
+npx supabase functions deploy v1-gift-notify
 npx supabase functions deploy v1-custody-confirm
 npx supabase functions deploy v1-private-file-url
 npx supabase functions deploy v1-redemption-commitment
@@ -227,6 +236,14 @@ counts behind the pricing engine's market multipliers. `AUCTION_REFRESH_SECRET` 
 `v1-auction-refresh`, which re-opens the 24-hour auction for stones that drew no bid, up to 60
 rounds. Both are scheduled jobs, not user-facing endpoints: callers present the secret in
 `x-demand-refresh-secret` or `x-auction-refresh-secret` rather than a Supabase session.
+
+`NOTIFY_SWEEP_SECRET` gates `v1-notify-sweep`, which records in-app alerts and delivers configured
+email and Web Push messages. `RESEND_API_KEY` and a verified `MAIL_FROM` enable transactional email;
+the VAPID key pair enables Web Push. The same public key must be supplied to the frontend as
+`VITE_VAPID_PUBLIC_KEY`. `LOGS_RPC_URL` is optional, but if supplied it must accept wide
+`eth_getLogs` ranges; otherwise the functions use the read-only public Sepolia fallback. The
+scheduled workflow drains resumable notification passes until all four contract cursors reach the
+chain head and fails visibly if they do not.
 
 Both are listed with `verify_jwt = false` in [`supabase/config.toml`](./supabase/config.toml).
 Without that the platform rejects a scheduler with `401` *before* the function runs, which is
