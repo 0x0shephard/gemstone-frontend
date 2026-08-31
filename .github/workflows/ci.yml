@@ -38,4 +38,4 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
       - name: Contract integration and fuzz/invariant suite
         working-directory: gemstone
-        run: forge test --offline
+        run: forge test
