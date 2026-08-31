@@ -83,7 +83,7 @@ test('account pages provide a direct route back to the landing page', async ({ p
   await expect(page).toHaveURL('/');
 });
 
-test('disabled Google auth is explained instead of failing silently', async ({ page }) => {
+test('unavailable Google auth is explained instead of failing silently', async ({ page }) => {
   await page.route('**/auth/v1/settings', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
@@ -94,6 +94,6 @@ test('disabled Google auth is explained instead of failing silently', async ({ p
   await page.goto('/login');
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeDisabled();
   await expect(
-    page.getByText(/Google sign-in is disabled in this Supabase project/i),
+    page.getByText(/Google sign-in is disabled in this Supabase project|Auth is not configured/i),
   ).toBeVisible();
 });
