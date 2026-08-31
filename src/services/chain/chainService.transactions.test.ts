@@ -17,7 +17,10 @@ vi.mock('@wagmi/core', () => ({
     getBlock: mocks.getBlock,
   }),
 }));
-vi.mock('@/providers/wagmi', () => ({ wagmiConfig: {} }));
+vi.mock('@/providers/wagmi', () => ({
+  wagmiConfig: {},
+  projectionLogClients: [],
+}));
 /*
  * A synthetic manifest, so this suite does not depend on a `.env` that only
  * exists on a configured machine. `chainService` calls

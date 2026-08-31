@@ -12,7 +12,7 @@ import {
   type Hash,
   type PublicClient,
 } from 'viem';
-import { wagmiConfig } from '@/providers/wagmi';
+import { projectionLogClients, wagmiConfig } from '@/providers/wagmi';
 import {
   NATIVE_ASSET,
   requireDeploymentManifest,
@@ -137,7 +137,7 @@ function projection(force = false): Promise<ProjectionSnapshot> {
   }
   if (force || !projectionPromise) {
     projectionFetchedAt = Date.now();
-    projectionPromise = syncProjection(client)
+    projectionPromise = syncProjection(client, { logClients: projectionLogClients })
       .then((snapshot) => {
         settledSnapshot = snapshot;
         /*

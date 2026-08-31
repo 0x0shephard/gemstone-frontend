@@ -12,12 +12,12 @@ const DATABASE_VERSION = 1;
 const FINALITY_CONFIRMATIONS = 12n;
 const RECENT_RESCAN_BLOCKS = 64n;
 /**
- * Public RPC providers cap `eth_getLogs` block spans, commonly at 1,000. Starting
- * above the cap costs a rejected request per halving before the first useful read,
- * so the opening span stays at the widest value providers accept.
+ * The dedicated historical-log endpoint accepts 50,000-block windows. That
+ * keeps a fresh browser sync bounded to six windows instead of hundreds.
  */
-const INITIAL_RANGE = 1_000n;
+const INITIAL_RANGE = 50_000n;
 const MIN_RANGE = 64n;
+const ADDRESS_BATCH_SIZE = 4;
 
 export interface ProjectedEvent {
   id: string;
@@ -52,6 +52,7 @@ interface PersistedMeta {
 interface SyncOptions {
   signal?: AbortSignal;
   onProgress?: (scannedThrough: bigint, latestBlock: bigint) => void;
+  logClients?: PublicClient[];
 }
 
 function announce(detail: Record<string, unknown>) {
@@ -251,11 +252,56 @@ export async function scanLogs(
   let ceiling = INITIAL_RANGE;
   const addresses = contractModules.map((moduleName) => contractAddresses[moduleName]!);
 
+  const requestLogs = async (address: Address, from: bigint, to: bigint) => {
+    const candidates = [...(options.logClients ?? []), client].filter(
+      (candidate, index, all) => all.indexOf(candidate) === index,
+    );
+    const errors: unknown[] = [];
+    for (const candidate of candidates) {
+      try {
+        return await candidate.getLogs({ address, fromBlock: from, toBlock: to });
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    const last = errors.at(-1);
+    const detail = last instanceof Error ? `: ${last.message}` : '';
+    throw new AggregateError(errors, `Every historical log provider rejected the request${detail}`);
+  };
+
+  const suggestedRange = (error: unknown): bigint | undefined => {
+    const errors = error instanceof AggregateError ? error.errors : [error];
+    const suggestions = errors.flatMap((candidate) => {
+      const message = candidate instanceof Error ? candidate.message : String(candidate);
+      return [
+        ...message.matchAll(
+          /(?:up to a|maximum(?: allowed)?(?: number of requested blocks is| block range:))\s*(\d+)/gi,
+        ),
+      ].map((match) => BigInt(match[1]));
+    });
+    return suggestions.length
+      ? suggestions.reduce((largest, value) => (value > largest ? value : largest))
+      : undefined;
+  };
+
   while (cursor <= latestBlock) {
     if (options.signal?.aborted) throw new DOMException('Projection sync cancelled', 'AbortError');
     const toBlock = cursor + range - 1n > latestBlock ? latestBlock : cursor + range - 1n;
     try {
-      const logs = await client.getLogs({ address: addresses, fromBlock: cursor, toBlock });
+      /*
+       * PublicNode rejects an array of ten addresses even though it accepts the
+       * same range for each address independently. Query small batches in
+       * parallel: six ranges × three batches is fast enough for a fresh phone,
+       * without a ten-request burst that risks rate limiting.
+       */
+      const logs = [];
+      for (let index = 0; index < addresses.length; index += ADDRESS_BATCH_SIZE) {
+        const batch = addresses.slice(index, index + ADDRESS_BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map((address) => requestLogs(address, cursor, toBlock)),
+        );
+        logs.push(...results.flat());
+      }
       for (const log of logs) {
         const projected = decodeLog(log, finalizedThrough);
         if (projected) events.push(projected);
@@ -265,7 +311,9 @@ export async function scanLogs(
       if (logs.length < 1_000 && range < ceiling) range *= 2n;
     } catch (error) {
       if (range <= MIN_RANGE) throw error;
-      ceiling = range / 2n < MIN_RANGE ? MIN_RANGE : range / 2n;
+      const providerRange = suggestedRange(error);
+      const narrower = providerRange && providerRange < range ? providerRange : range / 2n;
+      ceiling = narrower < MIN_RANGE ? MIN_RANGE : narrower;
       range = ceiling;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }

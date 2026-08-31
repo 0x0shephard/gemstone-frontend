@@ -1,6 +1,14 @@
 import { fallback, http, type Transport } from 'viem';
 
 export const SEPOLIA_PUBLIC_RPC = 'https://11155111.rpc.thirdweb.com';
+/**
+ * Browser-safe endpoint used for historical event projection.
+ *
+ * The configured Alchemy free tier is excellent for contract reads but caps
+ * `eth_getLogs` at ten blocks. PublicNode accepts 50,000-block windows when one
+ * contract is queried at a time, which is the shape used by the projection.
+ */
+export const SEPOLIA_LOGS_RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
 
 export function resolveRpcUrls(
   chainId: number,

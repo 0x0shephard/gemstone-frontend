@@ -6,16 +6,41 @@ import {
   trustWallet,
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
-import { http } from 'viem';
+import { createPublicClient, http } from 'viem';
 import { env, walletConnectConfigured } from '@/config/env';
 import { activeChain, supportedChains } from '@/config/chains';
-import { createRpcTransport, resolveRpcUrls } from '@/config/rpc';
+import {
+  createRpcTransport,
+  resolveRpcUrls,
+  SEPOLIA_LOGS_RPC,
+  SEPOLIA_PUBLIC_RPC,
+} from '@/config/rpc';
 import { detectWalletEnvironment, selectWallets, type WalletKind } from './walletSelection';
 import { mobileMetaMaskWallet } from './mobileMetaMaskWallet';
 
 const rpcTransport = createRpcTransport(
   resolveRpcUrls(activeChain.id, env.rpcUrl, env.rpcFallbackUrl),
 );
+
+/**
+ * Historical logs have different provider requirements from ordinary reads.
+ * Keep them off the configured Alchemy free tier, whose ten-block cap would
+ * turn a fresh 260k-block projection into tens of thousands of requests.
+ * `scanLogs` tries these clients in order and adapts to the provider's range.
+ */
+export const projectionLogClients =
+  activeChain.id === 11155111
+    ? [
+        createPublicClient({
+          chain: activeChain,
+          transport: http(SEPOLIA_LOGS_RPC, { retryCount: 0, timeout: 15_000 }),
+        }),
+        createPublicClient({
+          chain: activeChain,
+          transport: http(SEPOLIA_PUBLIC_RPC, { retryCount: 0, timeout: 15_000 }),
+        }),
+      ]
+    : [];
 
 /**
  * The browser extension, named for what it usually is.

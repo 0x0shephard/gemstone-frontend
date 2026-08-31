@@ -9,6 +9,7 @@ import {
 } from 'npm:viem@2';
 import { privateKeyToAccount } from 'npm:viem@2/accounts';
 import { sepolia } from 'npm:viem@2/chains';
+import { resolveLogsRpcUrl } from './rpcSelection.ts';
 
 /**
  * PublicNode accepts wide `eth_getLogs` ranges on Sepolia (the notification
@@ -20,8 +21,6 @@ import { sepolia } from 'npm:viem@2/chains';
  * log queries at ten blocks, and a scanner at that width falls farther behind
  * the chain even when every request succeeds.
  */
-const DEFAULT_LOGS_RPC_URL = 'https://ethereum-sepolia-rpc.publicnode.com';
-
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`${name} is not configured`);
@@ -172,7 +171,7 @@ export function operatorChain(): OperatorChain {
   // A dedicated operator value wins. The public fallback is deliberately
   // separate from the write RPC because only log scans need wide ranges and no
   // private key or signed payload is ever sent to it.
-  const logsRpcUrl = Deno.env.get('LOGS_RPC_URL')?.trim() || DEFAULT_LOGS_RPC_URL;
+  const logsRpcUrl = resolveLogsRpcUrl(rpcUrl, Deno.env.get('LOGS_RPC_URL'));
   /*
    * Fails fast, unlike the write transport.
    *
