@@ -21,6 +21,7 @@ import {
 import type { DecoratedGem } from '@/services/types';
 
 const TONE: Record<GiftCardState, 'success' | 'warning' | 'neutral'> = {
+  pending: 'warning',
   active: 'success',
   claimed: 'success',
   cancelled: 'neutral',
@@ -28,6 +29,7 @@ const TONE: Record<GiftCardState, 'success' | 'warning' | 'neutral'> = {
 };
 
 const LABEL: Record<GiftCardState, string> = {
+  pending: 'Waiting for escrow',
   active: 'Awaiting claim',
   claimed: 'Claimed',
   cancelled: 'Cancelled',
@@ -37,11 +39,8 @@ const LABEL: Record<GiftCardState, string> = {
 /**
  * The sender's own cards.
  *
- * Its real job is the second half of each row: a card that is no longer
- * claimable can still leave a live approval on the token, because ERC-721
- * `approve` may only be called by the owner and the operator therefore cannot
- * withdraw its own permission. Nothing else in the app would ever tell the
- * owner that permission is still outstanding.
+ * New cards are held in operator escrow and cancellation returns the token.
+ * Approval reconciliation remains only for cards created before that migration.
  */
 export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
   const queryClient = useQueryClient();
@@ -70,17 +69,16 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
    * cancelled ones: a card withdrawn without its on-chain approval being revoked
    * is precisely what the stranded-approvals panel exists to catch.
    */
-  const cards = (allCards ?? []).filter((card) => card.status === 'active');
+  const cards = (allCards ?? []).filter(
+    (card) => card.status === 'pending_escrow' || card.status === 'active',
+  );
 
   /*
    * Every owned token, not only the ones with a card.
    *
-   * Issuing a gift approves the operator on chain and then writes the card. A
-   * failure or a closed modal between those two leaves the approval standing
-   * with no card to hang it from — and ERC-721 `approve` may only be called by
-   * the owner, so the operator cannot withdraw it either. Deriving the list from
-   * cards meant the one permission nobody could revoke was also the one nothing
-   * would ever show.
+   * Legacy cards approved the operator before writing their record. Keeping all
+   * owned token ids in this check surfaces any approval stranded by that older
+   * flow; escrow cards themselves do not create approvals.
    */
   const tokenIds = [
     ...new Set([
@@ -109,7 +107,9 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
 
   const cancel = useMutation({
     mutationFn: cancelGiftCard,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['giftCards'] }),
+    // An escrow cancellation changes both the private card row and chain-owned
+    // portfolio, so refresh both rather than only the gift list.
+    onSuccess: () => queryClient.invalidateQueries(),
     onError: (cancelError: unknown) =>
       setError(cancelError instanceof Error ? cancelError.message : 'Could not cancel the card'),
   });
@@ -205,6 +205,7 @@ function GiftCardRowItem({
     giftOperatorAddress &&
     approvedTo &&
     !isAddressEqual(approvedTo, zeroAddress) &&
+    card.custody_mode === 'approval' &&
     isAddressEqual(approvedTo, giftOperatorAddress),
   );
   const canRevoke = approvalOutstanding && state !== 'active';
@@ -229,7 +230,13 @@ function GiftCardRowItem({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-ink-dim">
-        {state === 'active' && <span>Claimable until {expires.toLocaleDateString()}</span>}
+        {state === 'pending' && <span>Prepared, but not yet confirmed in escrow</span>}
+        {state === 'active' && (
+          <span>
+            {card.custody_mode === 'operator_escrow' ? 'Held in escrow · ' : ''}Claimable until{' '}
+            {expires.toLocaleDateString()}
+          </span>
+        )}
         {state === 'claimed' && card.claimed_wallet && (
           <span className="font-mono">
             Sent to {shortenAddress(card.claimed_wallet as Address)}
@@ -257,11 +264,15 @@ function GiftCardRowItem({
         </div>
       )}
 
-      {(state === 'active' || canRevoke) && (
+      {(card.status === 'pending_escrow' || card.status === 'active' || canRevoke) && (
         <div className="flex flex-wrap gap-2">
-          {state === 'active' && (
+          {(card.status === 'pending_escrow' || card.status === 'active') && (
             <Button size="sm" variant="ghost" disabled={cancelling} onClick={onCancel}>
-              {cancelling ? 'Cancelling…' : 'Cancel card'}
+              {cancelling
+                ? 'Cancelling…'
+                : card.custody_mode === 'operator_escrow'
+                  ? 'Cancel and return token'
+                  : 'Cancel card'}
             </Button>
           )}
           {canRevoke && (

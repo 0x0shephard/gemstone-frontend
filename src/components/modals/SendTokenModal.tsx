@@ -21,10 +21,9 @@ interface SendTokenModalProps {
 /**
  * Sending an owned token, by either of the two routes in the design notes.
  *
- * A wallet transfer is immediate and final. A gift card is not a transfer at
- * all: the sender keeps the token and approves the protocol to move it once,
- * when whoever holds the card claims it. Nothing is escrowed and nothing is
- * forfeited — an unclaimed card simply expires.
+ * A wallet transfer is immediate and final. A gift card first transfers into
+ * Digital Carat escrow, then moves to the email-verified recipient only after
+ * they create an account and connect a verified wallet.
  */
 export function SendTokenModal({ gem, open, onClose }: SendTokenModalProps) {
   const [mode, setMode] = useState<Mode>('choose');
@@ -72,7 +71,7 @@ function ChooseRoute({ onPick }: { onPick: (mode: Mode) => void }) {
       />
       <RouteCard
         title="Make a gift card"
-        detail="A printable card with a QR code. The recipient scans it, verifies their email, and the token transfers to their wallet. You keep it until then."
+        detail="A printable card with a QR code. The token stays in Digital Carat escrow until the recipient verifies the invited email and connects a wallet."
         onClick={() => onPick('gift')}
       />
     </div>

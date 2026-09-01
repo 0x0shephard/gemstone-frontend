@@ -43,12 +43,10 @@ export const usdcAddress = parseAddress('VITE_USDC_ADDRESS');
 export const musdcFaucetAddress = parseAddress('VITE_MUSDC_FAUCET_ADDRESS');
 
 /**
- * The operator account that spends a gift card's single-token approval.
+ * The operator EOA that holds newly gifted tokens in custody until claim.
  *
  * Not part of {@link deploymentManifest}: it is an EOA rather than a deployed
- * contract, and the rest of the app works without it. Gift cards are the only
- * feature that needs it, and they say so themselves when it is missing rather
- * than taking the whole configuration down.
+ * contract. It also remains the spender for legacy approval-backed cards.
  */
 export const giftOperatorAddress = parseAddress('VITE_GIFT_OPERATOR_ADDRESS');
 

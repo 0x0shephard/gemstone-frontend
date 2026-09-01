@@ -6,6 +6,7 @@ import { GemThumb } from './GemThumb';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { explorerAddressUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
+import type { Address } from 'viem';
 
 interface GemCardProps {
   gem: DecoratedGem;
@@ -15,6 +16,7 @@ interface GemCardProps {
   ctaLabel?: string;
   href?: string;
   revealDelay?: number;
+  participant?: { address: Address; name?: string; role: 'Owner' | 'Seller' };
   /**
    * Controls rendered below the price row. The card's whole surface is a link,
    * so anything interactive here has to sit above that overlay — this slot is
@@ -24,10 +26,22 @@ interface GemCardProps {
 }
 
 /** The primary gem card used across marketplace, auctions and featured grids. */
-export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay, footer }: GemCardProps) {
+export function GemCard({
+  gem,
+  thumbOverlay,
+  ctaLabel,
+  href,
+  revealDelay,
+  participant,
+  footer,
+}: GemCardProps) {
   const to = href ?? `/gem/${gem.gemId}`;
   const { address } = useAccount();
-  const isOwn = Boolean(address && gem.owner && address.toLowerCase() === gem.owner.toLowerCase());
+  const participantAddress = participant?.address ?? gem.owner;
+  const participantRole = participant?.role ?? 'Owner';
+  const isOwn = Boolean(
+    address && participantAddress && address.toLowerCase() === participantAddress.toLowerCase(),
+  );
   /*
    * A token is purchasable only while escrowed in a live Marketplace listing.
    * Every other token still appears here — the marketplace is a catalogue — so
@@ -79,25 +93,34 @@ export function GemCard({ gem, thumbOverlay, ctaLabel, href, revealDelay, footer
           <ProgressBar value={gem.reserve} funded={gem.funded} height={6} />
         </div>
 
-        {gem.owner && (
+        {participantAddress && (
           <div className="flex items-baseline justify-between gap-3 text-[11px]">
-            <span className="text-ink-dim">Owner</span>
-            {isOwn ? (
-              <span className="font-medium text-atelier">You</span>
+            <span className="text-ink-dim">{participantRole}</span>
+            {participant || !isOwn ? (
+              <span className="relative z-20 flex min-w-0 items-baseline gap-1.5 text-right">
+                {participant && (
+                  <>
+                    <span className="max-w-[9rem] truncate font-medium text-ink-muted">
+                      {participant.name ?? (isOwn ? 'You' : 'Digital Carat member')}
+                    </span>
+                    <span aria-hidden className="text-ink-dim">
+                      ·
+                    </span>
+                  </>
+                )}
+                {/* Above the full-card overlay so the address still opens Etherscan. */}
+                <a
+                  href={explorerAddressUrl(participantAddress)}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => event.stopPropagation()}
+                  className="font-mono text-ink-muted underline decoration-line/30 underline-offset-2 hover:text-ink"
+                >
+                  {shortenAddress(participantAddress)}
+                </a>
+              </span>
             ) : (
-              /*
-                Sits above the card's full-surface overlay link so it opens the
-                explorer instead of the gem page.
-              */
-              <a
-                href={explorerAddressUrl(gem.owner)}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => event.stopPropagation()}
-                className="relative z-20 font-mono text-ink-muted underline decoration-line/30 underline-offset-2 hover:text-ink"
-              >
-                {shortenAddress(gem.owner)}
-              </a>
+              <span className="font-medium text-atelier">You</span>
             )}
           </div>
         )}

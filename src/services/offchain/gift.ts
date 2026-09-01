@@ -1,7 +1,8 @@
 import { invokeEdgeFunction, requireClient } from './invoke';
 import type { GiftTemplate } from '@/components/gift/GiftCardArt';
+import type { Address, Hash } from 'viem';
 
-export type GiftCardState = 'active' | 'claimed' | 'cancelled' | 'expired';
+export type GiftCardState = 'pending' | 'active' | 'claimed' | 'cancelled' | 'expired';
 
 export interface GiftCardRow {
   id: string;
@@ -11,7 +12,11 @@ export interface GiftCardRow {
   recipient_name: string | null;
   message: string | null;
   template: GiftTemplate;
-  status: 'active' | 'claimed' | 'cancelled';
+  status: 'pending_escrow' | 'active' | 'claimed' | 'cancelled';
+  custody_mode: 'approval' | 'operator_escrow';
+  escrow_wallet: string | null;
+  escrowed_at: string | null;
+  escrow_tx_hash: string | null;
   claimed_wallet: string | null;
   claimed_at: string | null;
   claim_tx_hash: string | null;
@@ -27,6 +32,8 @@ export interface CreatedGiftCard {
   expiresAt: string;
   tokenId: string;
   gemId: string;
+  escrowWallet: Address;
+  escrowed: boolean;
 }
 
 export interface GiftCardSummary {
@@ -53,7 +60,20 @@ export function createGiftCard(input: {
 }): Promise<CreatedGiftCard> {
   return invokeEdgeFunction<CreatedGiftCard>('v1-gift-create', {
     ...input,
+    action: 'prepare',
     tokenId: input.tokenId.toString(),
+  });
+}
+
+export function confirmGiftCardEscrow(
+  card: Pick<CreatedGiftCard, 'giftId' | 'code'>,
+  escrowTxHash: Hash,
+): Promise<CreatedGiftCard> {
+  return invokeEdgeFunction<CreatedGiftCard>('v1-gift-create', {
+    action: 'confirm',
+    giftId: card.giftId,
+    code: card.code,
+    escrowTxHash,
   });
 }
 
@@ -76,7 +96,9 @@ export function emailGiftCard(code: string): Promise<{ sent: boolean; to: string
   return invokeEdgeFunction('v1-gift-notify', { code });
 }
 
-export function cancelGiftCard(giftId: string): Promise<{ giftId: string; tokenId: string }> {
+export function cancelGiftCard(
+  giftId: string,
+): Promise<{ giftId: string; tokenId: string; returnTxHash: string | null }> {
   return invokeEdgeFunction('v1-gift-cancel', { giftId });
 }
 
@@ -92,7 +114,7 @@ export async function listGiftCards(): Promise<GiftCardRow[]> {
     // stringifies in exponential form — which `BigInt` then refuses. Casting in
     // the query keeps ids exact however large they get.
     .select(
-      'id,token_id::text,gem_id::text,recipient_email,recipient_name,message,template,status,claimed_wallet,claimed_at,claim_tx_hash,expires_at,created_at',
+      'id,token_id::text,gem_id::text,recipient_email,recipient_name,message,template,status,custody_mode,escrow_wallet,escrowed_at,escrow_tx_hash,claimed_wallet,claimed_at,claim_tx_hash,expires_at,created_at',
     )
     .order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
@@ -107,6 +129,7 @@ export async function listGiftCards(): Promise<GiftCardRow[]> {
  * nothing to do. The claim endpoint derives it the same way.
  */
 export function giftCardState(card: GiftCardRow): GiftCardState {
+  if (card.status === 'pending_escrow') return 'pending';
   if (card.status !== 'active') return card.status;
   return new Date(card.expires_at).getTime() <= Date.now() ? 'expired' : 'active';
 }

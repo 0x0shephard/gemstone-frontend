@@ -175,7 +175,7 @@ npx supabase functions deploy v1-verification-settings
 npx supabase functions deploy v1-demand-refresh
 npx supabase functions deploy v1-auction-refresh
 npx supabase functions deploy v1-notify-sweep
-npx supabase functions deploy v1-gift-notify
+npx supabase functions deploy v1-gift-create v1-gift-claim v1-gift-cancel v1-gift-notify
 npx supabase functions deploy v1-custody-confirm
 npx supabase functions deploy v1-private-file-url
 npx supabase functions deploy v1-redemption-commitment

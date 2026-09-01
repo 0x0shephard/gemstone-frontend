@@ -320,8 +320,9 @@ custom error rather than surfaced raw.
 | Request redemption              | Redeem      | `RedemptionManager.requestRedemption`                     |
 | Cancel a redemption             | Redeem      | `RedemptionManager.cancelRedemption`                      |
 | Send a token to an address      | Portfolio   | `DGENFT.safeTransferFrom`                                 |
-| Issue a gift card               | Portfolio   | `DGENFT.approve` (operator, one token)                    |
-| Clear a stale gift approval     | Portfolio   | `DGENFT.approve(0x0, tokenId)`                            |
+| Issue a gift card               | Portfolio   | `DGENFT.safeTransferFrom` (sender → gift escrow)          |
+| Cancel an escrowed gift         | Portfolio   | Operator returns the token to the sender                  |
+| Clear a legacy gift approval    | Portfolio   | `DGENFT.approve(0x0, tokenId)`                            |
 
 **Solvency couples all of these.** `requireSolvent()` guards seven entry points —
 `buyNow`, `bid`, `Marketplace.buy`/`createOffer`/`acceptOffer`,
@@ -362,17 +363,21 @@ Bids** for the same reason.
 
 ## D2. Gift cards — a claimable handover
 
-A gift card is **not** a transfer and **not** an escrow. The sender keeps the
-token the whole time; all they part with is a single-token `approve`, which the
-operator spends exactly once when someone claims.
+A new gift card is an email-bound handover backed by **operator-held escrow**.
+The token leaves the sender only after the server has created a recoverable
+pending record, and the card becomes claimable only after an on-chain read
+proves that the operator wallet holds it. Cards issued before this change keep
+their approval-backed claim path so existing printed cards still work.
 
 ```
 Portfolio → Owned Tokens → Send Token
   ├─ Send to wallet address ──► DGENFT.safeTransferFrom          immediate, final
   └─ Make a gift card
-       │  DGENFT.approve(operator, tokenId)     ← the only signature
-       ├─ v1-gift-create   re-reads ownerOf / getApproved / transferLocked
-       │                   from the chain, stores SHA-256 of the code
+       ├─ v1-gift-create {action:'prepare'}
+       │                   verifies ownership / lock / term and stores a pending row
+       │  DGENFT.safeTransferFrom(sender, operator, tokenId)
+       ├─ v1-gift-create {action:'confirm'}
+       │                   proves operator custody and activates the card
        └─ card renders to SVG → print · PNG · SVG · link · WhatsApp
 
 QR ──► /gift/:code
@@ -380,8 +385,8 @@ QR ──► /gift/:code
   1. email OTP or Google  ─ session email must equal recipient_email
   2. connect + SIWE       ─ writes wallet_links
   3. v1-gift-claim {action:'claim'}
-        re-reads owner / approval / lock, takes the row conditionally,
-        then operator DGENFT.safeTransferFrom(sender → recipient)
+        re-reads escrow owner / lock, takes the row conditionally,
+        then operator DGENFT.safeTransferFrom(escrow → recipient)
 ```
 
 **The claim window is the stone's reserve escrow term, and forfeits nothing.**
@@ -398,11 +403,10 @@ actually known. A gem with no recorded term cannot carry a gift card:
 `v1-gift-create` returns 409 rather than inventing an expiry, since a wrong date
 on a printed voucher is the one thing that cannot be corrected afterwards.
 
-A lapsed card is simply not claimable; the sender still holds the stone and can
-issue another. There is no sweep, because a sweep would have nothing to do — see
-below.
+A lapsed card is not claimable. The sender cancels it from Portfolio → **Gift
+Cards**, which returns the escrowed stone to the verified sender wallet.
 
-**The approval outlives the card, and only the owner can clear it.** ERC-721
+**Legacy approvals outlive their cards, and only the owner can clear them.** ERC-721
 `approve` may be called only by the token's owner or an approved-for-all
 operator. A per-token approval grants neither, so the gift operator cannot
 revoke its own permission when a card expires or is cancelled. `expires_at` is
@@ -410,14 +414,15 @@ enforced on the claim path, so an expired card is inert — but the on-chain
 permission stays until the sender withdraws it. Portfolio → **Gift Cards**
 surfaces exactly those cases and offers **Revoke approval**.
 
-Three things void a card without anyone touching it, and the claim path re-reads
-all three rather than trusting what was true at issue time:
+For new cards, sale and swap are impossible while the operator owns the token.
+The claim path still re-reads custody and the redemption lock rather than
+trusting what was true at issue time:
 
-| Sender does this        | Effect on the card                              |
-| ----------------------- | ----------------------------------------------- |
-| Sells or swaps the token | Transfer clears the approval — claim refuses     |
-| Requests redemption      | `transferLocked` set — claim refuses             |
-| Cancels the card         | Row is `cancelled` — claim refuses immediately   |
+| Event                         | Effect on the card                                      |
+| ----------------------------- | ------------------------------------------------------- |
+| Escrow custody is missing     | Claim refuses                                           |
+| Redemption locks the token    | Claim refuses                                           |
+| Sender cancels the card       | Claim stops and the operator returns the token          |
 
 **Why the email is mandatory.** Without it the printed code is a bearer
 instrument: whoever photographs the card takes the gemstone, including anyone

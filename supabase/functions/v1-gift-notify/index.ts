@@ -113,7 +113,7 @@ Deno.serve(async (request) => {
       `Claim it here: ${claimUrl}`,
       `Your code: ${displayCode}`,
       '',
-      `You will be asked to confirm this email address and connect a wallet. There is nothing to pay.`,
+      `Your gemstone is held in Digital Carat escrow. Create or sign in to your account with this email, then connect and verify a wallet to receive it. There is nothing to pay.`,
       `Claim by ${expires}.`,
     ].join('\n');
 
@@ -126,7 +126,7 @@ ${note ? `<p style="margin:0 0 20px;padding-left:14px;border-left:2px solid #8a7
 <p style="margin:0 0 28px"><a href="${escapeHtml(claimUrl)}" style="display:inline-block;background:#14161a;color:#fffdf8;text-decoration:none;padding:13px 26px;border-radius:4px;font-size:15px;font-weight:600">Claim your gemstone</a></p>
 <p style="margin:0 0 6px;font-size:12px;color:#6b6455">Or enter this code at ${escapeHtml(canonicalSiteOrigin())}/gift</p>
 <p style="margin:0 0 24px;font-family:ui-monospace,Menlo,monospace;font-size:18px;letter-spacing:2px;color:#8a7550">${escapeHtml(displayCode)}</p>
-<p style="margin:0;padding-top:20px;border-top:1px solid #e2dacb;font-size:12px;line-height:1.6;color:#6b6455">You will be asked to confirm this email address and connect a wallet. There is nothing to pay. Claim by ${escapeHtml(expires)}.</p>
+<p style="margin:0;padding-top:20px;border-top:1px solid #e2dacb;font-size:12px;line-height:1.6;color:#6b6455">Your gemstone is held in Digital Carat escrow. Create or sign in to your account with this email, then connect and verify a wallet to receive it. There is nothing to pay. Claim by ${escapeHtml(expires)}.</p>
 </div></body></html>`;
 
     const messageId = await sendEmail({

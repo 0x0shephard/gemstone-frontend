@@ -1,4 +1,4 @@
-import { getAddress, isAddress } from 'npm:viem@2';
+import { getAddress, isAddress, zeroAddress } from 'npm:viem@2';
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
@@ -12,16 +12,11 @@ import {
 import { hashGiftCode, maskEmail, normalizeGiftCode } from '../_shared/gift.ts';
 
 /**
- * Reads and redeems a gift card.
+ * Inspects and claims an email-bound gift.
  *
- * `inspect` runs before anyone has signed in — the claim page has to show what
- * the card is for before it can reasonably ask for an email address — so it
- * returns only what is already printed on the card the caller is holding.
- *
- * `claim` is the transfer. It moves the token with the single-token approval
- * the sender granted at issue time, from the sender straight to the recipient's
- * own verified wallet. Nothing was ever escrowed, so there is no intermediate
- * custody to unwind if this never happens.
+ * New cards transfer from the operator escrow wallet. Approval-backed cards
+ * issued before the escrow migration keep their original claim path so a live
+ * printed card is not invalidated by the upgrade.
  */
 
 interface GiftRow {
@@ -35,12 +30,14 @@ interface GiftRow {
   message: string | null;
   template: string;
   status: string;
+  custody_mode: string;
+  escrow_wallet: string | null;
   expires_at: string;
   created_at: string;
 }
 
 const SELECT =
-  'id,sender_id,sender_wallet,token_id::text,gem_id::text,recipient_email,recipient_name,message,template,status,expires_at,created_at';
+  'id,sender_id,sender_wallet,token_id::text,gem_id::text,recipient_email,recipient_name,message,template,status,custody_mode,escrow_wallet,expires_at,created_at';
 
 async function loadCard(admin: ReturnType<typeof adminClient>, code: string) {
   const { data } = await admin
@@ -51,12 +48,8 @@ async function loadCard(admin: ReturnType<typeof adminClient>, code: string) {
   return (data as GiftRow | null) ?? null;
 }
 
-/**
- * Expiry is derived, never trusted from the stored status. No sweep sets it —
- * there is nothing for a sweep to do, since the operator cannot revoke its own
- * per-token approval — so the timestamp is the only authority.
- */
-function state(card: GiftRow): 'active' | 'claimed' | 'cancelled' | 'expired' {
+function state(card: GiftRow): 'pending' | 'active' | 'claimed' | 'cancelled' | 'expired' {
+  if (card.status === 'pending_escrow') return 'pending';
   if (card.status !== 'active') return card.status as 'claimed' | 'cancelled';
   return new Date(card.expires_at).getTime() <= Date.now() ? 'expired' : 'active';
 }
@@ -70,8 +63,6 @@ Deno.serve(async (request) => {
     const admin = adminClient();
     const body = (await request.json()) as Record<string, unknown>;
     const code = normalizeGiftCode(body.code);
-    // Same answer for a malformed code and an unknown one, so this cannot be
-    // used to distinguish "not a code" from "not your code".
     if (!code) return json({ error: 'That gift code is not valid' }, 404);
 
     const card = await loadCard(admin, code);
@@ -83,7 +74,6 @@ Deno.serve(async (request) => {
       .select('full_name')
       .eq('id', card.sender_id)
       .maybeSingle();
-
     const summary = {
       state: cardState,
       tokenId: card.token_id,
@@ -102,11 +92,13 @@ Deno.serve(async (request) => {
 
     if (cardState !== 'active') {
       const reason =
-        cardState === 'claimed'
-          ? 'This gift card has already been claimed'
-          : cardState === 'cancelled'
-            ? 'The sender cancelled this gift card'
-            : 'This gift card has expired';
+        cardState === 'pending'
+          ? 'This gift is still being secured in escrow'
+          : cardState === 'claimed'
+            ? 'This gift card has already been claimed'
+            : cardState === 'cancelled'
+              ? 'The sender cancelled this gift card'
+              : 'This gift card has expired';
       return json({ error: reason, state: cardState }, 409);
     }
 
@@ -133,22 +125,26 @@ Deno.serve(async (request) => {
     }
     const recipientWallet = getAddress(walletLink.wallet_address);
     const senderWallet = getAddress(card.sender_wallet);
-    if (recipientWallet === senderWallet) {
-      return json({ error: 'That wallet already holds this token', state: 'active' }, 400);
-    }
 
     const chain = operatorChain();
     await assertOperatorChain(chain);
+    const operatorWallet = getAddress(chain.account.address);
+    const escrowed = card.custody_mode === 'operator_escrow';
+    const custodyWallet = escrowed
+      ? card.escrow_wallet
+        ? getAddress(card.escrow_wallet)
+        : zeroAddress
+      : senderWallet;
+    if (escrowed && custodyWallet !== operatorWallet) {
+      return json({ error: 'The gift escrow wallet is not available' }, 409);
+    }
+    if (recipientWallet === custodyWallet) {
+      return json({ error: 'That wallet already holds this token', state: 'active' }, 400);
+    }
+
     const nft = dgeNftAddress();
     const tokenId = BigInt(card.token_id);
-
-    /*
-     * Re-read rather than relying on what was true at issue time. Nothing stops
-     * the sender selling, swapping or redeeming the token in the meantime, and
-     * all three quietly void the card: a transfer clears the approval, and a
-     * redemption locks the token outright.
-     */
-    const [owner, approved, locked] = (await Promise.all([
+    const [owner, locked, approved] = (await Promise.all([
       chain.publicClient.readContract({
         address: nft,
         abi: dgeNftAbi,
@@ -158,37 +154,36 @@ Deno.serve(async (request) => {
       chain.publicClient.readContract({
         address: nft,
         abi: dgeNftAbi,
-        functionName: 'getApproved',
-        args: [tokenId],
-      }),
-      chain.publicClient.readContract({
-        address: nft,
-        abi: dgeNftAbi,
         functionName: 'transferLocked',
         args: [tokenId],
       }),
-    ])) as [string, string, boolean];
+      escrowed
+        ? Promise.resolve(zeroAddress)
+        : chain.publicClient.readContract({
+            address: nft,
+            abi: dgeNftAbi,
+            functionName: 'getApproved',
+            args: [tokenId],
+          }),
+    ])) as [string, boolean, string];
 
-    if (getAddress(owner) !== senderWallet) {
+    if (getAddress(owner) !== custodyWallet) {
       return json(
-        { error: 'The sender no longer holds this token, so the card cannot be claimed' },
+        {
+          error: escrowed
+            ? 'This token is no longer held in gift escrow'
+            : 'The sender no longer holds this token, so the card cannot be claimed',
+        },
         409,
       );
     }
     if (locked) {
       return json({ error: 'This token is locked while its redemption is in progress' }, 409);
     }
-    if (getAddress(approved) !== getAddress(chain.account.address)) {
+    if (!escrowed && getAddress(approved) !== operatorWallet) {
       return json({ error: 'The sender withdrew permission to transfer this token' }, 409);
     }
 
-    /*
-     * Take the card before touching the chain, conditionally on it still being
-     * active. Two recipients racing the same code — a forwarded email, a
-     * refreshed tab — would otherwise both reach `safeTransferFrom`, and the
-     * loser's revert is far harder to explain than a second click that says the
-     * card is already claimed. Reverted below if the transfer fails.
-     */
     const claimedAt = new Date().toISOString();
     const { data: taken } = await admin
       .from('gift_cards')
@@ -212,19 +207,21 @@ Deno.serve(async (request) => {
         address: nft,
         abi: dgeNftAbi,
         functionName: 'safeTransferFrom',
-        args: [senderWallet, recipientWallet, tokenId],
+        args: [custodyWallet, recipientWallet, tokenId],
       });
     } catch (transferError) {
       await admin
         .from('gift_cards')
         .update({ status: 'active', claimed_by: null, claimed_wallet: null, claimed_at: null })
-        .eq('id', card.id);
+        .eq('id', card.id)
+        .eq('status', 'claimed');
       throw transferError;
     }
 
     await admin.from('gift_cards').update({ claim_tx_hash: hash }).eq('id', card.id);
     await audit(user.id, 'gift.claimed', 'gift_card', card.id, {
       tokenId: card.token_id,
+      custodyMode: card.custody_mode,
       transactionHash: hash,
     });
 

@@ -13,15 +13,17 @@ import {
   templateLabel,
   type GiftTemplate,
 } from './GiftCardArt';
-import { giftOperatorAddress } from '@/config/contracts';
 import { saveGiftHandoff, takeGiftHandoff } from '@/services/offchain/giftHandoff';
 import { dataService } from '@/services';
 import {
+  cancelGiftCard,
+  confirmGiftCardEscrow,
   createGiftCard,
   emailGiftCard,
   giftClaimUrl,
   type CreatedGiftCard,
 } from '@/services/offchain/gift';
+import type { Hash } from 'viem';
 import {
   cardAsPngBase64,
   downloadCardPng,
@@ -36,7 +38,7 @@ import {
 } from '@/services/offchain/canva';
 import { cn } from '@/lib/cn';
 
-type Step = 'compose' | 'approve' | 'issued';
+type Step = 'compose' | 'escrow' | 'issued';
 
 interface GiftCardComposerProps {
   gem: DecoratedGem;
@@ -51,10 +53,9 @@ const MAX_MESSAGE = 500;
 /**
  * Composes, issues and hands over a gift card.
  *
- * Three steps, in an order that matters. The details are settled first, then
- * the single wallet signature that grants the operator permission to move this
- * one token, and only then is the card issued — so a sender who abandons the
- * flow at the signature has granted nothing and left no half-made card behind.
+ * Three steps, in an order that matters. A pending email-bound record is made
+ * first, the sender transfers the NFT into the server-declared escrow wallet,
+ * and the card becomes claimable only after the server verifies escrow custody.
  */
 export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardComposerProps) {
   /*
@@ -84,24 +85,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
   const email = recipientEmail.trim().toLowerCase();
   const emailValid = EMAIL_PATTERN.test(email);
 
-  if (!giftOperatorAddress) {
-    return (
-      <Modal open={open} onClose={onClose} title="Gift cards are not available">
-        <p className="text-[13px] leading-relaxed text-ink-muted">
-          This deployment has no gift operator address configured, so there is nothing to authorise
-          a claim with. Sending straight to a wallet address still works.
-        </p>
-        <Button block variant="secondary" onClick={onBack}>
-          Back
-        </Button>
-      </Modal>
-    );
-  }
-
-  async function issue() {
-    // The confirmation button stays mounted while this runs, and a second
-    // create would collide with the one-active-card index and report a conflict
-    // the sender did not cause.
+  async function prepare() {
     if (issuing) return;
     setIssuing(true);
     setError(null);
@@ -114,9 +98,41 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
         template,
       });
       setIssued(card);
+      setStep('escrow');
+    } catch (prepareError) {
+      setError(prepareError instanceof Error ? prepareError.message : 'Could not prepare the gift');
+    } finally {
+      setIssuing(false);
+    }
+  }
+
+  async function finalize(escrowTxHash: Hash) {
+    if (!issued || issuing) return;
+    setIssuing(true);
+    setError(null);
+    try {
+      const card = await confirmGiftCardEscrow(issued, escrowTxHash);
+      setIssued(card);
       setStep('issued');
-    } catch (issueError) {
-      setError(issueError instanceof Error ? issueError.message : 'Could not issue the gift card');
+    } catch (confirmError) {
+      setError(
+        confirmError instanceof Error ? confirmError.message : 'Could not confirm gift escrow',
+      );
+    } finally {
+      setIssuing(false);
+    }
+  }
+
+  async function abandonPreparedGift() {
+    if (!issued || issuing) return;
+    setIssuing(true);
+    setError(null);
+    try {
+      await cancelGiftCard(issued.giftId);
+      setIssued(null);
+      setStep('compose');
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'Could not cancel gift setup');
     } finally {
       setIssuing(false);
     }
@@ -130,8 +146,8 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
       title={step === 'issued' ? 'Gift card ready' : 'Make a gift card'}
       subtitle={
         step === 'issued'
-          ? 'Print it, or send the link. It is claimable once.'
-          : 'You keep the token until someone claims the card.'
+          ? 'Print it, or send the link. The escrowed gemstone is claimable once.'
+          : 'The gemstone stays in escrow until the invited recipient verifies their account and wallet.'
       }
     >
       {step !== 'issued' && <ModalGemHeader gem={gem} />}
@@ -199,51 +215,49 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
             <Button variant="ghost" onClick={onBack}>
               Back
             </Button>
-            <Button block disabled={!emailValid} onClick={() => setStep('approve')}>
-              Continue
+            <Button block disabled={!emailValid || issuing} onClick={() => void prepare()}>
+              {issuing ? 'Preparing…' : 'Continue to escrow'}
             </Button>
           </div>
         </>
       )}
 
-      {step === 'approve' && (
+      {step === 'escrow' && issued && (
         <>
           <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3.5">
             <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-dim">
-              One signature
+              Secure in escrow
             </div>
             <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink-muted">
-              You are approving Digital Carat to move{' '}
-              <strong className="text-ink">this token only</strong>, once, when{' '}
-              {recipientName.trim() || email} claims the card. The token stays in your wallet until
-              then, and an unclaimed card simply expires — nothing is taken from you.
+              Your wallet will transfer <strong className="text-ink">this token only</strong> into
+              Digital Carat escrow. It stays there until {recipientName.trim() || email} signs in
+              with the invited email and connects a verified wallet.
             </p>
           </div>
           <p className="text-[11.5px] leading-relaxed text-ink-dim">
-            If you change your mind, cancel the card from your portfolio. Cancelling stops the claim
-            immediately; clearing the approval itself is a second, unhurried step from the same
-            place.
+            You can cancel an unclaimed gift from your portfolio. Cancellation returns the token
+            from escrow to your verified wallet.
           </p>
           {error && <p className="text-[12px] text-ruby">{error}</p>}
           <div className="grid grid-cols-[auto_1fr] gap-2.5">
-            <Button variant="ghost" disabled={issuing} onClick={() => setStep('compose')}>
-              Back
+            <Button variant="ghost" disabled={issuing} onClick={() => void abandonPreparedGift()}>
+              Cancel setup
             </Button>
             <TxButton
               block
               disabled={issuing}
               action={() =>
-                dataService.approveTransfer({
+                dataService.transferToken({
                   tokenId: gem.tokenId!,
-                  operator: giftOperatorAddress!,
+                  to: issued.escrowWallet,
                 })
               }
-              pendingLabel="Approving…"
-              telemetryFlow="gift_approve"
-              doneLabel={issuing ? 'Issuing card…' : 'Create the card'}
-              onDone={issue}
+              pendingLabel="Moving into escrow…"
+              telemetryFlow="gift_escrow"
+              doneLabel={issuing ? 'Confirming escrow…' : 'Finish gift card'}
+              onDone={(result) => void finalize(result.hash)}
             >
-              Approve and continue
+              Transfer to escrow
             </TxButton>
           </div>
         </>

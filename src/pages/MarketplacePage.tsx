@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useListings } from '@/hooks/useData';
 import { GemCard } from '@/components/gem/GemCard';
 import { FilterPills } from '@/components/ui/FilterPills';
 import { CardGridSkeleton, ErrorState, EmptyState } from '@/components/ui/States';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 import type { GemType } from '@/services/types';
+import {
+  marketplaceParticipant,
+  marketplaceProfileNames,
+  type MarketplaceParticipant,
+} from '@/services/offchain/marketplaceProfiles';
 
 type Filter = 'all' | GemType;
 type Sort = 'value-desc' | 'value-asc' | 'reserve';
@@ -14,6 +20,23 @@ export default function MarketplacePage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('value-desc');
   const [search, setSearch] = useState('');
+  const participantAddresses = useMemo(
+    () =>
+      (gems ?? [])
+        .map(marketplaceParticipant)
+        .filter((participant): participant is MarketplaceParticipant => Boolean(participant))
+        .map((participant) => participant.address),
+    [gems],
+  );
+  const participantKey = [...new Set(participantAddresses.map((address) => address.toLowerCase()))]
+    .sort()
+    .join(',');
+  const { data: participantNames = {} } = useQuery({
+    queryKey: ['marketplaceProfileNames', participantKey],
+    queryFn: () => marketplaceProfileNames(participantAddresses),
+    enabled: participantAddresses.length > 0,
+    staleTime: 5 * 60_000,
+  });
   const filters = useMemo(
     () => [
       { value: 'all', label: 'All' },
@@ -29,18 +52,27 @@ export default function MarketplacePage() {
     if (filter !== 'all') list = list.filter((g) => g.type === filter);
     const query = search.trim().toLowerCase();
     if (query) {
-      list = list.filter((gem) =>
-        [gem.name, gem.displayId, gem.typeLabel, gem.custodyCountry, gem.custodyProvider].some(
-          (value) => value.toLowerCase().includes(query),
-        ),
-      );
+      list = list.filter((gem) => {
+        const participant = marketplaceParticipant(gem);
+        const accountName = participant
+          ? participantNames[participant.address.toLowerCase()]
+          : undefined;
+        return [
+          gem.name,
+          gem.displayId,
+          gem.typeLabel,
+          gem.custodyCountry,
+          gem.custodyProvider,
+          accountName ?? '',
+        ].some((value) => value.toLowerCase().includes(query));
+      });
     }
     const sorted = [...list];
     if (sort === 'value-desc') sorted.sort((a, b) => b.value - a.value);
     if (sort === 'value-asc') sorted.sort((a, b) => a.value - b.value);
     if (sort === 'reserve') sorted.sort((a, b) => a.reserve - b.reserve);
     return sorted;
-  }, [gems, filter, search, sort]);
+  }, [gems, filter, participantNames, search, sort]);
 
   useScrollReveal([visible]);
 
@@ -137,15 +169,26 @@ export default function MarketplacePage() {
         />
       ) : (
         <div className="grid gap-4 sm:gap-5 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
-          {visible.map((gem, i) => (
-            <GemCard
-              key={gem.gemId.toString()}
-              gem={gem}
-              href={`/gem/${gem.gemId}?market=${gem.market ?? 'secondary'}`}
-              ctaLabel={gem.market === 'primary' ? 'Buy now →' : 'Purchase →'}
-              revealDelay={(i % 4) * 60}
-            />
-          ))}
+          {visible.map((gem, i) => {
+            const participant = marketplaceParticipant(gem);
+            return (
+              <GemCard
+                key={gem.gemId.toString()}
+                gem={gem}
+                href={`/gem/${gem.gemId}?market=${gem.market ?? 'secondary'}`}
+                ctaLabel={gem.market === 'primary' ? 'Buy now →' : 'Purchase →'}
+                revealDelay={(i % 4) * 60}
+                participant={
+                  participant
+                    ? {
+                        ...participant,
+                        name: participantNames[participant.address.toLowerCase()],
+                      }
+                    : undefined
+                }
+              />
+            );
+          })}
         </div>
       )}
     </div>

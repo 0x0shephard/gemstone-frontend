@@ -12,6 +12,8 @@ export interface Gem {
   gemId: bigint;
   tokenId?: bigint;
   market?: 'primary' | 'secondary';
+  /** Original seller recorded by GemRegistry; used before a token is minted. */
+  seller?: Address;
   /**
    * Current holder of the minted token. Absent until a stone is won at auction,
    * which is the only way a token comes into existence.
@@ -225,9 +227,8 @@ export interface TransferTokenRequest {
 /**
  * Grants one address permission to move one token, once.
  *
- * This is what a gift card rests on: the sender keeps the token, and the
- * operator holds a single-use permission it spends only when someone claims
- * the card.
+ * Retained for approval-backed gift cards issued before operator escrow was
+ * introduced, and for any other explicit single-token delegation.
  */
 export interface ApproveTransferRequest {
   tokenId: bigint;
@@ -235,7 +236,7 @@ export interface ApproveTransferRequest {
 }
 
 /**
- * Clears the standing per-token approval a gift card leaves behind.
+ * Clears a standing per-token approval left by a legacy gift card.
  *
  * ERC-721 `approve` may only be called by the owner or an approved-for-all
  * operator, so the gift operator cannot revoke its own single-token approval

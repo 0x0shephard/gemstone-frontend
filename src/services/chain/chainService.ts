@@ -346,6 +346,7 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   const gem: Gem = {
     gemId,
     tokenId: registryGem.tokenId > 0n ? registryGem.tokenId : undefined,
+    seller: registryGem.seller,
     owner,
     /*
      * The ask, never the valuation. This block previously overwrote `valueUsd`

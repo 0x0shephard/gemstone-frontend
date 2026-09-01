@@ -118,6 +118,11 @@ function GiftHeader({ card }: { card: GiftCardSummary }) {
 
 function TerminalState({ card }: { card: GiftCardSummary }) {
   const copy: Record<string, { title: string; body: string; tone: 'success' | 'neutral' }> = {
+    pending: {
+      title: 'The gift is being secured',
+      body: 'The sender prepared this card but has not finished moving the gemstone into escrow. Try again after they complete the transfer.',
+      tone: 'neutral',
+    },
     claimed: {
       title: 'Already claimed',
       body: card.transactionHash
@@ -132,7 +137,7 @@ function TerminalState({ card }: { card: GiftCardSummary }) {
     },
     expired: {
       title: 'This card has expired',
-      body: "A card stays claimable until the end of the gemstone's reserve escrow term. That date has passed. The gemstone was never taken from the sender, so they still hold it.",
+      body: "A card stays claimable until the end of the gemstone's reserve escrow term. That date has passed. If this was an escrowed gift, the sender can cancel it to return the gemstone to their wallet.",
       tone: 'neutral',
     },
   };
@@ -300,8 +305,8 @@ function ClaimSteps({
         ) : (
           <>
             <p className="text-[12.5px] leading-relaxed text-ink-muted">
-              The token is transferred straight to a wallet you control. Connect one and sign a
-              message to prove it is yours — no transaction, no gas.
+              The token is released from escrow straight to a wallet you control. Connect one and
+              sign a message to prove it is yours — no transaction, no gas.
             </p>
             {!isConnected ? (
               <Button block variant="secondary" onClick={openConnectModal}>
@@ -329,7 +334,7 @@ function ClaimSteps({
 
       <Step index={3} title="Claim your gemstone" done={false}>
         <p className="text-[12.5px] leading-relaxed text-ink-muted">
-          Digital Carat moves the token from the sender to your wallet. There is nothing to pay.
+          Digital Carat releases the token from escrow to your wallet. There is nothing to pay.
         </p>
         <Button
           block
