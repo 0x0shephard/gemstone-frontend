@@ -216,7 +216,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
               Back
             </Button>
             <Button block disabled={!emailValid || issuing} onClick={() => void prepare()}>
-              {issuing ? 'Preparing…' : 'Continue to escrow'}
+              {issuing ? 'Preparing…' : 'Continue with gift card'}
             </Button>
           </div>
         </>

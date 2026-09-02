@@ -48,6 +48,7 @@ describe('carat multiplier', () => {
       [2, 2_400_000n],
       [3, 4_200_000n],
       [5, 9_000_000n],
+      [30, 9_000_000n],
     ];
     for (const [carat, expected] of anchors) {
       expect(caratMultiplierPpm(BigInt(carat * 1e6))).toBe(expected);
@@ -57,10 +58,12 @@ describe('carat multiplier', () => {
   it('interpolates between anchors', () => {
     // Midway between 1.0 -> 1.0 and 2.0 -> 2.4.
     expect(caratMultiplierPpm(1_500_000n)).toBe(1_700_000n);
+    expect(caratMultiplierPpm(8_000_000n)).toBe(9_000_000n);
+    expect(caratMultiplierPpm(22_500_000n)).toBe(9_000_000n);
   });
 
   it('refuses weights outside the priced range instead of extrapolating', () => {
-    expect(() => caratMultiplierPpm(6_000_000n)).toThrow(/outside the priced range/i);
+    expect(() => caratMultiplierPpm(30_000_001n)).toThrow(/outside the priced range/i);
     expect(() => caratMultiplierPpm(100_000n)).toThrow(/outside the priced range/i);
   });
 });

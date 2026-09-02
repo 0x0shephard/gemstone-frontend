@@ -96,9 +96,8 @@ function clamp(value: bigint, min: bigint, max: bigint): bigint {
 /**
  * Carat multiplier, linearly interpolated between the published anchors.
  *
- * Outside the anchor range the engine refuses. The curve is exponential by
- * design, so extrapolating past the last anchor compounds error quickly, and the
- * result is written to a field with no setter.
+ * Outside the anchor range the engine refuses. Equal adjacent multipliers define
+ * a plateau, which is how matrix v3 represents the published 5–30 ct band.
  */
 export function caratMultiplierPpm(
   microCarats: bigint,

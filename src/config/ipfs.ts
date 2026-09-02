@@ -4,6 +4,10 @@
  * being slow, rate-limited, or gone.
  */
 export const PUBLIC_IPFS_GATEWAYS = [
+  // The legacy ipfs.io and dweb.link paths now return an HTML service-worker
+  // handoff in some mobile browsers. Pinata still serves the immutable JSON and
+  // image bytes directly, so it is the first public recovery path.
+  'https://gateway.pinata.cloud/ipfs/',
   'https://ipfs.io/ipfs/',
   'https://dweb.link/ipfs/',
   // `cloudflare-ipfs.com` was retired by Cloudflare and no longer resolves.

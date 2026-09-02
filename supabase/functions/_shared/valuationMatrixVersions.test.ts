@@ -5,6 +5,7 @@ import {
   VALUATION_MATRIX,
 } from './valuationMatrix.ts';
 import { VALUATION_MATRIX_V1 } from './valuationMatrixV1.ts';
+import { VALUATION_MATRIX_V2 } from './valuationMatrixV2.ts';
 import { keccak256, toBytes } from 'viem';
 
 function digest(matrix: unknown): string {
@@ -18,6 +19,7 @@ function digest(matrix: unknown): string {
 describe('matrix versioning', () => {
   it('still resolves the version the deployed gems were priced under', () => {
     expect(matrixForVersion('digital-carat-matrix-v1')).toBe(VALUATION_MATRIX_V1);
+    expect(matrixForVersion('digital-carat-matrix-v2')).toBe(VALUATION_MATRIX_V2);
     expect(matrixForVersion(VALUATION_MATRIX.version)).toBe(VALUATION_MATRIX);
   });
 
@@ -44,16 +46,48 @@ describe('matrix versioning', () => {
     );
   });
 
-  it('gives v2 a different digest, since it prices differently', () => {
-    expect(digest(VALUATION_MATRIX)).not.toBe(digest(VALUATION_MATRIX_V1));
+  it('pins the archived v2 document against edits', () => {
+    expect(digest(VALUATION_MATRIX_V2)).toBe(
+      '0x5fd2c7ce030087cc69bb3ff8b8e451585151cca559765b596f8401933b9bb4d6',
+    );
   });
 
-  it('adds the two varieties without disturbing the four that were priced', () => {
-    for (const variety of ['emerald', 'sapphire', 'ruby', 'peridot'] as const) {
-      expect(VALUATION_MATRIX.varieties[variety]).toEqual(VALUATION_MATRIX_V1.varieties[variety]);
-    }
-    expect(VALUATION_MATRIX.varieties.tourmaline.basePricePerCaratUsd).toBe(200n);
-    expect(VALUATION_MATRIX.varieties.aquamarine.basePricePerCaratUsd).toBe(150n);
+  it('gives the current matrix a different digest, since it prices differently', () => {
+    expect(digest(VALUATION_MATRIX)).not.toBe(digest(VALUATION_MATRIX_V1));
+    expect(digest(VALUATION_MATRIX)).not.toBe(digest(VALUATION_MATRIX_V2));
+  });
+
+  it('applies every base price from the v3 source matrix', () => {
+    expect(VALUATION_MATRIX.varieties.emerald.basePricePerCaratUsd).toBe(1_000n);
+    expect(VALUATION_MATRIX.varieties.sapphire.basePricePerCaratUsd).toBe(1_200n);
+    expect(VALUATION_MATRIX.varieties.ruby.basePricePerCaratUsd).toBe(1_500n);
+    expect(VALUATION_MATRIX.varieties.peridot.basePricePerCaratUsd).toBe(200n);
+    expect(VALUATION_MATRIX.varieties.tourmaline.basePricePerCaratUsd).toBe(400n);
+    expect(VALUATION_MATRIX.varieties.aquamarine.basePricePerCaratUsd).toBe(300n);
     expect(VALUATION_MATRIX_V1.varieties.tourmaline).toBeUndefined();
+  });
+
+  it('applies every clarity and treatment multiplier from the v3 source matrix', () => {
+    expect(VALUATION_MATRIX.clarityPpm).toEqual({
+      dcl: 50_000n,
+      i3: 200_000n,
+      i2: 300_000n,
+      i1: 500_000n,
+      si2: 750_000n,
+      si1: 1_000_000n,
+      vs: 1_150_000n,
+      vvs: 1_450_000n,
+    });
+    expect(VALUATION_MATRIX.treatmentPpm).toEqual({
+      heated: 600_000n,
+      'minor heat': 850_000n,
+      unheated: 1_200_000n,
+      oiled: 750_000n,
+      'no oil': 1_150_000n,
+    });
+    expect(VALUATION_MATRIX.caratAnchors.at(-1)).toEqual({
+      microCarats: 30_000_000n,
+      multiplierPpm: 9_000_000n,
+    });
   });
 });

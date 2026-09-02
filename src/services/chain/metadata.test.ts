@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearMetadataCache, readMetadata, trait } from './metadata';
-import { PUBLIC_IPFS_GATEWAYS } from '@/config/ipfs';
 
 const CID = 'ipfs://bafyTestCid';
 const document = { name: 'Ruby Horizon', attributes: [{ trait_type: 'Gem Type', value: 'ruby' }] };
@@ -24,9 +23,8 @@ describe('token metadata', () => {
   });
 
   it('falls over to the next gateway when one is unavailable', async () => {
-    const fetchMock = vi.fn(async (url: string) =>
-      url.includes(new URL(PUBLIC_IPFS_GATEWAYS[0]).host) ? fail() : ok(document),
-    );
+    let request = 0;
+    const fetchMock = vi.fn(async () => (++request === 1 ? fail() : ok(document)));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(readMetadata(CID)).resolves.toMatchObject({ name: 'Ruby Horizon' });

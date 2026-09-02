@@ -2,7 +2,7 @@ import { getAddress, isAddress } from 'npm:viem@2';
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
-import { assertOperatorChain, dgeNftAbi, dgeNftAddress, operatorChain } from '../_shared/chain.ts';
+import { dgeNftAbi, dgeNftAddress, operatorChain } from '../_shared/chain.ts';
 import {
   formatGiftCode,
   generateGiftCode,
@@ -63,9 +63,17 @@ Deno.serve(async (request) => {
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? 'prepare');
     const chain = operatorChain();
-    await assertOperatorChain(chain);
     const nft = dgeNftAddress();
     const escrowWallet = getAddress(chain.account.address);
+
+    /*
+     * Preparing or confirming a gift does not submit an operator transaction.
+     * The old path nevertheless ran the four-call seller-automation preflight
+     * and then repeated NFT reads on the slower write RPC. On a cold mobile
+     * request that could spend minutes retrying before the wallet step appeared.
+     * Use the dedicated, fail-fast public read client and validate only the NFT
+     * state this operation actually depends on.
+     */
 
     if (action === 'confirm') {
       const giftId = String(body.giftId ?? '');
@@ -96,13 +104,13 @@ Deno.serve(async (request) => {
 
       const tokenId = BigInt(card.token_id);
       const [owner, locked] = (await Promise.all([
-        chain.publicClient.readContract({
+        chain.logsClient.readContract({
           address: nft,
           abi: dgeNftAbi,
           functionName: 'ownerOf',
           args: [tokenId],
         }),
-        chain.publicClient.readContract({
+        chain.logsClient.readContract({
           address: nft,
           abi: dgeNftAbi,
           functionName: 'transferLocked',
@@ -174,19 +182,19 @@ Deno.serve(async (request) => {
     const senderWallet = getAddress(walletLink.wallet_address);
 
     const [owner, locked, gemId] = (await Promise.all([
-      chain.publicClient.readContract({
+      chain.logsClient.readContract({
         address: nft,
         abi: dgeNftAbi,
         functionName: 'ownerOf',
         args: [tokenId],
       }),
-      chain.publicClient.readContract({
+      chain.logsClient.readContract({
         address: nft,
         abi: dgeNftAbi,
         functionName: 'transferLocked',
         args: [tokenId],
       }),
-      chain.publicClient.readContract({
+      chain.logsClient.readContract({
         address: nft,
         abi: dgeNftAbi,
         functionName: 'tokenGem',

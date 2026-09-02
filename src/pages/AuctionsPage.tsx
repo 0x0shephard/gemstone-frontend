@@ -12,6 +12,7 @@ import { dataService } from '@/services';
 import { fmtUsdBaseUnits } from '@/lib/format';
 import type { Auction, DecoratedGem } from '@/services/types';
 import { useAccount } from 'wagmi';
+import { Link } from 'react-router-dom';
 
 // Was `Number(v / 10n ** 18n)` — integer division, so every floor and bid was
 // rounded down to whole dollars and anything under $1 showed as $0.
@@ -29,7 +30,11 @@ function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
   return (
     <tr className="border-b border-line/[0.06] transition-colors last:border-b-0 hover:bg-line/[0.02]">
       <td className="px-4 py-3">
-        <div className="flex items-center gap-3">
+        <Link
+          to={`/gem/${a.gem.gemId}`}
+          aria-label={`View details for ${a.gem.name}`}
+          className="group flex items-center gap-3"
+        >
           <GemThumb
             gem={a.gem}
             height={34}
@@ -39,10 +44,12 @@ function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
             className="w-[34px] shrink-0"
           />
           <div className="min-w-0">
-            <div className="truncate text-[13px] font-medium text-ink">{a.gem.name}</div>
+            <div className="truncate text-[13px] font-medium text-ink underline-offset-2 group-hover:underline">
+              {a.gem.name}
+            </div>
             <div className="font-mono text-[10.5px] text-ink-dim">{a.gem.displayId}</div>
           </div>
-        </div>
+        </Link>
       </td>
       <td className="px-4 py-3 text-right font-mono text-[13px] text-ink-soft">
         {usdFromWad(a.floorUsd)}
