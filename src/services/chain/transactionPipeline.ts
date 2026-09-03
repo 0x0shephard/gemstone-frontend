@@ -1,6 +1,8 @@
 import {
   getAccount,
   getBalance,
+  getBlockNumber,
+  getPublicClient,
   readContract,
   simulateContract,
   switchChain,
@@ -13,10 +15,12 @@ import {
   WaitForTransactionReceiptTimeoutError,
   encodeFunctionData,
   erc20Abi,
+  parseAbiItem,
   toHex,
   type Abi,
   type Address,
   type Hash,
+  type PublicClient,
 } from 'viem';
 import { env } from '@/config/env';
 import { activeChain } from '@/config/chains';
@@ -41,6 +45,11 @@ import {
 import { getTransactionAuthSnapshot } from '@/providers/authSnapshot';
 import { PreflightTimeoutError, withPreflightTimeout } from './preflight';
 import {
+  isAmbiguousWalletBroadcastError,
+  recoverAmbiguousWalletBroadcast,
+  WALLET_NETWORK_FAILURE_MESSAGE,
+} from './walletRpcRecovery';
+import {
   isWalletConnectConnector,
   requestWalletConnectTransaction,
   walletConnectSupportsChain,
@@ -60,6 +69,12 @@ const RECEIPT_TIMEOUT_MS = 10 * 60 * 1_000;
 const WALLET_RESPONSE_TIMEOUT_MS = 2 * 60 * 1_000;
 const AUTH_PREFLIGHT_TIMEOUT_MS = 12_000;
 const CHAIN_PREFLIGHT_TIMEOUT_MS = 20_000;
+const erc20ApprovalEvent = parseAbiItem(
+  'event Approval(address indexed owner,address indexed spender,uint256 value)',
+);
+const erc721ApprovalEvent = parseAbiItem(
+  'event Approval(address indexed owner,address indexed approved,uint256 indexed tokenId)',
+);
 
 export { BroadcastPendingError, announceStep, setStepGate } from './txSteps';
 export type { StepPrompt, TransactionStep } from './txSteps';
@@ -99,6 +114,8 @@ interface ContractTransaction {
   paymentAsset?: Address;
   paymentAmount?: bigint;
   approvals?: Approval[];
+  /** Find a write that landed even though the mobile wallet lost its RPC response. */
+  reconcileBroadcast?: (account: Address) => Promise<Hash | undefined>;
 }
 
 async function requireVerifiedWallet(): Promise<Address> {
@@ -259,7 +276,14 @@ async function ensureFunds(
 async function planApproval(
   account: Address,
   approval: Approval,
-): Promise<{ label: string; send: () => Promise<Hash> } | undefined> {
+): Promise<
+  | {
+      label: string;
+      send: () => Promise<Hash>;
+      reconcile: () => Promise<Hash | undefined>;
+    }
+  | undefined
+> {
   if (approval.kind === 'erc20') {
     const allowance = (await readContract(wagmiConfig, {
       address: approval.token,
@@ -268,6 +292,7 @@ async function planApproval(
       args: [account, approval.spender],
     })) as bigint;
     if (allowance >= approval.amountOrTokenId) return undefined;
+    const fromBlock = await getBlockNumber(wagmiConfig, { chainId: env.chainId });
     return {
       label: 'Approve the payment allowance',
       send: async () => {
@@ -280,6 +305,27 @@ async function planApproval(
         });
         return submitPreparedWrite(account, simulation.request);
       },
+      reconcile: async () => {
+        const current = (await readContract(wagmiConfig, {
+          address: approval.token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [account, approval.spender],
+        })) as bigint;
+        if (current < approval.amountOrTokenId) return;
+        const publicClient = getPublicClient(wagmiConfig, {
+          chainId: env.chainId,
+        }) as PublicClient;
+        const logs = await publicClient.getLogs({
+          address: approval.token,
+          event: erc20ApprovalEvent,
+          args: { owner: account, spender: approval.spender },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs].reverse().find((log) => (log.args.value ?? 0n) >= approval.amountOrTokenId)
+          ?.transactionHash;
+      },
     };
   }
 
@@ -290,6 +336,7 @@ async function planApproval(
     args: [approval.amountOrTokenId],
   })) as Address;
   if (approved.toLowerCase() === approval.spender.toLowerCase()) return undefined;
+  const fromBlock = await getBlockNumber(wagmiConfig, { chainId: env.chainId });
   return {
     label: 'Approve the gemstone transfer',
     send: async () => {
@@ -300,7 +347,31 @@ async function planApproval(
         functionName: 'approve',
         args: [approval.spender, approval.amountOrTokenId],
       });
-      return (await writeContract(wagmiConfig, simulation.request)) as Hash;
+      return submitPreparedWrite(account, simulation.request);
+    },
+    reconcile: async () => {
+      const current = (await readContract(wagmiConfig, {
+        address: approval.token,
+        abi: dgeNftAbi,
+        functionName: 'getApproved',
+        args: [approval.amountOrTokenId],
+      })) as Address;
+      if (current.toLowerCase() !== approval.spender.toLowerCase()) return;
+      const publicClient = getPublicClient(wagmiConfig, {
+        chainId: env.chainId,
+      }) as PublicClient;
+      const logs = await publicClient.getLogs({
+        address: approval.token,
+        event: erc721ApprovalEvent,
+        args: {
+          owner: account,
+          approved: approval.spender,
+          tokenId: approval.amountOrTokenId,
+        },
+        fromBlock,
+        toBlock: 'latest',
+      });
+      return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
     },
   };
 }
@@ -317,7 +388,12 @@ async function runStep(
   workId: string,
   index: number,
   total: number,
-  step: { kind: 'approval' | 'call'; label: string; send: () => Promise<Hash> },
+  step: {
+    kind: 'approval' | 'call';
+    label: string;
+    send: () => Promise<Hash>;
+    reconcile?: () => Promise<Hash | undefined>;
+  },
 ): Promise<Hash> {
   await awaitGesture({ index, total, label: step.label, kind: step.kind });
 
@@ -331,7 +407,20 @@ async function runStep(
   });
   let hash: Hash;
   try {
-    hash = await Promise.race([step.send(), walletTimeout]);
+    try {
+      hash = await Promise.race([step.send(), walletTimeout]);
+    } catch (sendError) {
+      const recovered = step.reconcile
+        ? await recoverAmbiguousWalletBroadcast(sendError, step.reconcile)
+        : undefined;
+      if (!recovered) {
+        if (isAmbiguousWalletBroadcastError(sendError)) {
+          throw new Error(WALLET_NETWORK_FAILURE_MESSAGE, { cause: sendError });
+        }
+        throw sendError;
+      }
+      hash = recovered;
+    }
   } finally {
     if (timeoutId !== undefined) window.clearTimeout(timeoutId);
   }
@@ -456,7 +545,12 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       CHAIN_PREFLIGHT_TIMEOUT_MS,
     );
 
-    const planned: { kind: 'approval' | 'call'; label: string; send: () => Promise<Hash> }[] = [];
+    const planned: {
+      kind: 'approval' | 'call';
+      label: string;
+      send: () => Promise<Hash>;
+      reconcile?: () => Promise<Hash | undefined>;
+    }[] = [];
     for (const approval of input.approvals ?? []) {
       const step = await withPreflightTimeout(
         planApproval(account, approval),
@@ -503,6 +597,7 @@ export async function runContractTransaction(input: ContractTransaction): Promis
     planned.push({
       kind: 'call',
       label: needsApprovalFirst ? 'Confirm the transaction' : 'Confirm in your wallet',
+      reconcile: input.reconcileBroadcast ? () => input.reconcileBroadcast!(account) : undefined,
       send: async () => {
         // Simulated here when approvals came first, so the allowance granted by
         // the step above is in place and the simulation describes reality.

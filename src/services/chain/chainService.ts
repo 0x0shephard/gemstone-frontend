@@ -5,6 +5,7 @@ import {
   formatUnits,
   isAddress,
   isAddressEqual,
+  parseAbiItem,
   zeroAddress,
   zeroHash,
   type Abi,
@@ -127,6 +128,10 @@ function contract(moduleName: keyof DeploymentManifest['addresses']) {
  */
 const PROJECTION_TTL_MS = 45_000;
 let projectionFetchedAt = 0;
+
+const bidPlacedEvent = parseAbiItem(
+  'event BidPlaced(uint256 indexed gemId,address indexed bidder,address paymentAsset,uint256 amount,uint256 usdValue)',
+);
 
 function projection(force = false): Promise<ProjectionSnapshot> {
   if (!force && projectionPromise && Date.now() - projectionFetchedAt > PROJECTION_TTL_MS) {
@@ -1304,7 +1309,28 @@ export const chainService: IDataService = {
       args: [zeroAddress, request.tokenId],
     }),
   bid: async (request: BidRequest) => {
-    const gem = await readRegistryGem(request.gemId);
+    const [gem, auctionBefore, fromBlock] = await Promise.all([
+      readRegistryGem(request.gemId),
+      client.readContract({
+        ...contract('PrimarySaleAuction'),
+        functionName: 'auctions',
+        args: [request.gemId],
+      }) as Promise<
+        readonly [
+          boolean,
+          boolean,
+          bigint,
+          bigint,
+          bigint,
+          Address,
+          Address,
+          bigint,
+          bigint,
+          bigint,
+        ]
+      >,
+      client.getBlockNumber(),
+    ]);
     const shortfall = (await client.readContract({
       ...contract('ReserveManager'),
       functionName: 'shortfallUsd',
@@ -1318,6 +1344,22 @@ export const chainService: IDataService = {
       functionName: 'bid',
       args: [request.gemId, request.paymentAsset, amount],
       ...params,
+      reconcileBroadcast: async (account) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.PrimarySaleAuction,
+          event: bidPlacedEvent,
+          args: { gemId: request.gemId, bidder: account },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs]
+          .reverse()
+          .find(
+            (log) =>
+              (log.args.usdValue ?? 0n) >= request.saleAmountUsd &&
+              (log.args.usdValue ?? 0n) > auctionBefore[8],
+          )?.transactionHash;
+      },
     });
   },
   settleAuction: (request: SettleAuctionRequest) =>

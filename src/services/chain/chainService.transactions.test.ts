@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   readContract: vi.fn(),
   multicall: vi.fn(),
   getBlock: vi.fn(),
+  getBlockNumber: vi.fn(),
+  getLogs: vi.fn(),
   runContractTransaction: vi.fn(),
   syncProjection: vi.fn(),
 }));
@@ -15,6 +17,8 @@ vi.mock('@wagmi/core', () => ({
     readContract: mocks.readContract,
     multicall: mocks.multicall,
     getBlock: mocks.getBlock,
+    getBlockNumber: mocks.getBlockNumber,
+    getLogs: mocks.getLogs,
   }),
 }));
 vi.mock('@/providers/wagmi', () => ({
@@ -97,6 +101,9 @@ beforeEach(() => {
   mocks.multicall.mockReset();
   mocks.getBlock.mockReset();
   mocks.getBlock.mockResolvedValue({ timestamp: 1n });
+  mocks.getBlockNumber.mockReset();
+  mocks.getBlockNumber.mockResolvedValue(100n);
+  mocks.getLogs.mockReset();
   mocks.runContractTransaction.mockReset();
   mocks.runContractTransaction.mockResolvedValue(txResult);
   mocks.syncProjection.mockReset();
@@ -322,6 +329,9 @@ describe('chain transaction construction', () => {
     mocks.readContract.mockImplementation(
       ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
         if (functionName === 'getGem') return registryGem(usd(800));
+        if (functionName === 'auctions') {
+          return [true, false, 0n, 1_000n, usd(800), zeroAddress, zeroAddress, 0n, 0n, 0n];
+        }
         if (functionName === 'tokenGem') return 5n;
         if (functionName === 'shortfallUsd') return args?.[0] === 4n ? usd(40) : usd(55);
         if (functionName === 'quoteUsdToToken') {
@@ -340,6 +350,24 @@ describe('chain transaction construction', () => {
       expect.objectContaining({
         functionName: 'bid',
         args: [4n, usdc, musdc(840)],
+        reconcileBroadcast: expect.any(Function),
+      }),
+    );
+    const bidTransaction = mocks.runContractTransaction.mock.calls.at(-1)?.[0] as {
+      reconcileBroadcast: (account: `0x${string}`) => Promise<`0x${string}` | undefined>;
+    };
+    const recoveredHash = `0x${'7'.repeat(64)}` as const;
+    mocks.getLogs.mockResolvedValue([
+      { args: { usdValue: usd(800) }, transactionHash: recoveredHash },
+    ]);
+    await expect(bidTransaction.reconcileBroadcast(manifest.addresses.Treasury)).resolves.toBe(
+      recoveredHash,
+    );
+    expect(mocks.getLogs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: { gemId: 4n, bidder: manifest.addresses.Treasury },
+        fromBlock: 100n,
+        toBlock: 'latest',
       }),
     );
 
