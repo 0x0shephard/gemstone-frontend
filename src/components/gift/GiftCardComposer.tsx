@@ -13,7 +13,11 @@ import {
   templateLabel,
   type GiftTemplate,
 } from './GiftCardArt';
-import { saveGiftHandoff, takeGiftHandoff } from '@/services/offchain/giftHandoff';
+import {
+  clearGiftHandoff,
+  saveGiftHandoff,
+  takeGiftHandoff,
+} from '@/services/offchain/giftHandoff';
 import { dataService } from '@/services';
 import {
   cancelGiftCard,
@@ -71,8 +75,10 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
    * rest.
    */
   const [restored] = useState(() => takeGiftHandoff(String(gem.gemId)));
-  const [step, setStep] = useState<Step>(restored ? 'issued' : 'compose');
-  const [recipientEmail, setRecipientEmail] = useState('');
+  const [step, setStep] = useState<Step>(
+    restored ? (restored.card.escrowed ? 'issued' : 'escrow') : 'compose',
+  );
+  const [recipientEmail, setRecipientEmail] = useState(restored?.recipientEmail ?? '');
   const [recipientName, setRecipientName] = useState(restored?.recipientName ?? '');
   const [message, setMessage] = useState(restored?.message ?? '');
   const [template, setTemplate] = useState<GiftTemplate>(
@@ -98,6 +104,14 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
         template,
       });
       setIssued(card);
+      saveGiftHandoff({
+        gemId: String(gem.gemId),
+        card,
+        recipientEmail: email,
+        recipientName,
+        message,
+        template,
+      });
       setStep('escrow');
     } catch (prepareError) {
       setError(prepareError instanceof Error ? prepareError.message : 'Could not prepare the gift');
@@ -113,6 +127,14 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
     try {
       const card = await confirmGiftCardEscrow(issued, escrowTxHash);
       setIssued(card);
+      saveGiftHandoff({
+        gemId: String(gem.gemId),
+        card,
+        recipientEmail: email,
+        recipientName,
+        message,
+        template,
+      });
       setStep('issued');
     } catch (confirmError) {
       setError(
@@ -129,6 +151,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
     setError(null);
     try {
       await cancelGiftCard(issued.giftId);
+      clearGiftHandoff();
       setIssued(null);
       setStep('compose');
     } catch (cancelError) {
@@ -268,6 +291,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
           gem={gem}
           card={issued}
           template={template}
+          recipientEmail={email}
           recipientName={recipientName}
           message={message}
           onClose={onClose}
@@ -281,6 +305,7 @@ function IssuedCard({
   gem,
   card,
   template,
+  recipientEmail,
   recipientName,
   message,
   onClose,
@@ -288,6 +313,7 @@ function IssuedCard({
   gem: DecoratedGem;
   card: CreatedGiftCard;
   template: GiftTemplate;
+  recipientEmail: string;
   recipientName: string;
   message: string;
   onClose: () => void;
@@ -359,6 +385,7 @@ function IssuedCard({
           saveGiftHandoff({
             gemId: String(gem.gemId),
             card,
+            recipientEmail,
             recipientName,
             message,
             template,
@@ -460,8 +487,8 @@ function IssuedCard({
 
       <div className="rounded-[4px] border border-amber/25 bg-amber/[0.06] p-3">
         <p className="text-[11.5px] leading-relaxed text-ink-muted">
-          Save or print this now. The code is stored hashed and cannot be shown again — if you lose
-          it, cancel the card from your portfolio and issue a new one.
+          A printable QR copy is being emailed to your account. You can also save or print this
+          version now. The code is stored hashed and cannot be recovered later.
         </p>
       </div>
 
@@ -568,7 +595,13 @@ function IssuedCard({
         </a>
       )}
 
-      <Button block onClick={onClose}>
+      <Button
+        block
+        onClick={() => {
+          clearGiftHandoff();
+          onClose();
+        }}
+      >
         Done
       </Button>
     </>

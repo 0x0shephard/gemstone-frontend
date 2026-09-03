@@ -21,6 +21,7 @@ interface GiftHandoff {
   gemId: string;
   card: CreatedGiftCard;
   recipientName: string;
+  recipientEmail?: string;
   message: string;
   template: string;
   savedAt: number;

@@ -81,6 +81,15 @@ export function reserveShortfallUsd(g: Gem): number {
   return Number(formatUnits(g.reserveShortfallUsd, 18));
 }
 
+/**
+ * Swaps preserve ownership of the same two reserve-backed assets; they do not
+ * consume either reserve. The protocol therefore permits a partially funded
+ * stone, but blocks one at or below ten percent coverage.
+ */
+export function swapReserveEligible(g: Pick<Gem, 'reserve'>): boolean {
+  return g.reserve > 10;
+}
+
 export interface PurchaseQuote {
   /** What the contract will charge for the stone itself. */
   priceUsd: number;

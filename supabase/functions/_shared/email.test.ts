@@ -41,6 +41,7 @@ describe('outbound email', () => {
         html: '<p>Recover it now.</p>',
         text: 'Recover it now.',
         replyTo: 'sender@example.com',
+        attachments: [{ filename: 'gift-card.html', content: 'PGh0bWw+' }],
       }),
     ).resolves.toBe('email-1');
 
@@ -57,6 +58,7 @@ describe('outbound email', () => {
       html: '<p>Recover it now.</p>',
       text: 'Recover it now.',
       reply_to: 'sender@example.com',
+      attachments: [{ filename: 'gift-card.html', content: 'PGh0bWw+' }],
     });
   });
 

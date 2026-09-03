@@ -72,6 +72,11 @@ export interface Auction {
   bids: number;
   secondsLeft: number;
   floorUsd: bigint;
+  /** Contract settlement state. Settled auctions stay visible as history. */
+  settled: boolean;
+  /** A settled auction either minted its token or refunded the winning bid. */
+  outcome?: 'Minted' | 'Refunded';
+  tokenId?: bigint;
 }
 
 export interface Bid {

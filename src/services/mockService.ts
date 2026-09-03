@@ -47,6 +47,7 @@ function buildAuctions(): Auction[] {
       bids: count,
       secondsLeft,
       floorUsd: BigInt(Math.round(gem.value * 0.85)) * 10n ** 18n,
+      settled: false,
     };
   });
 }

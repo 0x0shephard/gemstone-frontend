@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { purchaseQuote, reserveShortfallUsd, shortfallLabel } from './gem';
+import { purchaseQuote, reserveShortfallUsd, shortfallLabel, swapReserveEligible } from './gem';
 import type { Gem } from '@/services/types';
 
 const USD = 10n ** 18n;
@@ -43,6 +43,15 @@ describe('reserveShortfallUsd', () => {
 
   it('keeps sub-dollar precision', () => {
     expect(reserveShortfallUsd(gem({ reserveShortfallUsd: (5n * USD) / 2n }))).toBe(2.5);
+  });
+});
+
+describe('swapReserveEligible', () => {
+  it('allows partial reserves above ten percent and blocks the boundary', () => {
+    expect(swapReserveEligible({ reserve: 100 })).toBe(true);
+    expect(swapReserveEligible({ reserve: 10.01 })).toBe(true);
+    expect(swapReserveEligible({ reserve: 10 })).toBe(false);
+    expect(swapReserveEligible({ reserve: 0 })).toBe(false);
   });
 });
 

@@ -15,6 +15,8 @@ export interface OutboundEmail {
   text: string;
   /** Where a reply should land — the sender of a gift, not the protocol. */
   replyTo?: string;
+  /** Base64-encoded files, using Resend's in-memory attachment format. */
+  attachments?: Array<{ filename: string; content: string }>;
 }
 
 export class EmailNotConfiguredError extends Error {
@@ -62,6 +64,7 @@ export async function sendEmail(message: OutboundEmail): Promise<string> {
       html: message.html,
       text: message.text,
       ...(message.replyTo ? { reply_to: message.replyTo } : {}),
+      ...(message.attachments?.length ? { attachments: message.attachments } : {}),
     }),
   });
 

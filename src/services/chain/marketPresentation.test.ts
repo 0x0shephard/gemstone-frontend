@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { ProjectedEvent } from './projection';
 import {
   describePaymentAsset,
+  escrowedSwapTokenIds,
   formatSwapCash,
+  groupAuctions,
   groupActionableSwaps,
   latestBidEventsForAddress,
 } from './marketPresentation';
-import type { SwapRequest } from '../types';
+import type { Auction, SwapRequest } from '../types';
 
 const bidder = '0x1111111111111111111111111111111111111111';
 
@@ -47,6 +49,20 @@ describe('market presentation', () => {
     );
   });
 
+  it('keeps settled auctions as history instead of mixing them with open rounds', () => {
+    const auctions = [
+      { settled: false, secondsLeft: 60 },
+      { settled: false, secondsLeft: 0 },
+      { settled: true, secondsLeft: 0, outcome: 'Minted' },
+    ] as Auction[];
+
+    expect(groupAuctions(auctions)).toEqual({
+      live: [auctions[0]],
+      awaitingSettlement: [auctions[1]],
+      past: [auctions[2]],
+    });
+  });
+
   it('separates open swaps from expired escrow that only the proposer can clear', () => {
     const proposer = '0x1111111111111111111111111111111111111111';
     const swaps = [
@@ -64,5 +80,21 @@ describe('market presentation', () => {
       active: [swaps[0]],
       expiredOwned: [],
     });
+  });
+
+  it('keeps active and expired swap escrow in the proposer portfolio', () => {
+    const proposer = '0x1111111111111111111111111111111111111111';
+    const swaps = [
+      { offeredTokenId: 19n, proposer, status: 'Expired' },
+      { offeredTokenId: 20n, proposer, status: 'Active' },
+      { offeredTokenId: 21n, proposer, status: 'Accepted' },
+      {
+        offeredTokenId: 22n,
+        proposer: '0x2222222222222222222222222222222222222222',
+        status: 'Active',
+      },
+    ] as unknown as SwapRequest[];
+
+    expect([...escrowedSwapTokenIds(swaps, proposer)]).toEqual(['19', '20']);
   });
 });

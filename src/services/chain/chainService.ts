@@ -70,6 +70,7 @@ import {
 } from './transactionPipeline';
 import {
   describePaymentAsset,
+  escrowedSwapTokenIds,
   formatSwapCash,
   latestBidEventsForAddress,
 } from './marketPresentation';
@@ -542,16 +543,17 @@ async function getAuctions(): Promise<Auction[]> {
       }),
     ),
   )) as AuctionState[];
-  const live = ids
+  const visible = ids
     .map((gemId, index) => ({ gemId, state: states[index] }))
-    .filter(({ state }) => state[0] && !state[1]);
+    .filter(({ state }) => state[0]);
   // Bid counts are historical and have no contract-state equivalent, so they fill
   // in once the projection settles rather than gating the auction list.
   const events = settledEvents();
   const auctions = await Promise.all(
-    live.map(async ({ gemId, state }) => {
+    visible.map(async ({ gemId, state }) => {
       const gem = await readGem(gemId);
       if (!gem) return;
+      const settled = state[1];
       return {
         gem,
         highestBidFmt: `$${Number(formatUnits(state[8], 18)).toLocaleString()}`,
@@ -564,6 +566,9 @@ async function getAuctions(): Promise<Auction[]> {
         ).length,
         secondsLeft: Number(state[3] > now ? state[3] - now : 0n),
         floorUsd: state[4],
+        settled,
+        outcome: settled ? (gem.tokenId ? ('Minted' as const) : ('Refunded' as const)) : undefined,
+        tokenId: settled ? gem.tokenId : undefined,
       } satisfies Auction;
     }),
   );
@@ -877,19 +882,19 @@ export const chainService: IDataService = {
             isAddressEqual(gem.listingSeller, address as Address),
         )
       : [];
-    const owned = [
+    let owned = [
       ...new Map(
         [...walletOwned, ...escrowedListings].map((gem) => [gem.gemId.toString(), gem]),
       ).values(),
     ];
-    const ownedStats = {
+    const ownedStats = () => ({
       portfolioValueUsd: owned.reduce((sum, gem) => sum + gem.value, 0),
       ownedCount: owned.length,
       reserveShortfallUsd: owned.reduce(
         (sum, gem) => sum + Number(formatUnits(gem.reserveShortfallUsd, 18)),
         0,
       ),
-    };
+    });
 
     /*
      * Ownership is live contract state and is already complete at this point.
@@ -912,7 +917,7 @@ export const chainService: IDataService = {
         swaps: [],
         redemptions: [],
         activity: [],
-        stats: { ...ownedStats, activeBids: 0 },
+        stats: { ...ownedStats(), activeBids: 0 },
       };
     }
     const bidEvents = latestBidEventsForAddress(snapshot.events, address);
@@ -978,6 +983,24 @@ export const chainService: IDataService = {
       getRedemptions(),
     ]);
     const normalizedAddress = address?.toLowerCase();
+    /*
+     * A proposed swap transfers the offered NFT into SwapEscrow immediately.
+     * It is still the proposer's economic holding until accepted, including
+     * after expiry while it waits for cancellation. Hiding contract custody
+     * made a freshly won token look as though it had vanished from both the
+     * wallet and the portfolio (token #19 exposed this exact path).
+     */
+    if (normalizedAddress) {
+      const escrowedTokenIds = escrowedSwapTokenIds(swaps, normalizedAddress);
+      owned = [
+        ...new Map(
+          [
+            ...owned,
+            ...gems.filter((gem) => gem.tokenId && escrowedTokenIds.has(String(gem.tokenId))),
+          ].map((gem) => [gem.gemId.toString(), gem]),
+        ).values(),
+      ];
+    }
     return {
       owned,
       bids,
@@ -1032,7 +1055,7 @@ export const chainService: IDataService = {
         : [],
       activity: activityFor(snapshot, address),
       stats: {
-        ...ownedStats,
+        ...ownedStats(),
         activeBids: bids.filter((bid) => bid.secondsLeft > 0).length,
       },
     };
@@ -1041,7 +1064,7 @@ export const chainService: IDataService = {
     const [gems, auctions, split] = await Promise.all([allGems(), getAuctions(), treasurySplit()]);
     return {
       featured: gems.slice(0, 3),
-      auctions,
+      auctions: auctions.filter((auction) => !auction.settled && auction.secondsLeft > 0),
       trustSignals: [
         {
           title: 'Custody verified',

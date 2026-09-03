@@ -1,7 +1,7 @@
 import { formatUnits, type Address } from 'viem';
 import { NATIVE_ASSET } from '@/config/contracts';
 import type { ProjectedEvent } from './projection';
-import type { SwapRequest } from '../types';
+import type { Auction, SwapRequest } from '../types';
 
 export interface AssetDescriptor {
   symbol: string;
@@ -49,6 +49,14 @@ export function latestBidEventsForAddress(
   return [...latestByGem.values()];
 }
 
+export function groupAuctions(auctions: Auction[]) {
+  return {
+    live: auctions.filter((auction) => !auction.settled && auction.secondsLeft > 0),
+    awaitingSettlement: auctions.filter((auction) => !auction.settled && auction.secondsLeft <= 0),
+    past: auctions.filter((auction) => auction.settled),
+  };
+}
+
 /**
  * Keeps the open board honest without stranding escrowed gemstones.
  *
@@ -66,4 +74,19 @@ export function groupActionableSwaps(swaps: SwapRequest[], viewer?: string) {
         )
       : [],
   };
+}
+
+/** Tokens still economically held by a proposer while SwapEscrow has custody. */
+export function escrowedSwapTokenIds(swaps: SwapRequest[], viewer?: string): Set<string> {
+  const normalized = viewer?.toLowerCase();
+  if (!normalized) return new Set();
+  return new Set(
+    swaps
+      .filter(
+        (swap) =>
+          (swap.status === 'Active' || swap.status === 'Expired') &&
+          swap.proposer.toLowerCase() === normalized,
+      )
+      .map((swap) => swap.offeredTokenId.toString()),
+  );
 }

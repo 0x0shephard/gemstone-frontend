@@ -7,7 +7,7 @@ import { PaymentAssetSelector } from '@/components/payment/PaymentAssetSelector'
 import { ReserveStatus } from '@/components/gem/ReserveStatus';
 import { ModalGemHeader, SummaryRow, assetAmountPreview } from './parts';
 import { dataService } from '@/services';
-import { purchaseQuote, reserveShortfallUsd } from '@/lib/gem';
+import { purchaseQuote, reserveShortfallUsd, swapReserveEligible } from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
 import { useGems, useProfile } from '@/hooks/useData';
@@ -382,7 +382,9 @@ export function SwapModal({
   // `offered` is what leaves the proposer's wallet; `requested` is what arrives.
   const offered = requesting ? counterpart : gem;
   const requested = requesting ? gem : counterpart;
-  const reservesReady = Boolean(offered?.funded) && Boolean(requested?.funded);
+  const reservesEligible = Boolean(
+    offered && requested && swapReserveEligible(offered) && swapReserveEligible(requested),
+  );
   const cashAmountUsd = delta.trim() === '' ? 0n : parseUsdInput(delta);
   const usd = Number(delta) || 0;
   return (
@@ -424,9 +426,10 @@ export function SwapModal({
       </div>
       <ReserveStatus gem={gem} />
       {counterpart && <ReserveStatus gem={counterpart} />}
-      {counterpart && !reservesReady && (
+      {counterpart && !reservesEligible && (
         <p className="rounded-[4px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
-          Both NFTs must be fully reserve-funded before this swap can settle.
+          Each gemstone must have more than 10% of its required reserve funded. Partial reserves
+          above that threshold can still be swapped.
         </p>
       )}
       <Field
@@ -494,7 +497,7 @@ export function SwapModal({
         disabled={
           !offered?.tokenId ||
           !requested?.tokenId ||
-          !reservesReady ||
+          !reservesEligible ||
           cashAmountUsd === null ||
           (cashAmountUsd > 0n && !asset)
         }

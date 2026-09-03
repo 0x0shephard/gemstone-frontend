@@ -13,6 +13,7 @@ import { fmtUsdBaseUnits } from '@/lib/format';
 import type { Auction, DecoratedGem } from '@/services/types';
 import { useAccount } from 'wagmi';
 import { Link } from 'react-router-dom';
+import { groupAuctions } from '@/services/chain/marketPresentation';
 
 // Was `Number(v / 10n ** 18n)` — integer division, so every floor and bid was
 // rounded down to whole dollars and anything under $1 showed as $0.
@@ -20,12 +21,12 @@ const usdFromWad = (v: bigint) => fmtUsdBaseUnits(v);
 
 interface RowProps {
   auction: Auction;
-  settled: boolean;
+  mode: 'live' | 'settle' | 'past';
   address?: string;
   onBid: (gem: DecoratedGem) => void;
 }
 
-function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
+function AuctionRow({ auction: a, mode, address, onBid }: RowProps) {
   const mine = Boolean(address && a.highestBidder?.toLowerCase() === address.toLowerCase());
   return (
     <tr className="border-b border-line/[0.06] transition-colors last:border-b-0 hover:bg-line/[0.02]">
@@ -59,7 +60,11 @@ function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
       </td>
       <td className="px-4 py-3 text-right font-mono text-[13px] text-ink-soft">{a.bids}</td>
       <td className="px-4 py-3">
-        {mine ? (
+        {mode === 'past' ? (
+          <StatusBadge tone={a.outcome === 'Minted' ? 'success' : 'warning'} dot>
+            {a.outcome === 'Minted' ? 'Sold' : 'Refunded'}
+          </StatusBadge>
+        ) : mine ? (
           <StatusBadge tone="success" dot>
             Winning
           </StatusBadge>
@@ -72,10 +77,14 @@ function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
         )}
       </td>
       <td className="px-4 py-3 text-right">
-        <CountdownBadge seconds={a.secondsLeft} />
+        {mode === 'past' ? (
+          <span className="font-mono text-[11px] text-ink-dim">Completed</span>
+        ) : (
+          <CountdownBadge seconds={a.secondsLeft} />
+        )}
       </td>
       <td className="px-4 py-3 text-right">
-        {settled ? (
+        {mode === 'settle' ? (
           <TxButton
             size="sm"
             action={() => dataService.settleAuction({ gemId: a.gem.gemId })}
@@ -84,10 +93,17 @@ function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
           >
             Settle
           </TxButton>
-        ) : (
+        ) : mode === 'live' ? (
           <Button size="sm" onClick={() => onBid(a.gem)}>
             Place bid
           </Button>
+        ) : (
+          <Link
+            to={`/gem/${a.gem.gemId}`}
+            className="text-[12px] font-semibold text-atelier hover:underline"
+          >
+            {a.tokenId ? `Token #${a.tokenId}` : 'View stone'}
+          </Link>
         )}
       </td>
     </tr>
@@ -96,12 +112,12 @@ function AuctionRow({ auction: a, settled, address, onBid }: RowProps) {
 
 function AuctionTable({
   rows,
-  settled,
+  mode,
   address,
   onBid,
 }: {
   rows: Auction[];
-  settled: boolean;
+  mode: 'live' | 'settle' | 'past';
   address?: string;
   onBid: (gem: DecoratedGem) => void;
 }) {
@@ -111,7 +127,7 @@ function AuctionTable({
     'Top bid',
     'Bids',
     'Status',
-    settled ? 'Ended' : 'Ends in',
+    mode === 'live' ? 'Ends in' : 'Ended',
     '',
   ];
   return (
@@ -136,7 +152,7 @@ function AuctionTable({
             <AuctionRow
               key={a.gem.gemId.toString()}
               auction={a}
-              settled={settled}
+              mode={mode}
               address={address}
               onBid={onBid}
             />
@@ -152,8 +168,7 @@ export default function AuctionsPage() {
   const { address } = useAccount();
   const modals = useGemModals();
 
-  const live = auctions?.filter((a) => a.secondsLeft > 0) ?? [];
-  const ended = auctions?.filter((a) => a.secondsLeft <= 0) ?? [];
+  const { live, awaitingSettlement: ended, past } = groupAuctions(auctions ?? []);
   const openBid = (gem: DecoratedGem) => modals.open('bid', gem);
 
   return (
@@ -204,7 +219,7 @@ export default function AuctionsPage() {
               </span>
             </div>
             {live.length > 0 ? (
-              <AuctionTable rows={live} settled={false} address={address} onBid={openBid} />
+              <AuctionTable rows={live} mode="live" address={address} onBid={openBid} />
             ) : (
               <EmptyState
                 title="No auctions running"
@@ -224,9 +239,26 @@ export default function AuctionsPage() {
                   slipped.
                 </p>
               </div>
-              <AuctionTable rows={ended} settled address={address} onBid={openBid} />
+              <AuctionTable rows={ended} mode="settle" address={address} onBid={openBid} />
             </section>
           )}
+
+          <section className="space-y-3">
+            <div className="flex items-baseline gap-2.5">
+              <h3 className="font-display text-[15px] font-medium text-ink">Past auctions</h3>
+              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                {past.length} completed
+              </span>
+            </div>
+            {past.length > 0 ? (
+              <AuctionTable rows={past} mode="past" address={address} onBid={openBid} />
+            ) : (
+              <EmptyState
+                title="No completed auctions yet"
+                hint="Settled auctions remain here so every stone's sale can be traced."
+              />
+            )}
+          </section>
         </>
       )}
 

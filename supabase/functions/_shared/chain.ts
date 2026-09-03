@@ -72,6 +72,7 @@ export const dgeNftAbi = parseAbi([
   'function transferLocked(uint256 tokenId) view returns (bool)',
   'function tokenGem(uint256 tokenId) view returns (uint256)',
   'function safeTransferFrom(address from, address to, uint256 tokenId)',
+  'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
 ]);
 
 /**
