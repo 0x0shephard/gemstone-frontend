@@ -16,11 +16,22 @@ export const PUBLIC_IPFS_GATEWAYS = [
 
 const trimTrailingSlash = (gateway: string): string => gateway.replace(/\/+$/, '');
 
-/** Configured gateway first, then public fallbacks, de-duplicated. */
+const LEGACY_MOBILE_GATEWAYS = new Set(['https://ipfs.io/ipfs', 'https://dweb.link/ipfs']);
+
+/**
+ * Configured gateway first, then public fallbacks, de-duplicated.
+ *
+ * The historic defaults are the exception: ipfs.io and dweb.link can hand a
+ * mobile browser an HTML service-worker page instead of the requested asset.
+ * Keep them as fallbacks for old deployments, but prefer a direct-byte gateway
+ * before a phone has to wait for that failure.
+ */
 export function resolveIpfsGateways(configuredGateway: string): string[] {
-  return [...new Set([configuredGateway, ...PUBLIC_IPFS_GATEWAYS].filter(Boolean))].map(
-    trimTrailingSlash,
-  );
+  const configured = trimTrailingSlash(configuredGateway);
+  const candidates = LEGACY_MOBILE_GATEWAYS.has(configured)
+    ? [...PUBLIC_IPFS_GATEWAYS, configured]
+    : [configured, ...PUBLIC_IPFS_GATEWAYS];
+  return [...new Set(candidates.filter(Boolean).map(trimTrailingSlash))];
 }
 
 export const isIpfsUri = (uri: string): boolean => uri.startsWith('ipfs://');

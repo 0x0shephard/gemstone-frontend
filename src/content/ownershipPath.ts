@@ -26,9 +26,9 @@ export const ownershipPathSteps: readonly HowStep[] = [
   {
     num: '03',
     title: 'Trading the Token',
-    body: 'A minted token can be listed at an owner-selected price. Other holders can buy it, make a timed offer, or propose a token-for-token swap.',
+    body: 'A minted token can be listed at an owner-selected price. A qualifying bid starts a 24-hour secondary auction, while an unlisted token can receive a timed offer or token-for-token swap.',
     points: [
-      'Owners review offers and swaps from their portfolio.',
+      'Listed-token auctions transfer to the highest bidder automatically at expiry.',
       'Completed activity remains available in portfolio history.',
     ],
   },

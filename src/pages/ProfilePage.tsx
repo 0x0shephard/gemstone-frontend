@@ -412,7 +412,10 @@ function offerColumns(address?: string): Column<Offer>[] {
       key: 'status',
       header: 'Status',
       render: (r) => (
-        <StatusBadge color={r.statusColor} dot={r.status === 'Pending'}>
+        <StatusBadge
+          color={r.statusColor}
+          dot={r.status === 'Pending' || r.status === 'Awaiting settlement'}
+        >
           {r.status}
         </StatusBadge>
       ),
@@ -435,6 +438,19 @@ function offerColumns(address?: string): Column<Offer>[] {
       render: (r) => {
         const isBidder = normalized === r.bidder.toLowerCase();
         const isOwner = normalized === r.tokenOwner.toLowerCase();
+        if (r.status === 'Awaiting settlement' && r.gem.tokenId) {
+          return (
+            <TxButton
+              size="sm"
+              variant="secondary"
+              action={() => dataService.settleListingAuction({ tokenId: r.gem.tokenId! })}
+              pendingLabel="Settling…"
+              telemetryFlow="listed_token_auction_settle"
+            >
+              Settle now
+            </TxButton>
+          );
+        }
         if (r.status === 'Expired' && isBidder) {
           return (
             <TxButton
@@ -448,7 +464,7 @@ function offerColumns(address?: string): Column<Offer>[] {
             </TxButton>
           );
         }
-        if (r.status === 'Pending' && isOwner) {
+        if (r.status === 'Pending' && isOwner && !r.automatic) {
           return (
             <TxButton
               size="sm"
@@ -461,8 +477,8 @@ function offerColumns(address?: string): Column<Offer>[] {
             </TxButton>
           );
         }
-        if (r.status === 'Pending' && normalized === r.listingSeller?.toLowerCase()) {
-          return <span className="text-[11px] text-ink-dim">Cancel listing before accepting</span>;
+        if (r.status === 'Pending' && r.automatic) {
+          return <span className="text-[11px] text-ink-dim">Settles automatically</span>;
         }
         return null;
       },

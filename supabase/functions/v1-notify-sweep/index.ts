@@ -332,18 +332,32 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
             // decisions that expired days ago.
             if (expiresAt.getTime() <= Date.now()) continue;
 
-            const holder = await tokenHolder(chain, tokenId);
-            if (!holder) continue;
+            const listing = (await chain.logsClient
+              .readContract({
+                address: marketplaceAddress(),
+                abi: marketplaceAbi,
+                functionName: 'listings',
+                args: [tokenId],
+              })
+              .catch(() => null)) as readonly [Address, bigint] | null;
+            const automatic = Boolean(listing && listing[0] !== ZERO);
+            const holder = automatic ? listing![0] : await tokenHolder(chain, tokenId);
+            if (!holder || holder === ZERO) continue;
             await send(admin, counters, {
               wallet: holder,
               kind: 'offer.received',
-              title: `You have an offer of ${usd(saleUsdValue)}`,
-              body:
-                `Someone has offered ${usd(saleUsdValue)} for your gemstone token #${tokenId}. ` +
-                `The money is already escrowed, so accepting is immediate — but the offer ` +
-                `expires in 24 hours and the funds return to the bidder if you do nothing.`,
+              title: automatic
+                ? `A bid of ${usd(saleUsdValue)} started your auction`
+                : `You have an offer of ${usd(saleUsdValue)}`,
+              body: automatic
+                ? `Your listed gemstone token #${tokenId} now has a qualifying bid. The bid is ` +
+                  `locked for the 24-hour auction and the highest bidder receives the token ` +
+                  `automatically when it settles.`
+                : `Someone has offered ${usd(saleUsdValue)} for your gemstone token #${tokenId}. ` +
+                  `The money is already escrowed, so accepting is immediate — but the offer ` +
+                  `expires in 24 hours and the bidder can recover it if you do nothing.`,
               actionPath: '/profile?tab=offers',
-              actionLabel: 'Review the offer',
+              actionLabel: automatic ? 'View the auction' : 'Review the offer',
               entityType: 'offer',
               entityId: String(offerId),
               expiresAt,
@@ -353,6 +367,28 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
           if (event.eventName === 'OfferAccepted' || event.eventName === 'OfferCancelled') {
             const { offerId } = event.args as { offerId: bigint };
             await resolveWatch(admin, 'offer', String(offerId));
+          }
+
+          if (event.eventName === 'ListingAuctionRefunded') {
+            const { offerId, bidder, tokenId } = event.args as {
+              offerId: bigint;
+              bidder: Address;
+              tokenId: bigint;
+            };
+            await resolveWatch(admin, 'offer', String(offerId));
+            await send(admin, counters, {
+              wallet: bidder,
+              kind: 'offer.refunded',
+              title: 'Your auction bid was refunded',
+              body:
+                `The listed-token auction for token #${tokenId} could not settle at the current ` +
+                `payment quote. Your payment was returned automatically. If your wallet rejected ` +
+                `the transfer, it remains safely claimable in the Marketplace contract.`,
+              actionPath: '/profile?tab=offers',
+              actionLabel: 'View your offers',
+              entityType: 'offer',
+              entityId: String(offerId),
+            });
           }
         }
       },
@@ -472,8 +508,8 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
                 title: 'You have been outbid',
                 body:
                   `Someone has bid higher than you on gemstone #${gemId}. You can still bid ` +
-                  `again before the auction closes. If you do not, your payment stays with ` +
-                  `the contract as a claimable refund — it is not returned automatically.`,
+                  `again before the auction closes. Your previous bid has already been returned ` +
+                  `to your wallet; only wallets that reject the transfer need to claim it.`,
                 actionPath: '/auctions',
                 actionLabel: 'View the auction',
                 entityType: 'auction-round',
@@ -521,10 +557,10 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
               title: 'Your winning bid was refunded',
               body:
                 `The auction for gemstone #${gemId} could not be settled — usually a reserve ` +
-                `shortfall — so no token was minted and your payment was returned. It is held ` +
-                `as a claimable refund rather than sent back automatically.`,
+                `shortfall — so no token was minted and your payment was returned automatically. ` +
+                `If your wallet rejected the transfer, it remains safely claimable.`,
               actionPath: '/auctions',
-              actionLabel: 'Claim your refund',
+              actionLabel: 'View the auction',
               entityType: 'gem',
               entityId: String(gemId),
             });
@@ -716,16 +752,28 @@ async function sweepDeadlines(
         readonly [Address, bigint, Address, bigint, bigint, bigint, boolean] | null;
       stillOpen = Boolean(offer?.[6]);
       if (stillOpen) {
+        const winningOffer = (await chain.logsClient
+          .readContract({
+            address: marketplaceAddress(),
+            abi: marketplaceAbi,
+            functionName: 'listingWinningOffer',
+            args: [offer![1]],
+          })
+          .catch(() => 0n)) as bigint;
+        const automatic = winningOffer === BigInt(entityId);
         await send(admin, counters, {
           wallet,
-          kind: 'offer.refundable',
-          title: 'Your offer expired — claim your money back',
-          body:
-            `The owner did not respond before your offer expired, so your payment is still ` +
-            `held by the Marketplace contract. It is not returned automatically: claim the ` +
-            `refund to get it back.`,
+          kind: automatic ? 'offer.settlement-ready' : 'offer.refundable',
+          title: automatic
+            ? 'Your winning bid is ready to settle'
+            : 'Your offer expired — claim your money back',
+          body: automatic
+            ? `The 24-hour listed-token auction has ended with your bid in the lead. Settlement ` +
+              `is automatic, and anyone can also trigger it from the offers screen.`
+            : `The owner did not respond before your offer expired, so your payment is still ` +
+              `held by the Marketplace contract. Claim the refund to get it back.`,
           actionPath: '/profile?tab=offers',
-          actionLabel: 'Claim your refund',
+          actionLabel: automatic ? 'Settle the auction' : 'Claim your refund',
           entityType: 'offer',
           entityId,
         });

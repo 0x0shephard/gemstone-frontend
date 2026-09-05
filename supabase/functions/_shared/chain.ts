@@ -96,6 +96,7 @@ export const marketplaceAbi = parseAbi([
   'event OfferCreated(uint256 indexed offerId, address indexed bidder, uint256 indexed tokenId, address paymentAsset, uint256 amount, uint256 saleUsdValue, uint64 expiry)',
   'event OfferCancelled(uint256 indexed offerId)',
   'event OfferAccepted(uint256 indexed offerId, address indexed seller)',
+  'event ListingAuctionRefunded(uint256 indexed tokenId, uint256 indexed offerId, address indexed bidder, address paymentAsset, uint256 amount)',
   // `Purchased` is deliberately absent. A sale pays the seller automatically, so
   // nothing is stranded, and the event carries only the buyer — telling the
   // seller would mean recovering their address from an earlier `Listed` event
@@ -105,6 +106,9 @@ export const marketplaceAbi = parseAbi([
   // token's listing is cleared on cancel, so a zero seller is what "not listed"
   // looks like.
   'function listings(uint256 tokenId) view returns (address seller, uint256 priceUsd)',
+  'function listingWinningOffer(uint256 tokenId) view returns (uint256 offerId)',
+  'function listingAuctionEnd(uint256 tokenId) view returns (uint64 endTime)',
+  'function settleListingAuction(uint256 tokenId) returns (bool sold)',
 ]);
 
 export const swapEscrowAbi = parseAbi([

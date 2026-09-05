@@ -29,7 +29,7 @@ const PILLARS: { title: string; body: string; color: string }[] = [
   },
   {
     title: 'Secondary marketplace',
-    body: 'List, buy, and make 24-hour offers on minted gems. Reserve shortfall is always shown and included in the buyer’s total.',
+    body: 'List or buy minted gems, with qualifying listed-token bids settled automatically after 24 hours. Reserve shortfall is always shown and included in the buyer’s total.',
     color: 'var(--dc-ruby)',
   },
   {

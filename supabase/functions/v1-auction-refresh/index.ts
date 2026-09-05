@@ -4,6 +4,8 @@ import { json, preflight } from '../_shared/cors.ts';
 import {
   assertOperatorChain,
   gemRegistryAbi,
+  marketplaceAbi,
+  marketplaceAddress,
   operatorChain,
   primarySaleAbi,
   writeAndConfirm,
@@ -41,6 +43,7 @@ const MAX_REOPENS_PER_RUN = 10;
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const STATUS_LISTED = 4;
+const STATUS_MINTED = 5;
 const SALE_MODE_AUCTION = 2;
 
 type Chain = ReturnType<typeof operatorChain>;
@@ -92,12 +95,17 @@ Deno.serve(async (request) => {
     const now = BigInt(Math.floor(Date.now() / 1_000));
     const reopened: string[] = [];
     const settledNow: string[] = [];
+    const secondarySettled: string[] = [];
+    const secondaryRefunded: string[] = [];
     const exhausted: string[] = [];
     const skipped: Array<{ gemId: string; reason: string }> = [];
     let examined = 0;
 
     for (const gemId of gemIds) {
-      if (reopened.length >= MAX_REOPENS_PER_RUN) {
+      if (
+        reopened.length + secondarySettled.length + secondaryRefunded.length >=
+        MAX_REOPENS_PER_RUN
+      ) {
         skipped.push({ gemId: String(gemId), reason: 'deferred to the next run' });
         continue;
       }
@@ -108,6 +116,57 @@ Deno.serve(async (request) => {
           functionName: 'getGem',
           args: [gemId],
         })) as { priceUsd: bigint; tokenId: bigint; status: number };
+
+        /*
+         * A qualifying bid on an escrowed secondary listing is a real 24-hour
+         * auction. The NFT already sits in Marketplace, so expiry needs no
+         * seller signature: this operator merely calls the permissionless
+         * settlement function. A failed current quote refunds the bidder and
+         * leaves the token listed for another round.
+         */
+        if (Number(gem.status) === STATUS_MINTED && gem.tokenId > 0n) {
+          const market = marketplaceAddress();
+          const [listing, offerId, endTime] = await Promise.all([
+            chain.publicClient.readContract({
+              address: market,
+              abi: marketplaceAbi,
+              functionName: 'listings',
+              args: [gem.tokenId],
+            }) as Promise<readonly [string, bigint]>,
+            chain.publicClient.readContract({
+              address: market,
+              abi: marketplaceAbi,
+              functionName: 'listingWinningOffer',
+              args: [gem.tokenId],
+            }) as Promise<bigint>,
+            chain.publicClient.readContract({
+              address: market,
+              abi: marketplaceAbi,
+              functionName: 'listingAuctionEnd',
+              args: [gem.tokenId],
+            }) as Promise<bigint>,
+          ]);
+          if (listing[0] !== ZERO && offerId > 0n && endTime <= now) {
+            await writeAndConfirm(chain, {
+              address: market,
+              abi: marketplaceAbi,
+              functionName: 'settleListingAuction',
+              args: [gem.tokenId],
+            });
+            const after = (await chain.publicClient.readContract({
+              address: market,
+              abi: marketplaceAbi,
+              functionName: 'listings',
+              args: [gem.tokenId],
+            })) as readonly [string, bigint];
+            const bucket = after[0] === ZERO ? secondarySettled : secondaryRefunded;
+            bucket.push(String(gem.tokenId));
+            await audit(null, 'listing_auction.settled', 'token', String(gem.tokenId), {
+              sold: after[0] === ZERO,
+            });
+          }
+          continue;
+        }
 
         // Awaiting a first sale means listed and not yet minted. Everything else
         // is simply not this job's business, and stays silent rather than noisy.
@@ -238,6 +297,8 @@ Deno.serve(async (request) => {
       registryGems: gemIds.length,
       examined,
       settled: settledNow,
+      secondarySettled,
+      secondaryRefunded,
       reopened,
       exhausted,
       skipped,

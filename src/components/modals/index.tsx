@@ -216,17 +216,23 @@ export function BuyModal({
 /* ----------------------------- Offer ----------------------------- */
 export function OfferModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(gem.listedPrice ? String(gem.listedPrice) : '');
   const offerAmountUsd = parseUsdInput(amount);
   const usd = Number(amount) || 0;
   const shortfall = reserveShortfallUsd(gem);
   const total = usd + shortfall;
+  const automaticAuction = Boolean(gem.listingSeller);
+  const belowAsk = automaticAuction && gem.listedPrice !== undefined && usd < gem.listedPrice;
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="Make an offer"
-      subtitle="Offers expire automatically after 24 hours."
+      title={automaticAuction ? 'Place a token bid' : 'Make an offer'}
+      subtitle={
+        automaticAuction
+          ? 'A qualifying bid starts or joins the listing’s 24-hour auction.'
+          : 'Offers expire automatically after 24 hours.'
+      }
     >
       <ModalGemHeader gem={gem} />
       <Field
@@ -235,6 +241,7 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
         placeholder="0"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
+        error={belowAsk ? `Bid must be at least ${gem.listedPriceFmt}.` : undefined}
       />
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">Payment asset</span>
@@ -256,9 +263,16 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
         </div>
       )}
       <ApprovalNote asset={asset} />
+      {automaticAuction && (
+        <p className="rounded-[4px] border border-line/[0.08] bg-panel p-3 text-[11.5px] leading-relaxed text-ink-dim">
+          The bid must meet the seller’s listed price. A higher bid returns the previous bidder’s
+          funds automatically; at expiry the winning payment is credited and the token transfers
+          without another seller approval.
+        </p>
+      )}
       <TxButton
         block
-        disabled={!asset || !gem.tokenId || !offerAmountUsd}
+        disabled={!asset || !gem.tokenId || !offerAmountUsd || belowAsk}
         action={() =>
           dataService.createOffer({
             tokenId: gem.tokenId!,
@@ -266,10 +280,10 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
             saleAmountUsd: offerAmountUsd!,
           })
         }
-        pendingLabel="Submitting offer…"
+        pendingLabel={automaticAuction ? 'Submitting bid…' : 'Submitting offer…'}
         onDone={onClose}
       >
-        Submit offer · {usd > 0 ? fmtUsd(total) : '—'}
+        {automaticAuction ? 'Place bid' : 'Submit offer'} · {usd > 0 ? fmtUsd(total) : '—'}
       </TxButton>
     </Modal>
   );
@@ -330,7 +344,8 @@ export function ListModal({ gem, open, onClose }: BaseModalProps) {
       </div>
       <p className="text-[11.5px] leading-relaxed text-ink-dim">
         Listing escrows the token in the Marketplace contract and records the price on-chain. Both
-        figures stay visible on the token — buyers see the approved value alongside your ask.
+        figures stay visible on the token. A qualifying bid at or above your ask starts a 24-hour
+        auction that settles automatically to its highest bidder.
       </p>
       <TxButton
         block

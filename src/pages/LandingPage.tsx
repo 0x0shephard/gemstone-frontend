@@ -4,6 +4,7 @@ import { TopNav } from '@/components/layout/TopNav';
 import { Footer } from '@/components/layout/Footer';
 import { Button } from '@/components/ui/Button';
 import { GemCard } from '@/components/gem/GemCard';
+import { GemThumb } from '@/components/gem/GemThumb';
 import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { ownershipPathSteps } from '@/content/ownershipPath';
 import { useFeeTiers, useLanding } from '@/hooks/useData';
@@ -378,9 +379,13 @@ export default function LandingPage() {
                 key={a.gem.gemId.toString()}
                 className="flex items-center gap-3.5 border-b border-line/[0.06] px-5 py-3.5 last:border-b-0"
               >
-                <span
-                  className="h-10 w-10 shrink-0 rounded-[4px]"
-                  style={{ background: a.gem.thumb }}
+                <GemThumb
+                  gem={a.gem}
+                  height={40}
+                  rounded="rounded-[4px]"
+                  showTag={false}
+                  showCarat={false}
+                  className="w-10 shrink-0"
                 />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13.5px] font-medium text-ink">{a.gem.name}</div>

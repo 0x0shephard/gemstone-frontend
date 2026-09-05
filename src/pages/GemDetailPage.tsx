@@ -196,11 +196,14 @@ export default function GemDetailPage() {
                     </>
                   ) : isSecondaryListing ? (
                     <>
-                      <Button onClick={() => modals.open('buy', gem)} disabled={!gem.tokenId}>
-                        Buy now
+                      <Button
+                        onClick={() => modals.open('buy', gem)}
+                        disabled={!gem.tokenId || Boolean(gem.listingWinningOfferId)}
+                      >
+                        {gem.listingWinningOfferId ? 'Auction in progress' : 'Buy now'}
                       </Button>
                       <Button variant="secondary" onClick={() => modals.open('offer', gem)}>
-                        Make an offer
+                        Place bid
                       </Button>
                       <Button
                         variant="secondary"
@@ -217,9 +220,10 @@ export default function GemDetailPage() {
                         the Marketplace — so the seller has to cancel first.
                       */}
                       <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
-                        Buying is immediate. An offer or a swap has to be accepted by the seller,
-                        who must cancel this listing first — the Marketplace holds the token in
-                        escrow while it is listed.
+                        Buying is immediate until a qualifying bid starts the 24-hour auction.
+                        Higher bids refund the previous bidder automatically, and the winner
+                        receives the token at expiry without another seller approval. The seller
+                        must still cancel an unbid listing before it can be swapped.
                       </p>
                     </>
                   ) : (

@@ -179,8 +179,8 @@ export default function AuctionsPage() {
             Auctions
           </h2>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-            Primary auctions run for 24 hours. Bids escrow on the spot and outbid deposits become
-            claimable immediately.
+            Primary auctions run for 24 hours. Bids escrow on the spot and outbid deposits return to
+            the bidder automatically; a claim remains available if a wallet rejects the refund.
           </p>
         </div>
         <div className="flex gap-7">

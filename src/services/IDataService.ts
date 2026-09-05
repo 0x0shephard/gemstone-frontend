@@ -27,6 +27,7 @@ import type {
   RedemptionRequest,
   RevokeApprovalRequest,
   SettleAuctionRequest,
+  SettleListingAuctionRequest,
   SwapRequest,
   SwapRequestAction,
   TreasurySplitItem,
@@ -94,6 +95,7 @@ export interface IDataService {
   revokeApproval(request: RevokeApprovalRequest): Promise<TxResult>;
   bid(request: BidRequest): Promise<TxResult>;
   settleAuction(request: SettleAuctionRequest): Promise<TxResult>;
+  settleListingAuction(request: SettleListingAuctionRequest): Promise<TxResult>;
   claimRefund(request: ClaimRefundRequest): Promise<TxResult>;
   claimTreasuryPayout(request: ClaimTreasuryPayoutRequest): Promise<TxResult>;
   createOffer(request: CreateOfferRequest): Promise<TxResult>;

@@ -295,6 +295,23 @@ describe('chain transaction construction', () => {
             amountOrTokenId: 4n,
           },
         ],
+        reconcileBroadcast: expect.any(Function),
+      }),
+    );
+    const listTransaction = mocks.runContractTransaction.mock.calls.at(-1)?.[0] as {
+      reconcileBroadcast: (account: `0x${string}`) => Promise<`0x${string}` | undefined>;
+    };
+    const listHash = `0x${'4'.repeat(64)}` as const;
+    mocks.getLogs.mockResolvedValueOnce([
+      { args: { priceUsd: usd(590) }, transactionHash: listHash },
+    ]);
+    await expect(listTransaction.reconcileBroadcast(manifest.addresses.Treasury)).resolves.toBe(
+      listHash,
+    );
+    expect(mocks.getLogs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: { tokenId: 4n, seller: manifest.addresses.Treasury },
+        fromBlock: 100n,
       }),
     );
 
@@ -468,6 +485,32 @@ describe('chain transaction construction', () => {
           expect.objectContaining({ kind: 'erc721', amountOrTokenId: 2n }),
           expect.objectContaining({ kind: 'erc20', amountOrTokenId: musdc(100) }),
         ]),
+        reconcileBroadcast: expect.any(Function),
+      }),
+    );
+    const swapTransaction = mocks.runContractTransaction.mock.calls.at(-1)?.[0] as {
+      reconcileBroadcast: (account: `0x${string}`) => Promise<`0x${string}` | undefined>;
+    };
+    const swapHash = `0x${'8'.repeat(64)}` as const;
+    mocks.getLogs.mockResolvedValueOnce([
+      {
+        args: {
+          requestedTokenId: 3n,
+          cashAsset: usdc,
+          cashAmount: musdc(100),
+          proposerPaysCash: true,
+          expiry: 2_000_000_000n,
+        },
+        transactionHash: swapHash,
+      },
+    ]);
+    await expect(swapTransaction.reconcileBroadcast(manifest.addresses.Treasury)).resolves.toBe(
+      swapHash,
+    );
+    expect(mocks.getLogs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: { proposer: manifest.addresses.Treasury, offeredTokenId: 2n },
+        fromBlock: 100n,
       }),
     );
 
@@ -540,6 +583,24 @@ describe('chain transaction construction', () => {
         functionName: 'cancelRedemption',
         args: [3n],
       }),
+    );
+
+    await chainService.confirmRedemption({ tokenId: 3n });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'confirmRedemption',
+        args: [3n],
+        reconcileBroadcast: expect.any(Function),
+      }),
+    );
+    const handoverTransaction = mocks.runContractTransaction.mock.calls.at(-1)?.[0] as {
+      reconcileBroadcast: () => Promise<`0x${string}` | undefined>;
+    };
+    const handoverHash = `0x${'9'.repeat(64)}` as const;
+    mocks.getLogs.mockResolvedValueOnce([{ args: {}, transactionHash: handoverHash }]);
+    await expect(handoverTransaction.reconcileBroadcast()).resolves.toBe(handoverHash);
+    expect(mocks.getLogs).toHaveBeenLastCalledWith(
+      expect.objectContaining({ args: { tokenId: 3n }, fromBlock: 100n }),
     );
 
     mocks.readContract.mockResolvedValueOnce(musdc(50));

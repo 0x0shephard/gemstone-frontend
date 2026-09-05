@@ -52,6 +52,7 @@ import type {
   RedemptionRequest,
   RevokeApprovalRequest,
   SettleAuctionRequest,
+  SettleListingAuctionRequest,
   SwapRequest,
   SwapRequestAction,
   TransferTokenRequest,
@@ -132,6 +133,15 @@ let projectionFetchedAt = 0;
 
 const bidPlacedEvent = parseAbiItem(
   'event BidPlaced(uint256 indexed gemId,address indexed bidder,address paymentAsset,uint256 amount,uint256 usdValue)',
+);
+const tokenListedEvent = parseAbiItem(
+  'event Listed(uint256 indexed tokenId,address indexed seller,uint256 priceUsd)',
+);
+const swapCreatedEvent = parseAbiItem(
+  'event OfferCreated(uint256 indexed offerId,address indexed proposer,uint256 indexed offeredTokenId,uint256 requestedTokenId,address cashAsset,uint256 cashAmount,bool proposerPaysCash,uint64 expiry)',
+);
+const redemptionConfirmedEvent = parseAbiItem(
+  'event RedemptionConfirmed(uint256 indexed tokenId,uint256 indexed gemId)',
 );
 
 function projection(force = false): Promise<ProjectionSnapshot> {
@@ -243,15 +253,18 @@ function gemIds(): Promise<bigint[]> {
   return gemIdsPromise;
 }
 
-const preferredGateway = resolveIpfsGateways(env.ipfsGateway)[0];
-
 /**
- * Images render through the preferred gateway only. Unlike the metadata document
- * an `<img>` cannot be retried across gateways in-band, so `GemThumb` falls back
- * to the generated swatch if the fetch fails.
+ * Every URL the browser may use for an image.
+ *
+ * Metadata already retries public IPFS gateways, but its nested `image` was
+ * collapsed to the first gateway before it reached `<img>`. On a phone that
+ * made one slow or blocked gateway look exactly like a token with no photo.
+ * Preserve the complete ordered set so `GemThumb` can fail over in-band.
  */
-function imageUrl(image?: string): string | undefined {
-  return image ? gatewayUrl(preferredGateway, image) : undefined;
+function imageUrls(image?: string): string[] {
+  if (!image) return [];
+  if (!image.startsWith('ipfs://')) return [image];
+  return resolveIpfsGateways(env.ipfsGateway).map((gateway) => gatewayUrl(gateway, image));
 }
 
 async function readRegistryGem(gemId: bigint): Promise<RegistryGem> {
@@ -325,6 +338,8 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   let owner: Address | undefined;
   let listingSeller: Address | undefined;
   let listedPriceUsd: bigint | undefined;
+  let listingWinningOfferId: bigint | undefined;
+  let listingAuctionEnd: bigint | undefined;
   if (registryGem.tokenId > 0n) {
     /*
      * A failed ownership read is unknown ownership, never "no owner". Swallowing
@@ -346,6 +361,26 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
     if (listing && listing[0] !== zeroAddress) {
       listingSeller = listing[0];
       listedPriceUsd = listing[1];
+      const [winning, endTime] = await Promise.all([
+        client
+          .readContract({
+            ...contract('Marketplace'),
+            functionName: 'listingWinningOffer',
+            args: [registryGem.tokenId],
+          })
+          // The selector does not exist until the upgrade is live. Treat that
+          // rollout window as a fixed-price listing, which is what it was.
+          .catch(() => 0n) as Promise<bigint>,
+        client
+          .readContract({
+            ...contract('Marketplace'),
+            functionName: 'listingAuctionEnd',
+            args: [registryGem.tokenId],
+          })
+          .catch(() => 0n) as Promise<bigint>,
+      ]);
+      listingWinningOfferId = winning > 0n ? winning : undefined;
+      listingAuctionEnd = endTime > 0n ? endTime : undefined;
     }
   }
 
@@ -367,6 +402,8 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
           listingSeller,
           listedPriceUsd,
           listedPrice: Number(formatUnits(listedPriceUsd!, 18)),
+          listingWinningOfferId,
+          listingAuctionEnd,
         }
       : {}),
     displayId: trait(details, 'Display ID') ?? details.displayId ?? `DGE-${gemId}`,
@@ -400,7 +437,8 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
      */
     redeem: canRedeem ? 'Eligible' : 'Blocked',
     metadataUri: registryGem.metadataURI,
-    image: imageUrl(details.image),
+    image: imageUrls(details.image)[0],
+    imageCandidates: imageUrls(details.image),
   };
   return decorate(gem);
 }
@@ -641,20 +679,26 @@ async function getOffers(): Promise<Offer[]> {
       ]);
       const expiry = state[5] || (created.args.expiry as bigint);
       const expired = expiry <= now;
+      const automatic = gem.listingWinningOfferId === offerId;
       const terminal = snapshot.events.find(
         (event) =>
           event.module === 'Marketplace' &&
-          (event.eventName === 'OfferAccepted' || event.eventName === 'OfferCancelled') &&
+          (event.eventName === 'OfferAccepted' ||
+            event.eventName === 'OfferCancelled' ||
+            event.eventName === 'ListingAuctionRefunded') &&
           event.args.offerId === offerId,
       );
       const status =
         terminal?.eventName === 'OfferAccepted'
           ? 'Accepted'
-          : terminal?.eventName === 'OfferCancelled'
+          : terminal?.eventName === 'OfferCancelled' ||
+              terminal?.eventName === 'ListingAuctionRefunded'
             ? 'Refunded'
-            : expired
-              ? 'Expired'
-              : 'Pending';
+            : expired && automatic
+              ? 'Awaiting settlement'
+              : expired
+                ? 'Expired'
+                : 'Pending';
       const saleUsdValue = state[4] || (created.args.saleUsdValue as bigint);
       return {
         offerId,
@@ -662,6 +706,7 @@ async function getOffers(): Promise<Offer[]> {
         bidder,
         tokenOwner,
         listingSeller: listing[0] === zeroAddress ? undefined : listing[0],
+        automatic,
         offerFmt: `$${Number(formatUnits(saleUsdValue, 18)).toLocaleString()}`,
         from: bidder,
         status,
@@ -670,7 +715,10 @@ async function getOffers(): Promise<Offer[]> {
          * payment is still held by the contract and only they can retrieve it,
          * so it wants attention rather than the muted tone of a closed row.
          */
-        statusColor: status === 'Pending' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
+        statusColor:
+          status === 'Pending' || status === 'Expired' || status === 'Awaiting settlement'
+            ? 'var(--dc-amber)'
+            : '#8B8B94',
         secondsLeft: Number(expiry > now ? expiry - now : 0n),
       } satisfies Offer;
     }),
@@ -1021,7 +1069,9 @@ export const chainService: IDataService = {
       offers: normalizedAddress
         ? offers.filter(
             (offer) =>
-              (offer.status === 'Pending' || offer.status === 'Expired') &&
+              (offer.status === 'Pending' ||
+                offer.status === 'Expired' ||
+                offer.status === 'Awaiting settlement') &&
               (offer.bidder.toLowerCase() === normalizedAddress ||
                 offer.tokenOwner.toLowerCase() === normalizedAddress ||
                 offer.listingSeller?.toLowerCase() === normalizedAddress),
@@ -1238,6 +1288,7 @@ export const chainService: IDataService = {
   // Both refresh: a listing changes ownership to the Marketplace escrow and adds
   // an ask, and neither shows up until the gem is re-read.
   list: async (request: ListRequest): Promise<TxResult> => {
+    const fromBlock = await client.getBlockNumber();
     const result = await runContractTransaction({
       ...contract('Marketplace'),
       functionName: 'list',
@@ -1250,6 +1301,17 @@ export const chainService: IDataService = {
           amountOrTokenId: request.tokenId,
         },
       ],
+      reconcileBroadcast: async (account) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.Marketplace,
+          event: tokenListedEvent,
+          args: { tokenId: request.tokenId, seller: account },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs].reverse().find((log) => (log.args.priceUsd ?? 0n) === request.priceUsd)
+          ?.transactionHash;
+      },
     });
     await refresh();
     return result;
@@ -1391,6 +1453,12 @@ export const chainService: IDataService = {
       functionName: 'settleAuction',
       args: [request.gemId],
     }),
+  settleListingAuction: (request: SettleListingAuctionRequest) =>
+    runContractTransaction({
+      ...contract('Marketplace'),
+      functionName: 'settleListingAuction',
+      args: [request.tokenId],
+    }),
   claimRefund: (request: ClaimRefundRequest) =>
     runContractTransaction({
       ...contract('PrimarySaleAuction'),
@@ -1452,10 +1520,12 @@ export const chainService: IDataService = {
       args: [request.offerId],
     }),
   createSwap: async (request: CreateSwapRequest) => {
-    const cashAmount =
+    const [cashAmount, fromBlock] = await Promise.all([
       request.cashAmountUsd === 0n
-        ? 0n
-        : await usdToAsset(request.paymentAsset, request.cashAmountUsd);
+        ? Promise.resolve(0n)
+        : usdToAsset(request.paymentAsset, request.cashAmountUsd),
+      client.getBlockNumber(),
+    ]);
     const approvals: Approval[] = [
       {
         kind: 'erc721' as const,
@@ -1487,6 +1557,25 @@ export const chainService: IDataService = {
       paymentAmount: request.proposerPays ? cashAmount : undefined,
       value: request.proposerPays && request.paymentAsset === NATIVE_ASSET ? cashAmount : undefined,
       approvals,
+      reconcileBroadcast: async (account) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.SwapEscrow,
+          event: swapCreatedEvent,
+          args: { proposer: account, offeredTokenId: request.offeredTokenId },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs]
+          .reverse()
+          .find(
+            (log) =>
+              log.args.requestedTokenId === request.requestedTokenId &&
+              log.args.cashAsset === request.paymentAsset &&
+              log.args.cashAmount === cashAmount &&
+              log.args.proposerPaysCash === request.proposerPays &&
+              log.args.expiry === request.expiresAt,
+          )?.transactionHash;
+      },
     });
   },
   acceptSwap: async (request: SwapRequestAction) => {
@@ -1576,12 +1665,24 @@ export const chainService: IDataService = {
    * irreversible, and callable only by the address recorded as custodian on the
    * gem.
    */
-  confirmRedemption: (request: ConfirmRedemptionRequest) =>
-    runContractTransaction({
+  confirmRedemption: async (request: ConfirmRedemptionRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    return runContractTransaction({
       ...contract('RedemptionManager'),
       functionName: 'confirmRedemption',
       args: [request.tokenId],
-    }),
+      reconcileBroadcast: async () => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: redemptionConfirmedEvent,
+          args: { tokenId: request.tokenId },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
+      },
+    });
+  },
   fundReserve: async (request: FundReserveRequest) => {
     const amount = await usdToAsset(request.paymentAsset, request.amountUsd);
     if (request.paymentAsset === NATIVE_ASSET) {

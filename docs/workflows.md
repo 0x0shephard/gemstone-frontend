@@ -202,14 +202,16 @@ automatic cancellation.
 
 ```
 v1-notify-sweep             scheduled hourly, gated by x-notify-sweep-secret
-  event pass    Marketplace  OfferCreated  → owner: you have an offer (24h)
+  event pass    Marketplace  OfferCreated  → owner: offer, or listed auction started
                              OfferAccepted → close the watch
+                             ListingAuctionRefunded → bidder: payment returned
                 SwapEscrow   OfferCreated  → owner: a swap is proposed
                              OfferAccepted → close the watch
                 Auction      BidPlaced     → earlier bidders: you were outbid
                              AuctionSettled          → winner: you won
                              AuctionSettlementRefunded → bidder: claim it back
-  deadline pass offer expired, still active → bidder: claim your refund
+  deadline pass manual offer expired, still active → bidder: claim your refund
+                listed auction ended, still active → bidder: settlement ready
                 swap expired, still active  → proposer: your NFT is in escrow
 ```
 
@@ -314,6 +316,7 @@ custom error rather than surfaced raw.
 | Claim an outbid refund          | Profile     | `PrimarySaleAuction.claimRefund`                          |
 | List an owned gem               | Profile     | `Marketplace.list` (needs `DGENFT` approval)              |
 | Buy a listing                   | Marketplace | `Marketplace.buy`                                         |
+| Bid on a listed token           | GemDetail   | `Marketplace.createOffer` / `settleListingAuction`        |
 | Make / accept / cancel an offer | GemDetail   | `Marketplace.createOffer` / `acceptOffer` / `cancelOffer` |
 | Swap two gems                   | Swaps       | `SwapEscrow.createOffer` / `acceptOffer`                  |
 | Fund the reserve                | GemDetail   | `ReserveManager.fundNative` / `fundToken`                 |
@@ -351,13 +354,17 @@ parameter:
 
 | State                      | Action                                 |
 | -------------------------- | -------------------------------------- |
-| Escrowed in a live listing | **Buy now** at the listed price        |
+| Escrowed, before first bid | **Buy now** or **Place bid**           |
+| Escrowed, auction active   | **Place bid** until the fixed deadline |
 | Held, not listed           | **Make an offer** · **Propose a swap** |
 | Owned by the viewer        | **Manage**                             |
 
-"Offer" rather than "bid" deliberately: bidding already means auction bidding on
-an unminted stone, and the Portfolio separates **Minting Bids** from **Token
-Bids** for the same reason.
+`Marketplace.createOffer` has two deliberate modes. On an unlisted token it is a
+manual 24-hour offer the owner may accept. On a listed token, meeting the ask
+starts a fixed 24-hour auction: higher bids refund the previous leader, and the
+winner receives the escrowed token at permissionless settlement without another
+seller approval. The scheduled auction refresh invokes that settlement so it
+does not depend on either party returning to the app.
 
 ---
 
@@ -418,18 +425,17 @@ For new cards, sale and swap are impossible while the operator owns the token.
 The claim path still re-reads custody and the redemption lock rather than
 trusting what was true at issue time:
 
-| Event                         | Effect on the card                                      |
-| ----------------------------- | ------------------------------------------------------- |
-| Escrow custody is missing     | Claim refuses                                           |
-| Redemption locks the token    | Claim refuses                                           |
-| Sender cancels the card       | Claim stops and the operator returns the token          |
+| Event                      | Effect on the card                             |
+| -------------------------- | ---------------------------------------------- |
+| Escrow custody is missing  | Claim refuses                                  |
+| Redemption locks the token | Claim refuses                                  |
+| Sender cancels the card    | Claim stops and the operator returns the token |
 
 **Why the email is mandatory.** Without it the printed code is a bearer
 instrument: whoever photographs the card takes the gemstone, including anyone
 who handles it in the post. Binding the claim to an address the sender chose is
 the entire security model, and it is why the code is stored hashed — a database
 leak yields nothing claimable.
-
 
 ---
 

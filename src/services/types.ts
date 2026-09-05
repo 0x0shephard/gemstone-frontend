@@ -31,6 +31,10 @@ export interface Gem {
    */
   listedPriceUsd?: bigint;
   listedPrice?: number;
+  /** Current automatic-auction leader for an escrowed listing, when any. */
+  listingWinningOfferId?: bigint;
+  /** Unix timestamp at which that listed-token auction becomes settleable. */
+  listingAuctionEnd?: bigint;
   displayId: string;
   name: string;
   type: GemType;
@@ -47,8 +51,17 @@ export interface Gem {
   custodyCountry: string;
   redeem: RedeemStatus;
   metadataUri?: string;
-  /** Gateway-resolved `image` from the token metadata, when it declares one. */
+  /** First gateway-resolved `image` from the token metadata, when it declares one. */
   image?: string;
+  /**
+   * Ordered image recovery paths.
+   *
+   * Mobile networks routinely fail one public IPFS gateway while another is
+   * healthy. Keeping every immutable candidate lets the image element advance
+   * without throwing away the metadata or replacing the stone with a blank
+   * platform-coloured tile.
+   */
+  imageCandidates?: string[];
 }
 
 export interface DecoratedGem extends Gem {
@@ -96,7 +109,9 @@ export interface Offer {
   listingSeller?: Address;
   offerFmt: string;
   from: string;
-  status: 'Pending' | 'Accepted' | 'Expired' | 'Refunded';
+  /** True when this is the automatic winning bid on an escrowed listing. */
+  automatic: boolean;
+  status: 'Pending' | 'Awaiting settlement' | 'Accepted' | 'Expired' | 'Refunded';
   statusColor: string;
   secondsLeft: number;
 }
@@ -259,6 +274,10 @@ export interface BidRequest {
 
 export interface SettleAuctionRequest {
   gemId: bigint;
+}
+
+export interface SettleListingAuctionRequest {
+  tokenId: bigint;
 }
 
 export interface ClaimRefundRequest {
