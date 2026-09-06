@@ -585,7 +585,17 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
           const { tokenId, gemId } = event.args as { tokenId: bigint; gemId: bigint };
 
           if (event.eventName === 'RedemptionOpened') {
-            const { owner } = event.args as { owner: Address };
+            const { owner, requestHash } = event.args as { owner: Address; requestHash: string };
+            const { error: requestUpdateError } = await admin
+              .from('redemption_requests')
+              .update({
+                status: 'onchain_requested',
+                transaction_hash: event.transactionHash,
+              })
+              .eq('token_id', String(tokenId))
+              .eq('request_hash', requestHash.toLowerCase())
+              .in('status', ['committed', 'onchain_requested']);
+            if (requestUpdateError) throw requestUpdateError;
             /*
              * The custodian is the whole point of this branch. Redemption stops
              * dead until they call `confirmRedemption`, and nothing else can do
@@ -635,6 +645,17 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
             event.eventName === 'RedemptionConfirmed' ||
             event.eventName === 'RedemptionCancelled'
           ) {
+            const confirmed = event.eventName === 'RedemptionConfirmed';
+            const { error: requestUpdateError } = await admin
+              .from('redemption_requests')
+              .update({
+                status: confirmed ? 'fulfilled' : 'cancelled',
+                transaction_hash: event.transactionHash,
+              })
+              .eq('token_id', String(tokenId))
+              .in('status', ['committed', 'onchain_requested']);
+            if (requestUpdateError) throw requestUpdateError;
+
             /*
              * Neither event carries the owner — only `(tokenId, gemId)` — and by
              * now the token is burned, so `ownerOf` cannot answer either. The
@@ -654,7 +675,6 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
               .maybeSingle();
             if (!opened?.wallet_address) continue;
 
-            const confirmed = event.eventName === 'RedemptionConfirmed';
             await send(admin, counters, {
               wallet: String(opened.wallet_address),
               kind: confirmed ? 'redemption.confirmed' : 'redemption.cancelled',
