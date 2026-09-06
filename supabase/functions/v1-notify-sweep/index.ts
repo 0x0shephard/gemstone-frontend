@@ -97,6 +97,9 @@ const CONTRACT_COUNT = 4;
  */
 const DEADLINE_BATCH = 25;
 
+/** Stale off-chain redemption rows checked against the registry per sweep. */
+const REDEMPTION_RECONCILE_BATCH = 25;
+
 const ZERO = '0x0000000000000000000000000000000000000000';
 
 type Admin = SupabaseClient;
@@ -237,6 +240,80 @@ async function send(
   if (result.created) counters.created += 1;
   if (result.emailed) counters.emailed += 1;
   counters.pushed += result.pushed;
+}
+
+interface RedemptionReconcileResult {
+  checked: number;
+  updated: number;
+  unreadable: number;
+}
+
+/**
+ * Repairs redemption rows whose chain event was scanned before database
+ * reconciliation existed.
+ *
+ * Cursor replay protects recent blocks, but it deliberately cannot replay the
+ * entire contract history on every invocation. The registry is the durable
+ * lifecycle source of truth, so checking only still-open database rows makes
+ * upgrades and interrupted deployments self-healing without resetting a
+ * shared scan cursor or sending old notifications again.
+ */
+async function reconcileRedemptionRows(
+  admin: Admin,
+  chain: OperatorChain,
+): Promise<RedemptionReconcileResult> {
+  const { data: rows, error } = await admin
+    .from('redemption_requests')
+    .select('id,gem_id::text,status')
+    .in('status', ['committed', 'onchain_requested'])
+    .order('created_at', { ascending: true })
+    .limit(REDEMPTION_RECONCILE_BATCH);
+  if (error) throw error;
+
+  let updated = 0;
+  let unreadable = 0;
+  await Promise.all(
+    (rows ?? []).map(async (row) => {
+      const gemId = String(row.gem_id ?? '');
+      if (!/^\d+$/.test(gemId)) {
+        unreadable += 1;
+        return;
+      }
+
+      const gem = (await chain.logsClient
+        .readContract({
+          address: chain.addresses.registry,
+          abi: gemRegistryAbi,
+          functionName: 'getGem',
+          args: [BigInt(gemId)],
+        })
+        .catch(() => null)) as { status: number } | null;
+      if (!gem) {
+        unreadable += 1;
+        return;
+      }
+
+      const chainStatus = Number(gem.status);
+      const currentStatus = String(row.status);
+      let nextStatus: 'onchain_requested' | 'fulfilled' | 'cancelled' | undefined;
+      if (chainStatus === 7) nextStatus = 'fulfilled';
+      else if (chainStatus === 6) nextStatus = 'onchain_requested';
+      else if (chainStatus === 5 && currentStatus === 'onchain_requested') nextStatus = 'cancelled';
+      if (!nextStatus || nextStatus === currentStatus) return;
+
+      const { error: updateError } = await admin
+        .from('redemption_requests')
+        .update({ status: nextStatus })
+        .eq('id', row.id)
+        // Do not overwrite a newer transition written while the chain read was
+        // in flight.
+        .eq('status', currentStatus);
+      if (updateError) throw updateError;
+      updated += 1;
+    }),
+  );
+
+  return { checked: (rows ?? []).length, updated, unreadable };
 }
 
 /** Below the platform's own worker timeout, so this answers rather than dies. */
@@ -700,6 +777,9 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
       behind.redemption_manager = redemptionResult.blocksBehind.toString();
     }
 
+    const redemptionRows = await reconcileRedemptionRows(admin, chain);
+    mark('redemption_reconcile');
+
     // ---- Deadlines --------------------------------------------------------
     // Runs on whatever time is left. Skipping it entirely on a heavy catch-up
     // run is fine: watches stay unresolved and the next run picks them up.
@@ -711,6 +791,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
       emailsSent: counters.emailed,
       pushesSent: counters.pushed,
       deadlinesChecked: deadlines,
+      redemptionRows,
       scannedThroughBlock: {
         marketplace: marketResult.scannedThrough.toString(),
         swap_escrow: swapResult.scannedThrough.toString(),
