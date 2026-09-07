@@ -143,6 +143,9 @@ const swapCreatedEvent = parseAbiItem(
 const redemptionConfirmedEvent = parseAbiItem(
   'event RedemptionConfirmed(uint256 indexed tokenId,uint256 indexed gemId)',
 );
+const redemptionCancelledEvent = parseAbiItem(
+  'event RedemptionCancelled(uint256 indexed tokenId,uint256 indexed gemId)',
+);
 
 function projection(force = false): Promise<ProjectionSnapshot> {
   if (!force && projectionPromise && Date.now() - projectionFetchedAt > PROJECTION_TTL_MS) {
@@ -867,34 +870,119 @@ async function getRedemptions(): Promise<Redemption[]> {
   return results.filter(Boolean) as Redemption[];
 }
 
-function activityFor(snapshot: ProjectionSnapshot, address?: string): ActivityItem[] {
+function activityFor(
+  snapshot: ProjectionSnapshot,
+  address: string | undefined,
+  gems: DecoratedGem[],
+  offers: Offer[],
+  swaps: SwapRequest[],
+): ActivityItem[] {
   if (!address) return [];
   const normalized = address.toLowerCase();
+  const redemptionOwners = new Map<string, string>();
+  for (const event of snapshot.events) {
+    if (
+      event.module === 'RedemptionManager' &&
+      event.eventName === 'RedemptionOpened' &&
+      typeof event.args.tokenId === 'bigint' &&
+      typeof event.args.owner === 'string'
+    ) {
+      redemptionOwners.set(event.args.tokenId.toString(), event.args.owner.toLowerCase());
+    }
+  }
+  const relevantOfferIds = new Set(
+    offers
+      .filter(
+        (offer) =>
+          offer.bidder.toLowerCase() === normalized ||
+          offer.tokenOwner.toLowerCase() === normalized ||
+          offer.listingSeller?.toLowerCase() === normalized,
+      )
+      .map((offer) => offer.offerId.toString()),
+  );
+  const relevantSwapIds = new Set(
+    swaps
+      .filter(
+        (swap) =>
+          swap.proposer.toLowerCase() === normalized ||
+          swap.requestedOwner.toLowerCase() === normalized,
+      )
+      .map((swap) => swap.offerId.toString()),
+  );
+  const kindLabel = (module: string, eventName: string) => {
+    if (module === 'PrimarySaleAuction' && eventName === 'BidPlaced') return 'Minting bid placed';
+    if (module === 'Marketplace' && eventName === 'OfferCreated') return 'Token bid placed';
+    if (module === 'Marketplace' && eventName === 'OfferAccepted') return 'Token bid accepted';
+    if (module === 'Marketplace' && eventName === 'OfferCancelled') return 'Token bid refunded';
+    if (module === 'SwapEscrow' && eventName === 'OfferCreated') return 'Swap proposed';
+    if (module === 'SwapEscrow' && eventName === 'OfferAccepted') return 'Swap accepted';
+    if (module === 'SwapEscrow' && eventName === 'OfferCancelled') return 'Swap cancelled';
+    if (module === 'RedemptionManager' && eventName === 'RedemptionOpened') {
+      return 'Redemption requested';
+    }
+    if (module === 'RedemptionManager' && eventName === 'RedemptionCancelled') {
+      return 'Redemption cancelled';
+    }
+    if (module === 'RedemptionManager' && eventName === 'RedemptionConfirmed') {
+      return 'Redemption completed';
+    }
+    return eventName.replace(/([a-z])([A-Z])/g, '$1 $2');
+  };
   return snapshot.events
-    .filter((event) =>
-      Object.values(event.args).some(
+    .filter((event) => {
+      const direct = Object.values(event.args).some(
         (value) => typeof value === 'string' && value.toLowerCase() === normalized,
-      ),
-    )
+      );
+      const offerId =
+        typeof event.args.offerId === 'bigint' ? event.args.offerId.toString() : undefined;
+      const tokenId =
+        typeof event.args.tokenId === 'bigint' ? event.args.tokenId.toString() : undefined;
+      return (
+        direct ||
+        (event.module === 'Marketplace' && Boolean(offerId && relevantOfferIds.has(offerId))) ||
+        (event.module === 'SwapEscrow' && Boolean(offerId && relevantSwapIds.has(offerId))) ||
+        (event.module === 'RedemptionManager' &&
+          Boolean(tokenId && redemptionOwners.get(tokenId) === normalized))
+      );
+    })
     .slice(-50)
     .reverse()
-    .map((event) => ({
-      kind: event.eventName.replace(/([a-z])([A-Z])/g, '$1 $2'),
-      gem: event.module,
-      displayId:
-        typeof event.args.gemId === 'bigint'
-          ? `DGE-${event.args.gemId}`
-          : typeof event.args.tokenId === 'bigint'
-            ? `Token #${event.args.tokenId}`
-            : 'Protocol',
-      amount:
+    .map((event) => {
+      const gemId = typeof event.args.gemId === 'bigint' ? event.args.gemId : undefined;
+      const tokenId =
+        typeof event.args.tokenId === 'bigint'
+          ? event.args.tokenId
+          : typeof event.args.offeredTokenId === 'bigint'
+            ? event.args.offeredTokenId
+            : undefined;
+      const gem = gems.find(
+        (candidate) =>
+          (gemId !== undefined && candidate.gemId === gemId) ||
+          (tokenId !== undefined && candidate.tokenId === tokenId),
+      );
+      const usdValue =
         typeof event.args.usdValue === 'bigint'
-          ? `$${Number(formatUnits(event.args.usdValue, 18)).toLocaleString()}`
-          : '—',
-      date: `Block ${event.blockNumber}`,
-      color: event.finalized ? 'var(--dc-emerald)' : 'var(--dc-amber)',
-      txHash: event.transactionHash,
-    }));
+          ? event.args.usdValue
+          : typeof event.args.saleUsdValue === 'bigint'
+            ? event.args.saleUsdValue
+            : undefined;
+      return {
+        kind: kindLabel(event.module, event.eventName),
+        gem: gem?.name ?? event.module,
+        displayId:
+          gem?.displayId ??
+          (gemId !== undefined
+            ? `DGE-${gemId}`
+            : tokenId !== undefined
+              ? `Token #${tokenId}`
+              : 'Protocol'),
+        amount:
+          usdValue !== undefined ? `$${Number(formatUnits(usdValue, 18)).toLocaleString()}` : '—',
+        date: `Block ${event.blockNumber}`,
+        color: event.finalized ? 'var(--dc-emerald)' : 'var(--dc-amber)',
+        txHash: event.transactionHash,
+      };
+    });
 }
 
 async function refresh(): Promise<void> {
@@ -1103,7 +1191,7 @@ export const chainService: IDataService = {
               redemption.custodian.toLowerCase() === normalizedAddress,
           )
         : [],
-      activity: activityFor(snapshot, address),
+      activity: activityFor(snapshot, address, gems, offers, swaps),
       stats: {
         ...ownedStats(),
         activeBids: bids.filter((bid) => bid.secondsLeft > 0).length,
@@ -1520,12 +1608,61 @@ export const chainService: IDataService = {
       args: [request.offerId],
     }),
   createSwap: async (request: CreateSwapRequest) => {
-    const [cashAmount, fromBlock] = await Promise.all([
-      request.cashAmountUsd === 0n
-        ? Promise.resolve(0n)
-        : usdToAsset(request.paymentAsset, request.cashAmountUsd),
-      client.getBlockNumber(),
-    ]);
+    const connected = getAccount(wagmiConfig).address;
+    const [cashAmount, fromBlock, offeredOwner, requestedOwner, offeredLocked, requestedLocked] =
+      await Promise.all([
+        request.cashAmountUsd === 0n
+          ? Promise.resolve(0n)
+          : usdToAsset(request.paymentAsset, request.cashAmountUsd),
+        client.getBlockNumber(),
+        client.readContract({
+          ...contract('DGENFT'),
+          functionName: 'ownerOf',
+          args: [request.offeredTokenId],
+        }) as unknown as Promise<Address>,
+        client.readContract({
+          ...contract('DGENFT'),
+          functionName: 'ownerOf',
+          args: [request.requestedTokenId],
+        }) as unknown as Promise<Address>,
+        client.readContract({
+          ...contract('DGENFT'),
+          functionName: 'transferLocked',
+          args: [request.offeredTokenId],
+        }) as unknown as Promise<boolean>,
+        client.readContract({
+          ...contract('DGENFT'),
+          functionName: 'transferLocked',
+          args: [request.requestedTokenId],
+        }) as unknown as Promise<boolean>,
+      ]);
+    if (connected && !isAddressEqual(connected, offeredOwner)) {
+      throw new TransactionGuardError(
+        `Connect the wallet that directly holds offered token #${request.offeredTokenId.toString()}. Listed, gifted, and already-offered tokens must be released first.`,
+        'WRONG_WALLET',
+      );
+    }
+    if (offeredLocked) {
+      throw new TransactionGuardError(
+        'The token you are offering is in redemption. Cancel that redemption before swapping it.',
+        'CONTRACT_REVERTED',
+      );
+    }
+    if (requestedLocked) {
+      throw new TransactionGuardError(
+        'The requested token is in redemption and cannot be swapped until its owner cancels redemption.',
+        'CONTRACT_REVERTED',
+      );
+    }
+    if (
+      isAddressEqual(requestedOwner, manifest.addresses.Marketplace) ||
+      isAddressEqual(requestedOwner, manifest.addresses.SwapEscrow)
+    ) {
+      throw new TransactionGuardError(
+        'The requested token is already held by another marketplace or swap escrow. Choose a token held directly in its owner’s wallet.',
+        'CONTRACT_REVERTED',
+      );
+    }
     const approvals: Approval[] = [
       {
         kind: 'erc721' as const,
@@ -1653,12 +1790,26 @@ export const chainService: IDataService = {
       args: [request.tokenId, request.requestHash],
     });
   },
-  cancelRedemption: (request: CancelRedemptionRequest) =>
-    runContractTransaction({
+  cancelRedemption: async (request: CancelRedemptionRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const result = await runContractTransaction({
       ...contract('RedemptionManager'),
       functionName: 'cancelRedemption',
       args: [request.tokenId],
-    }),
+      reconcileBroadcast: async () => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: redemptionCancelledEvent,
+          args: { tokenId: request.tokenId },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
+      },
+    });
+    await refresh();
+    return result;
+  },
   /*
    * The last step, and the only one nothing else can do for you. It burns the
    * token, marks the gem redeemed and releases the reserve to the custodian —
@@ -1667,7 +1818,7 @@ export const chainService: IDataService = {
    */
   confirmRedemption: async (request: ConfirmRedemptionRequest) => {
     const fromBlock = await client.getBlockNumber();
-    return runContractTransaction({
+    const result = await runContractTransaction({
       ...contract('RedemptionManager'),
       functionName: 'confirmRedemption',
       args: [request.tokenId],
@@ -1682,6 +1833,8 @@ export const chainService: IDataService = {
         return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
       },
     });
+    await refresh();
+    return result;
   },
   fundReserve: async (request: FundReserveRequest) => {
     const amount = await usdToAsset(request.paymentAsset, request.amountUsd);

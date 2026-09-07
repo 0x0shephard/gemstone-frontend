@@ -26,7 +26,7 @@ vi.mock('@/services/offchain/notifications', () => ({
 
 vi.mock('./PushToggle', () => ({ PushToggle: () => null }));
 
-import { NotificationBell } from './NotificationBell';
+import { NotificationBell, notificationDate } from './NotificationBell';
 
 function renderBell() {
   const queryClient = new QueryClient({
@@ -69,5 +69,11 @@ describe('NotificationBell', () => {
 
     expect(await screen.findByText('Nothing needs your attention.')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows an exact time for recent events and a date after 24 hours', () => {
+    const now = Date.parse('2026-12-25T12:00:00');
+    expect(notificationDate('2026-12-25T09:13:00', now)).toMatch(/09:13/);
+    expect(notificationDate('2026-12-24T09:13:00', now)).toBe('24/12/2026');
   });
 });

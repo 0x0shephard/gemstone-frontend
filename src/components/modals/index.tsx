@@ -11,8 +11,8 @@ import { purchaseQuote, reserveShortfallUsd, swapReserveEligible } from '@/lib/g
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
 import { useGems, useProfile } from '@/hooks/useData';
-import { NATIVE_ASSET } from '@/config/contracts';
-import { zeroHash } from 'viem';
+import { contractAddresses, NATIVE_ASSET } from '@/config/contracts';
+import { isAddressEqual, zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
 import { env } from '@/config/env';
 import { createRedemptionCommitment } from '@/services/offchain/workflows';
@@ -388,7 +388,25 @@ export function SwapModal({
   const requesting = direction === 'request';
   // Offering someone else's token is impossible, so the picker lists only what
   // the connected wallet actually owns.
-  const choices = requesting ? (profile?.owned ?? []) : gems;
+  const redemptionTokenIds = new Set(
+    (profile?.redemptions ?? []).map((redemption) => redemption.tokenId.toString()),
+  );
+  const marketplaceAddress = contractAddresses.Marketplace;
+  const swapEscrowAddress = contractAddresses.SwapEscrow;
+  const choices = (requesting ? (profile?.owned ?? []) : gems).filter((candidate) => {
+    if (!candidate.tokenId || candidate.listingSeller) return false;
+    if (redemptionTokenIds.has(candidate.tokenId.toString())) return false;
+    if (
+      candidate.owner &&
+      ((marketplaceAddress && isAddressEqual(candidate.owner, marketplaceAddress)) ||
+        (swapEscrowAddress && isAddressEqual(candidate.owner, swapEscrowAddress)))
+    ) {
+      return false;
+    }
+    return (
+      !requesting || Boolean(address && candidate.owner && isAddressEqual(candidate.owner, address))
+    );
+  });
   const [requestedId, setRequestedId] = useState('');
   const [delta, setDelta] = useState('');
   const [asset, setAsset] = useState<PaymentAsset>();

@@ -75,10 +75,25 @@ Deno.serve(async (request) => {
         }),
       ])) as [string, boolean];
       const ownerAddress = getAddress(owner);
-      if (ownerAddress !== senderWallet && ownerAddress !== escrowWallet) {
+      if (
+        card.status === 'active' &&
+        ownerAddress !== senderWallet &&
+        ownerAddress !== escrowWallet
+      ) {
         return json({ error: 'This token is no longer held by the sender or gift escrow' }, 409);
       }
-      if (locked) return json({ error: 'This token is locked by an active redemption' }, 409);
+      /*
+       * A pending row is only a preparation record. If the wallet never moved
+       * the token (or subsequently listed/redeemed it), cancellation must still
+       * retire that stale setup. Blocking on its current owner/lock is what left
+       * "Waiting for escrow" rows permanently stuck in the portfolio.
+       *
+       * A token actually held by gift escrow is different: returning it is an
+       * on-chain transfer, so an active lock must still stop us.
+       */
+      if (locked && ownerAddress === escrowWallet) {
+        return json({ error: 'This token is locked by an active redemption' }, 409);
+      }
 
       // Win the race against a claim before moving the NFT. Restore the open
       // state if the return transaction fails.

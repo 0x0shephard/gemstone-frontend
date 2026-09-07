@@ -270,9 +270,11 @@ function GiftCardRowItem({
             <Button size="sm" variant="ghost" disabled={cancelling} onClick={onCancel}>
               {cancelling
                 ? 'Cancelling…'
-                : card.custody_mode === 'operator_escrow'
-                  ? 'Cancel and return token'
-                  : 'Cancel card'}
+                : card.status === 'pending_escrow'
+                  ? 'Cancel setup'
+                  : card.custody_mode === 'operator_escrow'
+                    ? 'Cancel and return token'
+                    : 'Cancel card'}
             </Button>
           )}
           {canRevoke && (

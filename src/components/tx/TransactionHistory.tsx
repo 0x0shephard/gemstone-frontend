@@ -1,5 +1,8 @@
 import type { ActivityItem } from '@/services/types';
 import { DataTable, type Column } from '@/components/ui/DataTable';
+import { useQuery } from '@tanstack/react-query';
+import { useAuth } from '@/providers/AuthProvider';
+import { listGiftCards } from '@/services/offchain/gift';
 
 const columns: Column<ActivityItem>[] = [
   {
@@ -32,10 +35,38 @@ const columns: Column<ActivityItem>[] = [
 
 /** Protocol activity / transaction history table. */
 export function TransactionHistory({ items }: { items: ActivityItem[] }) {
+  const { user } = useAuth();
+  const { data: giftCards = [] } = useQuery({
+    queryKey: ['giftCards', user?.id ?? 'anonymous'],
+    queryFn: listGiftCards,
+    enabled: Boolean(user),
+  });
+  const giftHistory: ActivityItem[] = giftCards.map((card) => ({
+    kind:
+      card.status === 'active'
+        ? 'Gift card issued'
+        : card.status === 'claimed'
+          ? 'Gift card claimed'
+          : card.status === 'cancelled'
+            ? 'Gift card cancelled'
+            : 'Gift card prepared',
+    gem: 'Gift card',
+    displayId: `Token #${card.token_id}`,
+    amount: '—',
+    date: new Intl.DateTimeFormat('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(new Date(card.created_at)),
+    color:
+      card.status === 'claimed' || card.status === 'active'
+        ? 'var(--dc-emerald)'
+        : 'var(--dc-amber)',
+  }));
   return (
     <DataTable
       columns={columns}
-      rows={items}
+      rows={[...giftHistory, ...items]}
       rowKey={(r, i) => `${r.kind}-${r.displayId}-${i}`}
       empty="No transactions yet."
     />

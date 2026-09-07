@@ -27,7 +27,7 @@ import {
   giftClaimUrl,
   type CreatedGiftCard,
 } from '@/services/offchain/gift';
-import type { Hash } from 'viem';
+import { zeroHash, type Hash } from 'viem';
 import {
   cardAsPngBase64,
   downloadCardPng,
@@ -85,6 +85,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
     (restored?.template as GiftTemplate | undefined) ?? 'classic',
   );
   const [issued, setIssued] = useState<CreatedGiftCard | null>(restored?.card ?? null);
+  const [escrowTxHash, setEscrowTxHash] = useState<Hash | undefined>(restored?.escrowTxHash);
   const [error, setError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
 
@@ -140,10 +141,40 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
       setError(
         confirmError instanceof Error ? confirmError.message : 'Could not confirm gift escrow',
       );
+      saveGiftHandoff({
+        gemId: String(gem.gemId),
+        card: issued,
+        recipientEmail: email,
+        recipientName,
+        message,
+        template,
+        escrowTxHash,
+      });
     } finally {
       setIssuing(false);
     }
   }
+
+  /*
+   * If a phone suspended the browser after MetaMask completed the transfer,
+   * recover by proving current escrow ownership. The server accepts ownership
+   * as proof, so no second wallet transaction is needed.
+   */
+  useEffect(() => {
+    if (!restored || step !== 'escrow' || escrowTxHash || !issued) return;
+    let cancelled = false;
+    void confirmGiftCardEscrow(issued, zeroHash)
+      .then((card) => {
+        if (cancelled) return;
+        setIssued(card);
+        clearGiftHandoff();
+        setStep('issued');
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [escrowTxHash, issued, restored, step]);
 
   async function abandonPreparedGift() {
     if (!issued || issuing) return;
@@ -266,22 +297,31 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
             <Button variant="ghost" disabled={issuing} onClick={() => void abandonPreparedGift()}>
               Cancel setup
             </Button>
-            <TxButton
-              block
-              disabled={issuing}
-              action={() =>
-                dataService.transferToken({
-                  tokenId: gem.tokenId!,
-                  to: issued.escrowWallet,
-                })
-              }
-              pendingLabel="Moving into escrow…"
-              telemetryFlow="gift_escrow"
-              doneLabel={issuing ? 'Confirming escrow…' : 'Finish gift card'}
-              onDone={(result) => void finalize(result.hash)}
-            >
-              Transfer to escrow
-            </TxButton>
+            {escrowTxHash ? (
+              <Button block disabled={issuing} onClick={() => void finalize(escrowTxHash)}>
+                {issuing ? 'Confirming escrow…' : 'Retry gift activation'}
+              </Button>
+            ) : (
+              <TxButton
+                block
+                disabled={issuing}
+                action={() =>
+                  dataService.transferToken({
+                    tokenId: gem.tokenId!,
+                    to: issued.escrowWallet,
+                  })
+                }
+                pendingLabel="Moving into escrow…"
+                telemetryFlow="gift_escrow"
+                doneLabel={issuing ? 'Confirming escrow…' : 'Finish gift card'}
+                onDone={(result) => {
+                  setEscrowTxHash(result.hash);
+                  void finalize(result.hash);
+                }}
+              >
+                Transfer to escrow
+              </TxButton>
+            )}
           </div>
         </>
       )}

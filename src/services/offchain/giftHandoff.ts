@@ -1,3 +1,4 @@
+import type { Hash } from 'viem';
 import type { CreatedGiftCard } from './gift';
 
 /**
@@ -24,6 +25,8 @@ interface GiftHandoff {
   recipientEmail?: string;
   message: string;
   template: string;
+  /** Present once the NFT transfer succeeded but activation still needs retrying. */
+  escrowTxHash?: Hash;
   savedAt: number;
 }
 

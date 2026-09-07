@@ -61,6 +61,7 @@ export function RedemptionQueue() {
         <ul className="divide-y divide-line/[0.06]">
           {redemptions.map((redemption) => {
             const isCustodian = connected === redemption.custodian.toLowerCase();
+            const isOwner = connected === redemption.owner.toLowerCase();
             return (
               <li key={redemption.workflowId} className="px-4 py-3.5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -102,16 +103,29 @@ export function RedemptionQueue() {
                         ? 'Confirming burns the token and releases the reserve to you. It cannot be undone — do it once the stone is physically with its owner.'
                         : 'This stone is held by a different custodian, so it cannot be confirmed from the connected wallet.'}
                   </p>
-                  <TxButton
-                    size="sm"
-                    disabled={!isCustodian}
-                    action={() => dataService.confirmRedemption({ tokenId: redemption.tokenId })}
-                    onDone={() => void refetch()}
-                    pendingLabel="Confirming…"
-                    telemetryFlow="redemption_confirm"
-                  >
-                    Confirm handover
-                  </TxButton>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <TxButton
+                      size="sm"
+                      variant="secondary"
+                      disabled={!isOwner && !isCustodian}
+                      action={() => dataService.cancelRedemption({ tokenId: redemption.tokenId })}
+                      onDone={() => void refetch()}
+                      pendingLabel="Cancelling…"
+                      telemetryFlow="redemption_cancel_verify"
+                    >
+                      Cancel redemption
+                    </TxButton>
+                    <TxButton
+                      size="sm"
+                      disabled={!isCustodian}
+                      action={() => dataService.confirmRedemption({ tokenId: redemption.tokenId })}
+                      onDone={() => void refetch()}
+                      pendingLabel="Confirming…"
+                      telemetryFlow="redemption_confirm"
+                    >
+                      Confirm handover
+                    </TxButton>
+                  </div>
                 </div>
               </li>
             );

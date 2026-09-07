@@ -465,7 +465,12 @@ describe('chain transaction construction', () => {
   });
 
   it('constructs both proposer-pays and accepter-pays swap paths', async () => {
-    mocks.readContract.mockResolvedValueOnce(musdc(100));
+    mocks.readContract
+      .mockResolvedValueOnce(musdc(100))
+      .mockResolvedValueOnce(manifest.addresses.Treasury)
+      .mockResolvedValueOnce(manifest.addresses.DGENFT)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false);
     await chainService.createSwap({
       offeredTokenId: 2n,
       requestedTokenId: 3n,
@@ -547,6 +552,26 @@ describe('chain transaction construction', () => {
         args: [10n],
       }),
     );
+  });
+
+  it('rejects a redemption-locked swap before asking the wallet for approval', async () => {
+    mocks.readContract
+      .mockResolvedValueOnce(manifest.addresses.Treasury)
+      .mockResolvedValueOnce(manifest.addresses.DGENFT)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+
+    await expect(
+      chainService.createSwap({
+        offeredTokenId: 9n,
+        requestedTokenId: 3n,
+        paymentAsset: zeroAddress,
+        cashAmountUsd: 0n,
+        proposerPays: false,
+        expiresAt: 2_000_000_000n,
+      }),
+    ).rejects.toThrow(/in redemption/i);
+    expect(mocks.runContractTransaction).not.toHaveBeenCalled();
   });
 
   it('refuses an expired swap before asking the wallet for approval', async () => {

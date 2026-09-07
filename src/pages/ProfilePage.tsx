@@ -25,6 +25,7 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { GiftCardList } from '@/components/gift/GiftCardList';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
+import { isAddressEqual } from 'viem';
 
 const TABS = ['owned', 'bids', 'offers', 'swaps', 'gifts', 'redeem', 'history'] as const;
 type Tab = (typeof TABS)[number];
@@ -49,6 +50,9 @@ export default function ProfilePage() {
     setSearchParams(next === 'owned' ? {} : { tab: next }, { replace: true });
 
   const name = (user?.user_metadata?.full_name as string) || user?.email || 'Guest';
+  const redemptionTokenIds = new Set(
+    (profile?.redemptions ?? []).map((redemption) => redemption.tokenId.toString()),
+  );
 
   /*
    * "Bids" means two different things in this protocol and the old labels did
@@ -205,7 +209,12 @@ export default function ProfilePage() {
                        * A listed token is escrowed by the Marketplace, so there
                        * is nothing here to send until the listing is cancelled.
                        */
-                      g.tokenId && !g.listingSeller ? (
+                      g.tokenId &&
+                      !g.listingSeller &&
+                      !redemptionTokenIds.has(g.tokenId.toString()) &&
+                      address &&
+                      g.owner &&
+                      isAddressEqual(g.owner, address) ? (
                         <Button
                           block
                           size="sm"

@@ -23,14 +23,27 @@ import { PushToggle } from './PushToggle';
 /** Matches the sweep's cadence. Notifications are written hourly at most. */
 const REFRESH_MS = 120_000;
 
-function timeAgo(iso: string): string {
-  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1_000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+/**
+ * Notifications use a stable clock/date rather than a relative label.
+ *
+ * A same-day operational alert needs the exact time ("14:13"); after a day,
+ * the calendar date is more useful and does not keep changing under the user.
+ */
+export function notificationDate(iso: string, now = Date.now()): string {
+  const value = new Date(iso);
+  if (Number.isNaN(value.getTime())) return '';
+  const youngerThanOneDay = now - value.getTime() < 86_400_000;
+  return youngerThanOneDay
+    ? new Intl.DateTimeFormat('en-GB', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(value)
+    : new Intl.DateTimeFormat('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(value);
 }
 
 export function NotificationBell() {
@@ -200,7 +213,7 @@ export function NotificationBell() {
                       {notification.body}
                     </p>
                     <span className="mt-1.5 block text-[10.5px] text-ink-dim">
-                      {timeAgo(notification.createdAt)}
+                      {notificationDate(notification.createdAt)}
                     </span>
                   </>
                 );
