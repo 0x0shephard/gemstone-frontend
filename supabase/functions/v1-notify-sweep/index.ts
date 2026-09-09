@@ -18,7 +18,7 @@ import {
   type OperatorChain,
 } from '../_shared/chain.ts';
 import { scanLogs } from '../_shared/logScan.ts';
-import { notifyWallet } from '../_shared/notify.ts';
+import { notifyWallet, reconcileNotificationProfileLinks } from '../_shared/notify.ts';
 import { TIMED_OUT, phaseLog, withDeadline, type PhaseLog } from '../_shared/deadline.ts';
 
 /**
@@ -378,6 +378,17 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
 
     const head = await chain.logsClient.getBlockNumber();
     mark('chain_head');
+
+    /*
+     * A notification is addressed to a wallet first and only becomes readable
+     * through RLS once that wallet is attached to a profile. SIWE normally does
+     * this backfill immediately, but login intentionally survives a transient
+     * backfill failure. Repair those rows here so a single interrupted mobile
+     * return from the wallet app cannot leave the notification bell empty
+     * forever even though the on-chain event was successfully scanned.
+     */
+    const notificationProfileLinks = await reconcileNotificationProfileLinks(admin);
+    mark('notification_profile_links');
 
     // ---- Marketplace ------------------------------------------------------
     const marketFrom = await cursorFor(admin, 'marketplace', head);
@@ -790,6 +801,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
       notificationsCreated: counters.created,
       emailsSent: counters.emailed,
       pushesSent: counters.pushed,
+      notificationProfileLinks,
       deadlinesChecked: deadlines,
       redemptionRows,
       scannedThroughBlock: {

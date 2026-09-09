@@ -352,3 +352,69 @@ export async function backfillProfileLinks(
     .select('id');
   return data?.length ?? 0;
 }
+
+export interface NotificationProfileLinkReconcileResult {
+  checked: number;
+  linked: number;
+  wallets: number;
+}
+
+/**
+ * Repairs notification rows that were written before their wallet was linked.
+ *
+ * SIWE performs the same repair at link time, but that request is deliberately
+ * best-effort: a transient database failure must not reject an otherwise valid
+ * wallet login. Without a background repair, that one failure leaves every
+ * existing notification for the wallet permanently invisible because the feed
+ * is protected by `profile_id = auth.uid()`.
+ *
+ * The scheduled sweep calls this on every pass, making profile attachment
+ * eventually consistent even when the browser is closed immediately after the
+ * wallet signature or a wallet is linked between two event scans.
+ */
+export async function reconcileNotificationProfileLinks(
+  admin: SupabaseClient,
+  limit = 500,
+): Promise<NotificationProfileLinkReconcileResult> {
+  const { data: pending, error: pendingError } = await admin
+    .from('notifications')
+    .select('wallet_address')
+    .is('profile_id', null)
+    .order('created_at', { ascending: true })
+    .limit(limit);
+  if (pendingError) throw pendingError;
+
+  const wallets = [
+    ...new Set(
+      (pending ?? [])
+        .map((row) => normalizeWallet(String(row.wallet_address ?? '')))
+        .filter((wallet): wallet is string => Boolean(wallet)),
+    ),
+  ];
+  if (wallets.length === 0) return { checked: pending?.length ?? 0, linked: 0, wallets: 0 };
+
+  const { data: links, error: linkError } = await admin
+    .from('wallet_links')
+    .select('wallet_address,profile_id')
+    .in('wallet_address', wallets);
+  if (linkError) throw linkError;
+
+  let linked = 0;
+  await Promise.all(
+    (links ?? []).map(async (link) => {
+      const wallet = normalizeWallet(String(link.wallet_address ?? ''));
+      const profileId = String(link.profile_id ?? '');
+      if (!wallet || !profileId) return;
+      const { data, error } = await admin
+        .from('notifications')
+        .update({ profile_id: profileId })
+        .eq('wallet_address', wallet)
+        .is('profile_id', null)
+        .select('id');
+      if (error) throw error;
+      linked += data?.length ?? 0;
+    }),
+  );
+
+  return { checked: pending?.length ?? 0, linked, wallets: links?.length ?? 0 };
+}
