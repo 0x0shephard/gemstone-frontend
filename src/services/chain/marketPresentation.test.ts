@@ -40,10 +40,18 @@ describe('market presentation', () => {
   });
 
   it('formats six-decimal mock USDC swap adjustments', () => {
-    const descriptor = describePaymentAsset(
-      '0x29f4b1eF7261A372DB73493004CCf6A28175Dc54',
-      '0x29f4b1eF7261A372DB73493004CCf6A28175Dc54',
-    );
+    const address = '0x29f4b1eF7261A372DB73493004CCf6A28175Dc54';
+    const descriptor = describePaymentAsset(address, [
+      {
+        address,
+        symbol: 'mUSDC',
+        name: 'Mock USDC',
+        decimals: 6,
+        isNative: false,
+        enabled: true,
+        usdPrice: 1,
+      },
+    ]);
     expect(formatSwapCash(125_500_000n, 125_500_000_000_000_000_000n, descriptor, false)).toBe(
       'Accepter pays 125.5 mUSDC ($125.5)',
     );

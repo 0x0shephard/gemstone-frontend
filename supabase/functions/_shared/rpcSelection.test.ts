@@ -17,4 +17,10 @@ describe('historical logs RPC selection', () => {
       'https://logs.example',
     );
   });
+
+  it('never sends a production L2 history query to the Sepolia fallback', () => {
+    expect(resolveLogsRpcUrl('https://arbitrum.example', undefined, 42161)).toBe(
+      'https://arbitrum.example',
+    );
+  });
 });

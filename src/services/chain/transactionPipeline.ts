@@ -42,6 +42,7 @@ import {
   recordStepStatus,
   type PendingStep,
 } from './pendingWork';
+import { paymentApprovalAmounts } from './approvalPlan';
 import { getTransactionAuthSnapshot } from '@/providers/authSnapshot';
 import { PreflightTimeoutError, withPreflightTimeout } from './preflight';
 import {
@@ -277,12 +278,11 @@ async function planApproval(
   account: Address,
   approval: Approval,
 ): Promise<
-  | {
-      label: string;
-      send: () => Promise<Hash>;
-      reconcile: () => Promise<Hash | undefined>;
-    }
-  | undefined
+  {
+    label: string;
+    send: () => Promise<Hash>;
+    reconcile: () => Promise<Hash | undefined>;
+  }[]
 > {
   if (approval.kind === 'erc20') {
     const allowance = (await readContract(wagmiConfig, {
@@ -291,17 +291,17 @@ async function planApproval(
       functionName: 'allowance',
       args: [account, approval.spender],
     })) as bigint;
-    if (allowance >= approval.amountOrTokenId) return undefined;
+    if (allowance >= approval.amountOrTokenId) return [];
     const fromBlock = await getBlockNumber(wagmiConfig, { chainId: env.chainId });
-    return {
-      label: 'Approve the payment allowance',
+    const approvalStep = (amount: bigint, label: string) => ({
+      label,
       send: async () => {
         const simulation = await simulateContract(wagmiConfig, {
           account,
           address: approval.token,
           abi: erc20Abi,
           functionName: 'approve',
-          args: [approval.spender, approval.amountOrTokenId],
+          args: [approval.spender, amount],
         });
         return submitPreparedWrite(account, simulation.request);
       },
@@ -312,7 +312,7 @@ async function planApproval(
           functionName: 'allowance',
           args: [account, approval.spender],
         })) as bigint;
-        if (current < approval.amountOrTokenId) return;
+        if (amount === 0n ? current !== 0n : current < amount) return;
         const publicClient = getPublicClient(wagmiConfig, {
           chainId: env.chainId,
         }) as PublicClient;
@@ -323,10 +323,20 @@ async function planApproval(
           fromBlock,
           toBlock: 'latest',
         });
-        return [...logs].reverse().find((log) => (log.args.value ?? 0n) >= approval.amountOrTokenId)
-          ?.transactionHash;
+        return [...logs]
+          .reverse()
+          .find((log) =>
+            amount === 0n ? (log.args.value ?? 0n) === 0n : (log.args.value ?? 0n) >= amount,
+          )?.transactionHash;
       },
-    };
+    });
+
+    return paymentApprovalAmounts(allowance, approval.amountOrTokenId).map((amount) =>
+      approvalStep(
+        amount,
+        amount === 0n ? 'Reset the existing token allowance' : 'Approve the payment allowance',
+      ),
+    );
   }
 
   const approved = (await readContract(wagmiConfig, {
@@ -335,45 +345,47 @@ async function planApproval(
     functionName: 'getApproved',
     args: [approval.amountOrTokenId],
   })) as Address;
-  if (approved.toLowerCase() === approval.spender.toLowerCase()) return undefined;
+  if (approved.toLowerCase() === approval.spender.toLowerCase()) return [];
   const fromBlock = await getBlockNumber(wagmiConfig, { chainId: env.chainId });
-  return {
-    label: 'Approve the gemstone transfer',
-    send: async () => {
-      const simulation = await simulateContract(wagmiConfig, {
-        account,
-        address: approval.token,
-        abi: dgeNftAbi,
-        functionName: 'approve',
-        args: [approval.spender, approval.amountOrTokenId],
-      });
-      return submitPreparedWrite(account, simulation.request);
+  return [
+    {
+      label: 'Approve the gemstone transfer',
+      send: async () => {
+        const simulation = await simulateContract(wagmiConfig, {
+          account,
+          address: approval.token,
+          abi: dgeNftAbi,
+          functionName: 'approve',
+          args: [approval.spender, approval.amountOrTokenId],
+        });
+        return submitPreparedWrite(account, simulation.request);
+      },
+      reconcile: async () => {
+        const current = (await readContract(wagmiConfig, {
+          address: approval.token,
+          abi: dgeNftAbi,
+          functionName: 'getApproved',
+          args: [approval.amountOrTokenId],
+        })) as Address;
+        if (current.toLowerCase() !== approval.spender.toLowerCase()) return;
+        const publicClient = getPublicClient(wagmiConfig, {
+          chainId: env.chainId,
+        }) as PublicClient;
+        const logs = await publicClient.getLogs({
+          address: approval.token,
+          event: erc721ApprovalEvent,
+          args: {
+            owner: account,
+            approved: approval.spender,
+            tokenId: approval.amountOrTokenId,
+          },
+          fromBlock,
+          toBlock: 'latest',
+        });
+        return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
+      },
     },
-    reconcile: async () => {
-      const current = (await readContract(wagmiConfig, {
-        address: approval.token,
-        abi: dgeNftAbi,
-        functionName: 'getApproved',
-        args: [approval.amountOrTokenId],
-      })) as Address;
-      if (current.toLowerCase() !== approval.spender.toLowerCase()) return;
-      const publicClient = getPublicClient(wagmiConfig, {
-        chainId: env.chainId,
-      }) as PublicClient;
-      const logs = await publicClient.getLogs({
-        address: approval.token,
-        event: erc721ApprovalEvent,
-        args: {
-          owner: account,
-          approved: approval.spender,
-          tokenId: approval.amountOrTokenId,
-        },
-        fromBlock,
-        toBlock: 'latest',
-      });
-      return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
-    },
-  };
+  ];
 }
 
 /**
@@ -552,12 +564,12 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       reconcile?: () => Promise<Hash | undefined>;
     }[] = [];
     for (const approval of input.approvals ?? []) {
-      const step = await withPreflightTimeout(
+      const steps = await withPreflightTimeout(
         planApproval(account, approval),
         'The approval check did not respond. Check your connection and try again; no transaction was sent.',
         CHAIN_PREFLIGHT_TIMEOUT_MS,
       );
-      if (step) planned.push({ kind: 'approval', ...step });
+      planned.push(...steps.map((step) => ({ kind: 'approval' as const, ...step })));
     }
 
     const simulateCall = () =>

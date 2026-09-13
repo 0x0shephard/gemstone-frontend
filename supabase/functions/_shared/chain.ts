@@ -1,6 +1,7 @@
 import {
   createPublicClient,
   createWalletClient,
+  defineChain,
   getAddress,
   http,
   parseAbi,
@@ -8,14 +9,13 @@ import {
   type Hash,
 } from 'npm:viem@2';
 import { privateKeyToAccount } from 'npm:viem@2/accounts';
-import { sepolia } from 'npm:viem@2/chains';
 import { resolveLogsRpcUrl } from './rpcSelection.ts';
 
 /**
  * PublicNode accepts wide `eth_getLogs` ranges on Sepolia (the notification
  * bootstrap window is 50,000 blocks). It is used only for read-only history
  * scans when an operator has not supplied a dedicated `LOGS_RPC_URL`; signed
- * transactions continue to use `SEPOLIA_RPC_URL`.
+ * transactions continue to use the configured deployment RPC.
  *
  * Falling back to the operator RPC is not a safe default here. Its plan may cap
  * log queries at ten blocks, and a scanner at that width falls farther behind
@@ -25,6 +25,34 @@ function requiredEnv(name: string): string {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`${name} is not configured`);
   return value;
+}
+
+function deploymentEnv(name: string, legacyName: string): string {
+  const value = Deno.env.get(name)?.trim() || Deno.env.get(legacyName)?.trim();
+  if (!value) throw new Error(`${name} is not configured`);
+  return value;
+}
+
+function configuredChain(rpcUrl: string) {
+  const chainId = Number(Deno.env.get('CHAIN_ID') ?? 11155111);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) {
+    throw new Error('CHAIN_ID must be a positive integer');
+  }
+  const explorerUrl = Deno.env.get('EXPLORER_BASE_URL')?.trim();
+  const chain = defineChain({
+    id: chainId,
+    name: Deno.env.get('CHAIN_NAME')?.trim() || `EVM chain ${chainId}`,
+    nativeCurrency: {
+      name: Deno.env.get('NATIVE_CURRENCY_NAME')?.trim() || 'Ether',
+      symbol: Deno.env.get('NATIVE_CURRENCY_SYMBOL')?.trim() || 'ETH',
+      decimals: 18,
+    },
+    rpcUrls: { default: { http: [rpcUrl] } },
+    blockExplorers: explorerUrl
+      ? { default: { name: 'Block explorer', url: explorerUrl } }
+      : undefined,
+  });
+  return { chain, chainId };
 }
 
 function requiredAddress(name: string): Address {
@@ -146,6 +174,7 @@ export function swapEscrowAddress(): Address {
 }
 
 export interface OperatorChain {
+  chainId: number;
   account: ReturnType<typeof privateKeyToAccount>;
   publicClient: ReturnType<typeof createPublicClient>;
   /**
@@ -169,14 +198,18 @@ export interface OperatorChain {
 }
 
 export function operatorChain(): OperatorChain {
-  const rpcUrl = requiredEnv('SEPOLIA_RPC_URL');
-  const privateKey = requiredEnv('SEPOLIA_OPERATOR_PRIVATE_KEY') as `0x${string}`;
+  const rpcUrl = deploymentEnv('RPC_URL', 'SEPOLIA_RPC_URL');
+  const privateKey = deploymentEnv(
+    'OPERATOR_PRIVATE_KEY',
+    'SEPOLIA_OPERATOR_PRIVATE_KEY',
+  ) as `0x${string}`;
+  const { chain, chainId } = configuredChain(rpcUrl);
   const account = privateKeyToAccount(privateKey);
   const transport = http(rpcUrl, { retryCount: 3, timeout: 30_000 });
   // A dedicated operator value wins. The public fallback is deliberately
   // separate from the write RPC because only log scans need wide ranges and no
   // private key or signed payload is ever sent to it.
-  const logsRpcUrl = resolveLogsRpcUrl(rpcUrl, Deno.env.get('LOGS_RPC_URL'));
+  const logsRpcUrl = resolveLogsRpcUrl(rpcUrl, Deno.env.get('LOGS_RPC_URL'), chainId);
   /*
    * Fails fast, unlike the write transport.
    *
@@ -192,10 +225,11 @@ export function operatorChain(): OperatorChain {
    */
   const logsTransport = http(logsRpcUrl, { retryCount: 1, timeout: 8_000 });
   return {
+    chainId,
     account,
-    publicClient: createPublicClient({ chain: sepolia, transport }),
-    logsClient: createPublicClient({ chain: sepolia, transport: logsTransport }),
-    walletClient: createWalletClient({ account, chain: sepolia, transport }),
+    publicClient: createPublicClient({ chain, transport }),
+    logsClient: createPublicClient({ chain, transport: logsTransport }),
+    walletClient: createWalletClient({ account, chain, transport }),
     addresses: {
       registry: requiredAddress('GEM_REGISTRY_ADDRESS'),
       primarySale: requiredAddress('PRIMARY_SALE_AUCTION_ADDRESS'),
@@ -211,11 +245,11 @@ export async function assertOperatorChain(chain: OperatorChain): Promise<void> {
     chain.publicClient.getCode({ address: chain.addresses.registry }),
     chain.publicClient.getCode({ address: chain.addresses.primarySale }),
   ]);
-  if (chainId !== sepolia.id) {
-    throw new Error(`Seller automation requires Sepolia; RPC returned chain ${chainId}`);
+  if (chainId !== chain.chainId) {
+    throw new Error(`Operator RPC returned chain ${chainId}; expected ${chain.chainId}`);
   }
   if (chain.deploymentBlock > blockNumber) {
-    throw new Error('Deployment block is ahead of the current Sepolia block');
+    throw new Error('Deployment block is ahead of the current chain block');
   }
   if (!registryCode || registryCode === '0x' || !primarySaleCode || primarySaleCode === '0x') {
     throw new Error('Seller automation contract configuration is invalid');

@@ -80,7 +80,7 @@ import { requireDeploymentManifest } from '@/config/contracts';
 import { chainService } from './chainService';
 
 const manifest = requireDeploymentManifest();
-const usdc = manifest.usdc;
+const usdc = manifest.usdc!;
 const usd = (value: number) => BigInt(value) * 10n ** 18n;
 const musdc = (value: number) => BigInt(value) * 10n ** 6n;
 const txResult = { hash: `0x${'1'.repeat(64)}` as const, status: 'success' as const };
@@ -116,6 +116,44 @@ beforeEach(() => {
       cached: false,
       partiallySynced: false,
     },
+  });
+});
+
+describe('chain payment-asset reads', () => {
+  it('discovers the deployment payment assets from the on-chain registry', async () => {
+    mocks.readContract.mockImplementation(
+      async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+        if (functionName === 'paymentTokenCount') return 2n;
+        if (functionName === 'paymentTokenAt') return args?.[0] === 0n ? zeroAddress : usdc;
+        if (functionName === 'isEnabled') return true;
+        if (functionName === 'quoteTokenToUsd') return usd(1);
+        if (functionName === 'symbol') return 'USDC';
+        if (functionName === 'name') return 'USD Coin';
+        if (functionName === 'decimals') return 6;
+        throw new Error(`Unexpected read: ${functionName}`);
+      },
+    );
+
+    await expect(chainService.getPaymentAssets()).resolves.toEqual([
+      {
+        address: zeroAddress,
+        symbol: 'ETH',
+        name: 'Sepolia Ether',
+        decimals: 18,
+        isNative: true,
+        enabled: true,
+        usdPrice: 1,
+      },
+      {
+        address: usdc,
+        symbol: 'USDC',
+        name: 'USD Coin',
+        decimals: 6,
+        isNative: false,
+        enabled: true,
+        usdPrice: 1,
+      },
+    ]);
   });
 });
 

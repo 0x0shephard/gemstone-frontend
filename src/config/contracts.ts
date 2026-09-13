@@ -56,7 +56,8 @@ export interface DeploymentManifest {
   deploymentBlock: bigint;
   addresses: Record<ContractModule, Address>;
   nativeAsset: Address;
-  usdc: Address;
+  /** Legacy fallback used only before a registry has enumerable payment assets. */
+  usdc?: Address;
 }
 
 const missing = contractModules
@@ -67,8 +68,7 @@ export const deploymentErrors = [
   ...environmentErrors,
   ...(env.deploymentBlock === undefined ? ['VITE_DEPLOYMENT_BLOCK is required'] : []),
   ...missing.map((key) => `${key} must be a valid address`),
-  ...(usdcAddress ? [] : ['VITE_USDC_ADDRESS must be a valid address']),
-  ...(env.dataMode === 'chain' && !musdcFaucetAddress
+  ...(env.dataMode === 'chain' && env.chainId === 11155111 && !musdcFaucetAddress
     ? ['VITE_MUSDC_FAUCET_ADDRESS must be a valid Sepolia faucet address']
     : []),
 ];
@@ -81,7 +81,7 @@ export const deploymentManifest: DeploymentManifest | undefined =
         deploymentBlock: env.deploymentBlock!,
         addresses: contractAddresses as Record<ContractModule, Address>,
         nativeAsset: NATIVE_ASSET,
-        usdc: usdcAddress!,
+        usdc: usdcAddress,
       }
     : undefined;
 

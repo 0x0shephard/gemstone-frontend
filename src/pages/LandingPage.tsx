@@ -27,22 +27,33 @@ const STEP_ACTORS = [
 
 const CUSTODY_BENEFITS = [
   {
-    title: 'Trade ownership safely',
-    body: 'Buy or sell the token while the specific gemstone remains protected in third-party custody.',
+    title: 'Trade with confidence',
+    body: 'Each gemstone is held in a secure vault and remains protected from independent valuation onward.',
   },
   {
     title: 'Redeem the gemstone',
-    body: 'Start a verified fulfilment process whenever you decide to take possession of the physical stone.',
+    body: 'Token owners can request redemption at any time and receive the physical gemstone represented by their token.',
   },
 ];
 
 const REDEMPTION_STEPS: [string, string, boolean?][] = [
-  ['Reserve checked', 'The stone must be fully reserved before delivery can open.'],
-  ['Compliance checked', 'Your address must be cleared to redeem.'],
-  ['Token locked', 'Transfers stop. The token cannot be sold while delivery is open.'],
-  ['Custodian confirms', 'The vault hands the stone over and confirms it on-chain.'],
-  ['Token burned', 'The claim is destroyed permanently. You keep the stone.', true],
+  ['Reserve confirmed', 'The token reserve is checked to ensure redemption costs are covered.'],
+  ['Compliance cleared', 'Your wallet address is verified and approved for redemption.'],
+  ['Token locked', 'The token can no longer be traded while redemption is in progress.'],
+  ['Gemstone released', 'The custodian releases the gemstone and confirms handover on-chain.'],
+  [
+    'Token burned',
+    'The digital claim is permanently destroyed after the gemstone is released.',
+    true,
+  ],
 ];
+
+const RESERVE_COSTS = [
+  ['Vault fees', '0.05% per month'],
+  ['Insurance fees', '0.1% per month'],
+  ['Transaction costs', 'Quoted to the initiating party'],
+  ['Redemption costs', 'Covered before physical release'],
+] as const;
 
 export default function LandingPage() {
   const { data } = useLanding();
@@ -68,11 +79,10 @@ export default function LandingPage() {
             {data?.gemsInVault ?? 148} stones under custody
           </div>
           <h1 className="max-w-[14ch] font-display text-[43px] font-medium leading-[0.98] tracking-[-0.055em] text-ink sm:text-[54px] md:text-[66px]">
-            Trade gemstones. Secure your claim.
+            Trade gemstones. Own them securely.
           </h1>
           <p className="mt-6 max-w-xl text-[15px] leading-[1.75] text-ink-muted sm:text-[16px]">
-            A Digital Carat token represents a specific gemstone held in secure, third-party custody
-            at a partner bank.
+            Each Digital Carat token represents a specific, verified gemstone.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <Link to="/marketplace" className="w-full sm:w-auto">
@@ -136,11 +146,11 @@ export default function LandingPage() {
         <div className="mx-auto grid max-w-content gap-8 px-6 py-10 md:grid-cols-[0.8fr_1.2fr] md:px-10 md:py-12">
           <div data-reveal>
             <h2 className="max-w-[18ch] font-display text-[24px] font-medium tracking-[-0.03em] text-ink md:text-[28px]">
-              Custody protects both paths
+              Secure custody
             </h2>
             <p className="mt-3 max-w-[48ch] text-[13.5px] leading-relaxed text-ink-muted">
-              Independent custody keeps the physical gemstone secure while its owner decides whether
-              to trade the token or redeem the stone.
+              Third-party custody protects buyers and sellers, ensuring every token remains securely
+              linked to its gemstone.
             </p>
           </div>
           <div
@@ -154,22 +164,6 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-2 border-t border-line/[0.07] pt-6 sm:grid-cols-4 md:col-span-2">
-            {data?.trustSignals.map((signal) => (
-              <div
-                key={signal.title}
-                className="border-line/[0.065] py-3 pr-3 sm:border-r sm:px-4 sm:first:pl-0 sm:last:border-r-0"
-              >
-                <span
-                  aria-hidden
-                  className="mb-2 block h-1 w-5 rounded-full"
-                  style={{ background: signal.color }}
-                />
-                <div className="text-[11.5px] font-semibold text-ink-soft">{signal.title}</div>
-                <div className="mt-0.5 text-[10.5px] leading-snug text-ink-dim">{signal.sub}</div>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
 
@@ -180,9 +174,8 @@ export default function LandingPage() {
             Lifecycle of the Token
           </h2>
           <p className="mt-3 max-w-[72ch] text-[14px] leading-relaxed text-ink-muted">
-            Before a gemstone can be minted as an ERC-721 token, the seller completes KYC, an
-            approved custodian receives the stone, and a professional laboratory verifies its
-            characteristics and valuation.
+            Before a gemstone becomes a Digital Carat token, it follows a structured process that
+            verifies its source, characteristics, value, and secure custody.
           </p>
         </div>
         <div
@@ -227,27 +220,29 @@ export default function LandingPage() {
       <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
         <div data-reveal className="mb-9">
           <h2 className="max-w-[26ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            How the reserve value at minting works
+            How the reserve works
           </h2>
           <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
-            A reserve margin is added to the gemstone&apos;s approved value and funded when the
-            token is minted. It supports eligible custody, insurance, swap, and redemption costs
-            carried by that gemstone throughout its token lifecycle.
+            When a gemstone is first tokenized, a reserve is added to its approved value to cover
+            eligible costs throughout the token lifecycle.
           </p>
         </div>
         <div data-reveal className="grid gap-6 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
           <div className="rounded-[4px] border border-line/[0.08] bg-card p-6">
             <h3 className="font-display text-[16px] font-medium text-ink">
-              One reserve, several costs
+              One reserve, multiple costs
             </h3>
-            <p className="mt-3 text-[12.5px] leading-relaxed text-ink-muted">
-              The reserve remains attached to the gemstone&apos;s protocol record. At redemption,
-              the custodian confirms physical handover before the token burns and remaining reserve
-              assets are released under the active contract rules.
-            </p>
-            <p className="mt-4 border-l border-atelier/45 pl-3 text-[11.5px] leading-relaxed text-ink-dim">
-              The transaction quote is authoritative. It calculates any reserve shortfall from the
-              live contract before a buyer signs.
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+              {RESERVE_COSTS.map(([label, value]) => (
+                <div key={label} className="border-l border-atelier/45 pl-3">
+                  <dt className="text-[11.5px] font-semibold text-ink">{label}</dt>
+                  <dd className="mt-0.5 text-[11.5px] leading-relaxed text-ink-dim">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-5 text-[11.5px] leading-relaxed text-ink-muted">
+              At redemption, the custodian confirms physical handover before the token burns. The
+              reserve is then released under the active on-chain rules.
             </p>
           </div>
           <div className="overflow-hidden rounded-[4px] border border-line/[0.08] bg-card">
@@ -320,12 +315,12 @@ export default function LandingPage() {
         <div className="grid items-center gap-11 lg:grid-cols-2">
           <div data-reveal>
             <h2 className="max-w-[22ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-              Ask for the stone and the token stops existing
+              Turn your digital claim into a physical gemstone
             </h2>
             <p className="mt-3 max-w-[56ch] text-[14px] leading-relaxed text-ink-muted">
-              A Digital Carat token is a claim, not a souvenir. When you want the physical gemstone
-              the token locks, the custodian ships, and the claim is burned. There is no version of
-              this where you keep both.
+              Every token is backed by a specific gemstone. When you request it, the token locks,
+              the custodian releases the stone, and the token is permanently burned. The claim
+              becomes the stone.
             </p>
             <Link to="/redeem" className="mt-6 inline-block">
               <Button variant="secondary">How redemption works</Button>

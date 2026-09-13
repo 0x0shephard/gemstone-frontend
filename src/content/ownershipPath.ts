@@ -7,47 +7,50 @@ import type { HowStep } from '@/services/types';
 export const ownershipPathSteps: readonly HowStep[] = [
   {
     num: '01',
-    title: 'KYC, Gemological Review and Custody',
-    body: 'After the seller completes KYC, an approved custodian receives the gemstone and a professional laboratory grades it against the Digital Carat valuation matrix.',
+    title: 'Verification, Valuation and Custody',
+    body: 'Every seller completes KYC to verify their identity and the legitimate sourcing of the gemstone.',
     points: [
-      'The lab records the gemstone characteristics and approved valuation.',
-      'An approved stone opens a 24-hour auction at that valuation.',
+      'Gemmological review: a professional laboratory independently assesses and records the gemstone characteristics.',
+      'Valuation: the laboratory assessment establishes a proposed price for the seller to review and approve.',
+      'Custodian vault: the approved gemstone moves into secure third-party custody before it is listed.',
     ],
   },
   {
     num: '02',
-    title: 'Auction and Minting',
-    body: 'Auctions run in repeating 24-hour cycles. The highest qualifying bid wins when a cycle closes, and settlement mints the ERC-721 token to the winner.',
+    title: 'Auction and Token Minting',
+    body: 'The approved valuation becomes the gemstone auction floor. Auctions run in repeating 24-hour cycles and the highest qualifying bid wins.',
     points: [
-      'The approved valuation is the auction floor.',
-      'A cycle with no qualifying bid can reopen for another 24 hours.',
+      'If no qualifying bid is received, the auction can open for another 24-hour cycle.',
+      'A successful auction mints a unique ERC-721 token on Ethereum to the winner.',
     ],
   },
   {
     num: '03',
     title: 'Trading the Token',
-    body: 'A minted token can be listed at an owner-selected price. A qualifying bid starts a 24-hour secondary auction, while an unlisted token can receive a timed offer or token-for-token swap.',
+    body: 'Once minted, a Digital Carat token can be sold, held, or swapped through the marketplace and portfolio.',
     points: [
-      'Listed-token auctions transfer to the highest bidder automatically at expiry.',
-      'Completed activity remains available in portfolio history.',
+      'Sell: list the token at a chosen price. A qualifying bid starts a 24-hour auction and the highest bidder wins.',
+      'Hold: keep the token in your portfolio and receive bids from other users.',
+      'Swap: propose or receive exchanges with other token holders and respond through the swaps page.',
+      'Each token keeps a transaction history that includes previous bids and swaps.',
     ],
   },
   {
     num: '04',
-    title: 'Redemption',
-    body: 'The token owner requests redemption, chooses collection or insured delivery, and confirms the fulfilment details. The token locks while the custodian prepares the gemstone.',
+    title: 'Redeeming the Gemstone',
+    body: 'Token holders can redeem the physical gemstone represented by their token at any time by selecting Redeem and confirming the fulfilment details.',
     points: [
-      'The custodian confirms only after physical handover.',
-      'Confirmation burns the token permanently and completes the claim.',
+      'The third-party custodian arranges collection or secure, insured delivery of the gemstone.',
+      'Once handover is confirmed, the corresponding token is permanently burned.',
     ],
   },
   {
     num: '05',
     title: 'Payments',
-    body: 'Payments use the assets enabled in the protocol registry. The current Sepolia deployment supports ETH and mock USDC, and every transaction shows the selected asset before signing.',
+    body: 'Digital Carat supports native ETH and registry-approved stablecoin payments. The current Sepolia deployment uses mock USDC for stablecoin testing.',
     points: [
       'Native ETH payments need no token approval.',
-      'ERC-20 payments request approval before the transaction.',
+      'Stablecoin payments request an ERC-20 approval before the transaction.',
     ],
   },
 ];

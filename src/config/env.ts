@@ -35,6 +35,10 @@ const supabaseUrl = z
 const schema = z.object({
   VITE_DATA_MODE: z.enum(['mock', 'chain']).default('mock'),
   VITE_CHAIN_ID: z.coerce.number().int().positive().default(11155111),
+  VITE_CHAIN_NAME: z.string().trim().default(''),
+  VITE_NATIVE_CURRENCY_NAME: z.string().trim().default('Ether'),
+  VITE_NATIVE_CURRENCY_SYMBOL: z.string().trim().default('ETH'),
+  VITE_NATIVE_CURRENCY_DECIMALS: z.coerce.number().int().min(0).max(18).default(18),
   VITE_DEPLOYMENT_BLOCK: z.coerce.bigint().nonnegative().optional(),
   VITE_RPC_URL: optionalUrl.default(''),
   VITE_RPC_FALLBACK_URL: optionalUrl.default(''),
@@ -60,6 +64,10 @@ const values = parsed.success ? parsed.data : schema.parse({});
 export const env = {
   dataMode: values.VITE_DATA_MODE,
   chainId: values.VITE_CHAIN_ID,
+  chainName: values.VITE_CHAIN_NAME,
+  nativeCurrencyName: values.VITE_NATIVE_CURRENCY_NAME,
+  nativeCurrencySymbol: values.VITE_NATIVE_CURRENCY_SYMBOL,
+  nativeCurrencyDecimals: values.VITE_NATIVE_CURRENCY_DECIMALS,
   deploymentBlock: values.VITE_DEPLOYMENT_BLOCK,
   rpcUrl: values.VITE_RPC_URL,
   rpcFallbackUrl: values.VITE_RPC_FALLBACK_URL,

@@ -5,6 +5,7 @@ import {
   formatUnits,
   isAddress,
   isAddressEqual,
+  parseAbi,
   parseAbiItem,
   zeroAddress,
   zeroHash,
@@ -88,6 +89,11 @@ type RegistryGem = readonly [Address, Address, string, Hash, bigint, bigint, Has
 };
 
 const manifest: DeploymentManifest = requireDeploymentManifest();
+const erc20MetadataAbi = parseAbi([
+  'function name() view returns (string)',
+  'function symbol() view returns (string)',
+  'function decimals() view returns (uint8)',
+]);
 /*
  * Pinned to the chain the app targets, never to the one the wallet happens to be
  * on. `getPublicClient` without a chain follows the connection, which was
@@ -489,16 +495,59 @@ function paymentParams(
 }
 
 async function getPaymentAssets(): Promise<PaymentAsset[]> {
-  const candidates = [
-    { address: NATIVE_ASSET, symbol: 'ETH' as const, name: 'Ether', decimals: 18, isNative: true },
-    {
-      address: manifest.usdc,
-      symbol: 'mUSDC',
-      name: 'Digital Carat Mock USDC',
-      decimals: 6,
-      isNative: false,
-    },
+  let addresses: Address[];
+  try {
+    const count = (await client.readContract({
+      ...contract('PaymentTokenRegistry'),
+      functionName: 'paymentTokenCount',
+    })) as bigint;
+    if (count > 32n) throw new Error('Payment-token registry exceeds the client safety limit.');
+    addresses = await Promise.all(
+      Array.from(
+        { length: Number(count) },
+        (_, index) =>
+          client.readContract({
+            ...contract('PaymentTokenRegistry'),
+            functionName: 'paymentTokenAt',
+            args: [BigInt(index)],
+          }) as Promise<Address>,
+      ),
+    );
+  } catch {
+    // V1 proxies are supported during the upgrade window. Production clients
+    // should use registry enumeration; the optional env token is legacy only.
+    addresses = [NATIVE_ASSET, ...(manifest.usdc ? [manifest.usdc] : [])];
+  }
+
+  const uniqueAddresses = [
+    ...new Map(addresses.map((address) => [address.toLowerCase(), address])).values(),
   ];
+  const candidates = await Promise.all(
+    uniqueAddresses.map(async (address) => {
+      const isNative = address === NATIVE_ASSET;
+      if (isNative) {
+        return {
+          address,
+          symbol: activeChain.nativeCurrency.symbol,
+          name: activeChain.nativeCurrency.name,
+          decimals: activeChain.nativeCurrency.decimals,
+          isNative,
+        };
+      }
+      const [symbol, name, decimals] = await Promise.all([
+        client
+          .readContract({ address, abi: erc20MetadataAbi, functionName: 'symbol' })
+          .catch(() => 'TOKEN') as Promise<string>,
+        client
+          .readContract({ address, abi: erc20MetadataAbi, functionName: 'name' })
+          .catch(() => 'ERC-20 token') as Promise<string>,
+        client
+          .readContract({ address, abi: erc20MetadataAbi, functionName: 'decimals' })
+          .catch(() => 18) as Promise<number>,
+      ]);
+      return { address, symbol, name, decimals: Number(decimals), isNative };
+    }),
+  );
   return Promise.all(
     candidates.map(async (asset) => {
       const enabled = (await client
@@ -730,7 +779,7 @@ async function getOffers(): Promise<Offer[]> {
 }
 
 async function getSwaps(): Promise<SwapRequest[]> {
-  const snapshot = await projection();
+  const [snapshot, paymentAssets] = await Promise.all([projection(), getPaymentAssets()]);
   const createdEvents = snapshot.events.filter(
     (event) => event.module === 'SwapEscrow' && event.eventName === 'OfferCreated',
   );
@@ -794,7 +843,7 @@ async function getSwaps(): Promise<SwapRequest[]> {
       const cashAmount = state[4] || (created.args.cashAmount as bigint);
       const proposerPays = state[7] ? state[5] : (created.args.proposerPaysCash as boolean);
       const cashAsset = state[3] || (created.args.cashAsset as Address);
-      const cashDescriptor = describePaymentAsset(cashAsset, manifest.usdc);
+      const cashDescriptor = describePaymentAsset(cashAsset, paymentAssets);
       const cashUsd =
         cashAmount === 0n
           ? 0n

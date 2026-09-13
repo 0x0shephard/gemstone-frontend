@@ -1,15 +1,51 @@
-import { sepolia, mainnet, hardhat } from 'wagmi/chains';
-import type { Chain } from 'viem';
+import {
+  arbitrum,
+  arbitrumSepolia,
+  base,
+  baseSepolia,
+  hardhat,
+  mainnet,
+  optimism,
+  optimismSepolia,
+  polygon,
+  sepolia,
+} from 'wagmi/chains';
+import { defineChain, type Chain } from 'viem';
 import { env } from './env';
 
 const KNOWN: Record<number, Chain> = {
   [sepolia.id]: sepolia,
   [mainnet.id]: mainnet,
   [hardhat.id]: hardhat,
+  [arbitrum.id]: arbitrum,
+  [arbitrumSepolia.id]: arbitrumSepolia,
+  [base.id]: base,
+  [baseSepolia.id]: baseSepolia,
+  [optimism.id]: optimism,
+  [optimismSepolia.id]: optimismSepolia,
+  [polygon.id]: polygon,
 };
 
-/** The chain the app targets, chosen by VITE_CHAIN_ID (default Sepolia). */
-export const activeChain: Chain = KNOWN[env.chainId] ?? sepolia;
+function customChain(): Chain {
+  const rpcUrl = env.rpcUrl || env.rpcFallbackUrl || 'http://127.0.0.1:8545';
+  const explorerUrl = env.explorerBaseUrl || undefined;
+  return defineChain({
+    id: env.chainId,
+    name: env.chainName || `EVM chain ${env.chainId}`,
+    nativeCurrency: {
+      name: env.nativeCurrencyName,
+      symbol: env.nativeCurrencySymbol,
+      decimals: env.nativeCurrencyDecimals,
+    },
+    rpcUrls: { default: { http: [rpcUrl] } },
+    blockExplorers: explorerUrl
+      ? { default: { name: `${env.chainName || 'Chain'} explorer`, url: explorerUrl } }
+      : undefined,
+  });
+}
+
+/** The configured target, including arbitrary EVM-compatible production L2s. */
+export const activeChain: Chain = KNOWN[env.chainId] ?? customChain();
 
 /**
  * The chain the app targets, plus the ones a wallet is likely to arrive on.

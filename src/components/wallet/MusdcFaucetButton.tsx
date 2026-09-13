@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { explorerTxUrl } from '@/config/chains';
+import { activeChain, explorerTxUrl } from '@/config/chains';
+import { musdcFaucetAddress } from '@/config/contracts';
 import { shortenAddress } from '@/lib/format';
 import { captureProductEvent } from '@/lib/telemetry';
 import { claimMockUsdc } from '@/services/chain/musdcFaucet';
@@ -24,6 +25,8 @@ export function MusdcFaucetButton({ compact, className }: MusdcFaucetButtonProps
     const timer = window.setTimeout(() => setState('idle'), 8_000);
     return () => window.clearTimeout(timer);
   }, [state]);
+
+  if (activeChain.id !== 11155111 || !musdcFaucetAddress) return null;
 
   async function claim() {
     setState('pending');

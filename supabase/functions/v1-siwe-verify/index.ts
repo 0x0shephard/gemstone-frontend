@@ -1,5 +1,11 @@
-import { createPublicClient, getAddress, http, type Address, type Hex } from 'npm:viem@2';
-import { sepolia } from 'npm:viem@2/chains';
+import {
+  createPublicClient,
+  defineChain,
+  getAddress,
+  http,
+  type Address,
+  type Hex,
+} from 'npm:viem@2';
 import { parseSiweMessage, verifySiweMessage } from 'npm:viem@2/siwe';
 import { adminClient, audit, requireUser, sha256 } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/cors.ts';
@@ -30,8 +36,18 @@ Deno.serve(async (request) => {
 
     const rpcUrl = Deno.env.get('SIWE_RPC_URL');
     if (!rpcUrl) return json({ error: 'SIWE RPC is not configured' }, 503);
+    const chain = defineChain({
+      id: expectedChain,
+      name: Deno.env.get('CHAIN_NAME')?.trim() || `EVM chain ${expectedChain}`,
+      nativeCurrency: {
+        name: Deno.env.get('NATIVE_CURRENCY_NAME')?.trim() || 'Ether',
+        symbol: Deno.env.get('NATIVE_CURRENCY_SYMBOL')?.trim() || 'ETH',
+        decimals: 18,
+      },
+      rpcUrls: { default: { http: [rpcUrl] } },
+    });
     const publicClient = createPublicClient({
-      chain: sepolia,
+      chain,
       transport: http(rpcUrl),
     });
     const verified = await verifySiweMessage(publicClient, {

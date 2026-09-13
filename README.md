@@ -149,9 +149,10 @@ npx supabase db push
 npx supabase secrets set \
   SITE_ORIGIN=http://localhost:5173 \
   CHAIN_ID=11155111 \
-  SEPOLIA_RPC_URL=... \
+  CHAIN_NAME=Sepolia \
+  RPC_URL=... \
   LOGS_RPC_URL=... \
-  SEPOLIA_OPERATOR_PRIVATE_KEY=... \
+  OPERATOR_PRIVATE_KEY=... \
   GEM_REGISTRY_ADDRESS=0x... \
   PRIMARY_SALE_AUCTION_ADDRESS=0x... \
   DEPLOYMENT_BLOCK=... \
@@ -246,7 +247,7 @@ scheduled workflow drains resumable notification passes until all four contract 
 chain head and fails visibly if they do not.
 
 Both are listed with `verify_jwt = false` in [`supabase/config.toml`](./supabase/config.toml).
-Without that the platform rejects a scheduler with `401` *before* the function runs, which is
+Without that the platform rejects a scheduler with `401` _before_ the function runs, which is
 indistinguishable from a working cron that does nothing — the secret each function checks itself is
 the actual authorization. A scheduler therefore needs only:
 
@@ -261,11 +262,12 @@ Running it is idempotent — bids are keyed by transaction hash and log index, s
 cannot double count. Until it runs, every market multiplier resolves to a neutral 1.0 and stones are
 priced on base value alone, which is correct behaviour rather than a failure.
 
-`SEPOLIA_OPERATOR_PRIVATE_KEY` is a server-only testnet signer. Never prefix it with `VITE_`, expose
-it to the browser, or reuse it for mainnet. The signer must hold the deployed registry compliance,
-lister, custodian, and verifier roles plus the primary-sale lister role. Seller activation is
-resumable and records every step transaction hash so retries do not intentionally register a second
-gem.
+`OPERATOR_PRIVATE_KEY` is a server-only deployment signer. Never prefix it with `VITE_`, expose it
+to the browser, or reuse the Sepolia test key in production. The legacy
+`SEPOLIA_OPERATOR_PRIVATE_KEY` and `SEPOLIA_RPC_URL` names remain accepted so the current testnet can
+be upgraded without downtime. The signer must hold the deployed registry compliance, lister,
+custodian, and verifier roles plus the primary-sale lister role. Seller activation is resumable and
+records every step transaction hash so retries do not intentionally register a second gem.
 
 The Sumsub token and webhook sources are retained for the later integration, but they are not part
 of the MVP deployment above. Replace `SITE_ORIGIN` with the stable Netlify origin before deploying
@@ -276,6 +278,12 @@ an Alchemy Sepolia endpoint. An explicit shell, CI, or Netlify `VITE_RPC_URL` va
 The RPC credential is never copied into this repository. Chain mode keeps that endpoint first, then
 uses `VITE_RPC_FALLBACK_URL` and the public Sepolia transport if the preferred endpoint is unavailable.
 This is RPC failover for the same chain state; the app never substitutes mock data.
+
+For Arbitrum, Base, Optimism, Polygon, or another EVM-compatible L2, set `CHAIN_ID`, `RPC_URL`, and
+the matching contract addresses in the Edge Functions, and set their `VITE_` equivalents in the
+frontend build. Unknown chain IDs additionally require `CHAIN_NAME`, native-currency fields, and
+`EXPLORER_BASE_URL`. Payment assets are read from the deployed `PaymentTokenRegistry`; do not carry
+the Sepolia mUSDC or faucet address into production.
 
 ### Google authentication setup
 

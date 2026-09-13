@@ -13,10 +13,17 @@ const canonicalRpcUrl = (value: string) => value.trim().replace(/\/+$/, '');
 export function resolveLogsRpcUrl(
   operatorRpcUrl: string,
   configuredLogsRpcUrl?: string | null,
+  chainId = 11155111,
 ): string {
   const configured = configuredLogsRpcUrl?.trim();
-  if (!configured || canonicalRpcUrl(configured) === canonicalRpcUrl(operatorRpcUrl)) {
+  if (configured && canonicalRpcUrl(configured) !== canonicalRpcUrl(operatorRpcUrl)) {
+    return configured;
+  }
+  if (chainId === 11155111) {
     return DEFAULT_LOGS_RPC_URL;
   }
-  return configured;
+  // A Sepolia endpoint cannot safely be used for another deployment. When an
+  // L2 has no dedicated historical endpoint, use its configured RPC and keep
+  // the chain correct even if the provider needs smaller scan windows.
+  return operatorRpcUrl;
 }

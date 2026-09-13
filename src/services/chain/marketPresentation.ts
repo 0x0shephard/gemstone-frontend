@@ -1,16 +1,22 @@
 import { formatUnits, type Address } from 'viem';
 import { NATIVE_ASSET } from '@/config/contracts';
 import type { ProjectedEvent } from './projection';
-import type { Auction, SwapRequest } from '../types';
+import type { Auction, PaymentAsset, SwapRequest } from '../types';
 
 export interface AssetDescriptor {
   symbol: string;
   decimals: number;
 }
 
-export function describePaymentAsset(asset: Address, mockUsdc: Address): AssetDescriptor {
+export function describePaymentAsset(
+  asset: Address,
+  knownAssets: readonly PaymentAsset[] = [],
+): AssetDescriptor {
+  const known = knownAssets.find(
+    (candidate) => candidate.address.toLowerCase() === asset.toLowerCase(),
+  );
+  if (known) return { symbol: known.symbol, decimals: known.decimals };
   if (asset === NATIVE_ASSET) return { symbol: 'ETH', decimals: 18 };
-  if (asset.toLowerCase() === mockUsdc.toLowerCase()) return { symbol: 'mUSDC', decimals: 6 };
   return { symbol: 'token', decimals: 18 };
 }
 
