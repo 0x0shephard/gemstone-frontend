@@ -220,92 +220,124 @@ export default function LandingPage() {
 
       {/* Reserve model */}
       <section className="mx-auto max-w-content border-t border-line/[0.06] px-6 py-20 md:px-10">
-        <div data-reveal className="mb-9">
-          <h2 className="max-w-[26ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
-            How the reserve works
-          </h2>
-          <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
-            When a gemstone is first tokenized, a reserve is added to its approved value:
-          </p>
-          <p className="mt-3 font-mono text-[12px] leading-relaxed text-ink-soft">
-            Gemstones under 1,000 $ -&gt; 15% reserve
-            <br />
-            Gemstones of 1,000 $ and above -&gt; 10%
-          </p>
-          <p className="mt-3 max-w-[62ch] text-[14px] leading-relaxed text-ink-muted">
-            This reserve is held to cover costs associated with the Token throughout its lifecycle.
-          </p>
-        </div>
-        <div data-reveal className="grid gap-6 lg:grid-cols-[0.72fr_1.28fr] lg:items-start">
-          <div className="rounded-[4px] border border-line/[0.08] bg-card p-6">
-            <h3 className="font-display text-[16px] font-medium text-ink">
-              One Reserve, Multiple Cost
-            </h3>
-            <p className="mt-3 text-[12px] leading-relaxed text-ink-muted">
-              The reserve can be used to cover:
-            </p>
-            <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-              {RESERVE_COSTS.map((cost) => (
-                <li
-                  key={cost}
-                  className="border-l border-atelier/45 pl-3 text-[11.5px] leading-relaxed text-ink-dim"
-                >
-                  {cost}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-5 text-[11.5px] leading-relaxed text-ink-muted">
-              Transaction fees are always charged to the party initiating the transaction.
-            </p>
-            <h4 className="mt-5 text-[12px] font-semibold text-ink">
+        <div data-reveal className="overflow-hidden rounded-[4px] border border-line/[0.1] bg-card">
+          <div className="grid lg:grid-cols-[1.02fr_.98fr]">
+            <div className="p-6 sm:p-8 lg:p-10">
+              <div aria-hidden className="mb-6 h-px w-12 bg-emerald" />
+              <h2 className="max-w-[19ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
+                How the reserve works
+              </h2>
+              <p className="mt-4 max-w-[54ch] text-[14px] leading-relaxed text-ink-muted">
+                When a gemstone is first tokenized, a reserve is added to its approved value:
+              </p>
+
+              <div className="mt-7 border-y border-line/[0.1]">
+                <p className="grid gap-1 py-4 text-[12.5px] text-ink-soft sm:grid-cols-[1fr_auto] sm:items-baseline sm:gap-6">
+                  <span>Gemstones under 1,000 $</span>
+                  <span className="font-mono font-semibold text-emerald">-&gt; 15% reserve</span>
+                </p>
+                <p className="grid gap-1 border-t border-line/[0.08] py-4 text-[12.5px] text-ink-soft sm:grid-cols-[1fr_auto] sm:items-baseline sm:gap-6">
+                  <span>Gemstones of 1,000 $ and above</span>
+                  <span className="font-mono font-semibold text-emerald">-&gt; 10%</span>
+                </p>
+              </div>
+
+              <p className="mt-6 max-w-[54ch] text-[13px] leading-relaxed text-ink-muted">
+                This reserve is held to cover costs associated with the Token throughout its
+                lifecycle.
+              </p>
+            </div>
+
+            <div className="border-t border-line/[0.08] bg-panel/45 p-6 sm:p-8 lg:border-l lg:border-t-0 lg:p-10">
+              <h3 className="max-w-[22ch] font-display text-[22px] font-medium tracking-[-0.025em] text-ink">
+                One Reserve, Multiple Cost
+              </h3>
+              <p className="mt-3 text-[12.5px] leading-relaxed text-ink-muted">
+                The reserve can be used to cover:
+              </p>
+
+              <ul className="mt-6 grid border-y border-line/[0.1] sm:grid-cols-2">
+                {RESERVE_COSTS.map((cost, index) => {
+                  const [label, detail] = cost.split(': ');
+                  return (
+                    <li
+                      key={cost}
+                      className={`min-h-20 py-4 sm:px-4 ${
+                        index % 2 === 1 ? 'sm:border-l sm:border-line/[0.08]' : ''
+                      } ${index > 1 ? 'border-t border-line/[0.08]' : ''}`}
+                    >
+                      <span className="block text-[12.5px] font-semibold text-ink">{label}</span>
+                      {detail && (
+                        <span className="mt-1 block font-mono text-[11px] text-ink-dim">
+                          {detail}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <p className="mt-5 border-l-2 border-emerald pl-4 text-[12px] leading-relaxed text-ink-muted">
+                Transaction fees are always charged to the party initiating the transaction.
+              </p>
+
+              <div className="mt-8 border-t border-line/[0.1] pt-6">
+                <table className="w-full border-collapse text-left">
+                  <caption className="sr-only">Active reserve margin schedule</caption>
+                  <thead>
+                    <tr>
+                      <th className="pb-3 font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-dim">
+                        Active contract schedule
+                      </th>
+                      <th className="pb-3 text-right font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-dim">
+                        Reserve margin
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {feeTiersLoading ? (
+                      <tr>
+                        <td
+                          colSpan={2}
+                          className="border-t border-line/[0.08] py-4 text-[12px] text-ink-muted"
+                        >
+                          Reading the active reserve schedule...
+                        </td>
+                      </tr>
+                    ) : feeTiersError || !feeTiers?.length ? (
+                      <tr>
+                        <td
+                          colSpan={2}
+                          className="border-t border-line/[0.08] py-4 text-[12px] text-ruby"
+                        >
+                          The reserve schedule is temporarily unavailable. Transaction quotes still
+                          use the active contract.
+                        </td>
+                      </tr>
+                    ) : (
+                      feeTiers.map((tier) => (
+                        <tr key={tier.tier} className="border-t border-line/[0.08]">
+                          <td className="py-3 text-[12px] text-ink-soft">{tier.range}</td>
+                          <td className="py-3 text-right font-mono text-[15px] font-semibold text-ink">
+                            {tier.pct}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-3 border-t border-line/[0.08] bg-panel/30 p-6 sm:p-8 md:grid-cols-[0.62fr_1.38fr] md:gap-10 lg:px-10">
+            <h4 className="font-display text-[16px] font-medium leading-snug text-ink">
               What happens to the remaining reserve?
             </h4>
-            <p className="mt-2 text-[11.5px] leading-relaxed text-ink-muted">
+            <p className="max-w-[68ch] text-[12.5px] leading-relaxed text-ink-muted">
               When a gemstone is redeemed, any remaining reserve balance is returned to the token
               holder’s wallet when the token is burned.
             </p>
-          </div>
-          <div className="overflow-hidden rounded-[4px] border border-line/[0.08] bg-card">
-            <table className="w-full border-collapse text-left">
-              <caption className="sr-only">Active reserve margin schedule</caption>
-              <thead className="bg-panel">
-                <tr>
-                  <th className="px-4 py-3 font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-dim sm:px-5">
-                    Token value
-                  </th>
-                  <th className="px-4 py-3 text-right font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-dim sm:px-5">
-                    Reserve margin
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {feeTiersLoading ? (
-                  <tr>
-                    <td colSpan={2} className="px-4 py-6 text-[12.5px] text-ink-muted sm:px-5">
-                      Reading the active reserve schedule...
-                    </td>
-                  </tr>
-                ) : feeTiersError || !feeTiers?.length ? (
-                  <tr>
-                    <td colSpan={2} className="px-4 py-6 text-[12.5px] text-ruby sm:px-5">
-                      The reserve schedule is temporarily unavailable. Transaction quotes still use
-                      the active contract.
-                    </td>
-                  </tr>
-                ) : (
-                  feeTiers.map((tier) => (
-                    <tr key={tier.tier} className="border-t border-line/[0.06]">
-                      <td className="px-4 py-4 text-[12.5px] text-ink-soft sm:px-5">
-                        {tier.range}
-                      </td>
-                      <td className="px-4 py-4 text-right font-mono text-[16px] text-ink sm:px-5">
-                        {tier.pct}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
           </div>
         </div>
       </section>
