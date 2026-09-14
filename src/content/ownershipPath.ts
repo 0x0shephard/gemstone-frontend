@@ -7,50 +7,70 @@ import type { HowStep } from '@/services/types';
 export const ownershipPathSteps: readonly HowStep[] = [
   {
     num: '01',
-    title: 'Verification, Valuation and Custody',
-    body: 'Every seller completes KYC to verify their identity and the legitimate sourcing of the gemstone.',
-    points: [
-      'Gemmological review: a professional laboratory independently assesses and records the gemstone characteristics.',
-      'Valuation: the laboratory assessment establishes a proposed price for the seller to review and approve.',
-      'Custodian vault: the approved gemstone moves into secure third-party custody before it is listed.',
+    title: 'Verification, Valuation & Custody',
+    body: '',
+    sections: [
+      {
+        heading: 'SELLER Verification',
+        body: 'Every seller completes a KYC process to verify their identity and the legitimate sourcing of the gemstone.',
+      },
+      {
+        heading: 'GEMMOLOGICAL Review',
+        body: 'The gemstone is sent to a professional gemmological laboratory, where its characteristics are independently assessed and recorded.',
+      },
+      {
+        heading: 'VALUATION',
+        body: 'Based on the laboratory assessment, a valuation and proposed price are established. The seller reviews and approves the price through the Digital Carat Platform.',
+      },
+      {
+        heading: 'CUSTODIAN VAULT',
+        body: 'Once approved, the gemstone is approved to a secure third-party custodian vault and listed on the market place.',
+      },
     ],
   },
   {
     num: '02',
-    title: 'Auction and Token Minting',
-    body: 'The approved valuation becomes the gemstone auction floor. Auctions run in repeating 24-hour cycles and the highest qualifying bid wins.',
-    points: [
-      'If no qualifying bid is received, the auction can open for another 24-hour cycle.',
-      'A successful auction mints a unique ERC-721 token on Ethereum to the winner.',
-    ],
+    title: 'Auction & Token Minting',
+    body: 'The approved valuation becomes the gemstone’s auction floor price. Auctions run in 24H cycles. The highest bid above the floor price wins. If no qualifying bid is received, the auction automatically opens for another 24-hour cycle. Following a successful auction, the gemstone is represented by a unique ERC-721 token on Etheruem.',
   },
   {
     num: '03',
     title: 'Trading the Token',
-    body: 'Once minted, a Digital Carat token can be sold, held, or swapped through the marketplace and portfolio.',
-    points: [
-      'Sell: list the token at a chosen price. A qualifying bid starts a 24-hour auction and the highest bidder wins.',
-      'Hold: keep the token in your portfolio and receive bids from other users.',
-      'Swap: propose or receive exchanges with other token holders and respond through the swaps page.',
-      'Each token keeps a transaction history that includes previous bids and swaps.',
+    body: 'Once minted, Digital Carat Token can be traded on the marketplace. Token Holders can:',
+    sections: [
+      {
+        heading: 'SELL',
+        body: 'List their Token at a chosen price. The highest qualifying bid wins the auction.',
+      },
+      {
+        heading: 'HOLD',
+        body: 'Keep the Token in their Portfolio and receive bids from other users.',
+      },
+      {
+        heading: 'SWAP',
+        body: 'Propose or receive swaps with other token holders and accept or decline them directly through their portfolio.',
+      },
+      {
+        body: 'Each token displays its transaction history, including previous bids and swaps.',
+      },
     ],
   },
   {
     num: '04',
-    title: 'Redeeming the Gemstone',
-    body: 'Token holders can redeem the physical gemstone represented by their token at any time by selecting Redeem and confirming the fulfilment details.',
-    points: [
-      'The third-party custodian arranges collection or secure, insured delivery of the gemstone.',
-      'Once handover is confirmed, the corresponding token is permanently burned.',
+    title: 'Redemption the Gemstone',
+    body: 'Token holders can redeem the physical gemstone represented by their token at anytime.',
+    sections: [
+      {
+        body: 'Simply select “Redeem” and confirm the delivery details. The third-party custodian then arranges secure, insured delivery of the gemstone.',
+      },
+      {
+        body: 'Once delivery is confirmed, the corresponding token is permanently burned, completing the redemption process..',
+      },
     ],
   },
   {
     num: '05',
     title: 'Payments',
-    body: 'Digital Carat supports native ETH and registry-approved stablecoin payments. The current Sepolia deployment uses mock USDC for stablecoin testing.',
-    points: [
-      'Native ETH payments need no token approval.',
-      'Stablecoin payments request an ERC-20 approval before the transaction.',
-    ],
+    body: 'Digital Carat supports ETH and USDT crypto-currency payments through the platform.',
   },
 ];

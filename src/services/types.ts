@@ -181,7 +181,10 @@ export interface HowStep {
   num: string;
   title: string;
   body: string;
-  points?: readonly string[];
+  sections?: readonly {
+    heading?: string;
+    body: string;
+  }[];
 }
 
 export interface PaymentAsset {

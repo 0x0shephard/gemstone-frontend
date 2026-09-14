@@ -13,10 +13,10 @@ test('landing page keeps the complete ownership path in chain mode', async ({ pa
 
   await expect(page.getByRole('heading', { name: 'Lifecycle of the Token' })).toBeVisible();
   for (const heading of [
-    'KYC, Gemological Review and Custody',
-    'Auction and Minting',
+    'Verification, Valuation & Custody',
+    'Auction & Token Minting',
     'Trading the Token',
-    'Redemption',
+    'Redemption the Gemstone',
     'Payments',
   ]) {
     await expect(page.getByRole('heading', { name: heading })).toBeVisible();
