@@ -239,7 +239,7 @@ async function seedDatabase(db) {
 
   // One registered submission per on-chain gem, dated so gift cards can expire.
   const escrowEnds = new Date(Date.now() + 2 * 365 * 86_400_000).toISOString();
-  for (const gemId of [1, 2, 3, 4]) {
+  for (const gemId of [1, 2, 3, 4, 5, 6]) {
     await rest(db, `/rest/v1/seller_submissions?onchain_gem_id=eq.${gemId}`, { method: 'DELETE' });
     await rest(db, '/rest/v1/seller_submissions', {
       method: 'POST',

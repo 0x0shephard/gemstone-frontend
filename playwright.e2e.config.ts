@@ -32,7 +32,8 @@ export default defineConfig({
       command:
         'npx supabase functions serve --workdir e2e/.stack/supabase-workdir --env-file e2e/.stack/functions.env',
       wait: { stdout: /Serving functions|Functions URL|serving/i },
-      reuseExistingServer: true,
+      // Never reused: the functions read this run's addresses at start-up.
+      reuseExistingServer: false,
       timeout: 180_000,
     },
     {

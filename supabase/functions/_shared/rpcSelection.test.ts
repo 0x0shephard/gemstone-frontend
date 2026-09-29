@@ -23,4 +23,11 @@ describe('historical logs RPC selection', () => {
       'https://arbitrum.example',
     );
   });
+
+  it('keeps a local node for historical reads instead of public Sepolia', () => {
+    expect(
+      resolveLogsRpcUrl('http://host.docker.internal:8545', 'http://host.docker.internal:8545'),
+    ).toBe('http://host.docker.internal:8545');
+    expect(resolveLogsRpcUrl('http://127.0.0.1:8545')).toBe('http://127.0.0.1:8545');
+  });
 });

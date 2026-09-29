@@ -23,7 +23,9 @@ test('two collectors swap tokens end to end', async ({ browser, stack }) => {
 
   const receive = alice.page.getByRole('dialog').getByRole('combobox').first();
   // The viewer's own other tokens must never be offered as the thing they receive.
-  await expect(receive.locator('option', { hasText: 'Alice Emerald' })).toHaveCount(0);
+  // Wait for the list to load, then check the viewer's own token is absent.
+  await expect(receive.locator('option', { hasText: 'Bob Spinel' })).toHaveCount(1);
+  await expect(receive.locator('option', { hasText: 'Alice Topaz' })).toHaveCount(0);
   await selectByText(receive, 'Bob Spinel');
   await alice.page.getByRole('button', { name: 'Propose swap' }).click();
   const done = alice.page.getByRole('dialog').getByRole('button', { name: 'Done' });

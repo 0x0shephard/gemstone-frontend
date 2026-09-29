@@ -10,11 +10,26 @@ const canonicalRpcUrl = (value: string) => value.trim().replace(/\/+$/, '');
  * accepts only tiny `eth_getLogs` windows. Treating the same URL as a dedicated
  * logs endpoint makes a successful scheduler fall farther behind every hour.
  */
+/**
+ * A local node (the end-to-end suite runs anvil with Sepolia's chain id). The
+ * public Sepolia default must never replace it: it would read the real
+ * network's state for the same addresses.
+ */
+function isLocalRpc(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return ['127.0.0.1', 'localhost', '[::1]', 'host.docker.internal'].includes(hostname);
+  } catch {
+    return false;
+  }
+}
+
 export function resolveLogsRpcUrl(
   operatorRpcUrl: string,
   configuredLogsRpcUrl?: string | null,
   chainId = 11155111,
 ): string {
+  if (isLocalRpc(operatorRpcUrl)) return operatorRpcUrl;
   const configured = configuredLogsRpcUrl?.trim();
   if (configured && canonicalRpcUrl(configured) !== canonicalRpcUrl(operatorRpcUrl)) {
     return configured;
