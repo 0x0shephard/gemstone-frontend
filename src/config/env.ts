@@ -28,7 +28,12 @@ const supabaseUrl = z
   .string()
   .trim()
   .refine(
-    (value) => value === '' || /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(value),
+    // A loopback URL is a local `supabase start` stack (development and the
+    // end-to-end suite); anything else must be the hosted project URL.
+    (value) =>
+      value === '' ||
+      /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(value) ||
+      /^http:\/\/(?:127\.0\.0\.1|localhost):\d+\/?$/.test(value),
     'Must use the project API URL: https://<project-ref>.supabase.co',
   );
 

@@ -11,6 +11,7 @@ import { env, walletConnectConfigured } from '@/config/env';
 import { activeChain, supportedChains } from '@/config/chains';
 import {
   createRpcTransport,
+  isLocalRpc,
   resolveRpcUrls,
   SEPOLIA_LOGS_RPC,
   SEPOLIA_PUBLIC_RPC,
@@ -29,7 +30,7 @@ const rpcTransport = createRpcTransport(
  * `scanLogs` tries these clients in order and adapts to the provider's range.
  */
 export const projectionLogClients =
-  activeChain.id === 11155111
+  activeChain.id === 11155111 && !isLocalRpc(env.rpcUrl)
     ? [
         createPublicClient({
           chain: activeChain,

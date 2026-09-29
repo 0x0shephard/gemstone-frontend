@@ -10,11 +10,26 @@ export const SEPOLIA_PUBLIC_RPC = 'https://11155111.rpc.thirdweb.com';
  */
 export const SEPOLIA_LOGS_RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
 
+/**
+ * A loopback RPC means a local chain (the end-to-end suite runs anvil with
+ * Sepolia's chain id). Public Sepolia endpoints must never be mixed in there:
+ * they would answer with the real network's state for the same addresses.
+ */
+export function isLocalRpc(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
 export function resolveRpcUrls(
   chainId: number,
   primaryUrl: string,
   configuredFallbackUrl: string,
 ): string[] {
+  if (isLocalRpc(primaryUrl)) return [primaryUrl];
   const urls = [
     primaryUrl,
     configuredFallbackUrl,

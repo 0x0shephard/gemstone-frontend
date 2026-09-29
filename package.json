@@ -21,7 +21,10 @@
     "seed:sepolia-demo": "node scripts/seed-sepolia-demo-inventory.mjs",
     "verify:sepolia-demo": "node scripts/verify-sepolia-demo-inventory.mjs",
     "verify:anvil-lifecycle": "node scripts/verify-anvil-frontend-lifecycle.mjs",
-    "build:favicon": "node scripts/build-favicon.mjs"
+    "build:favicon": "node scripts/build-favicon.mjs",
+    "e2e:stack": "node e2e/stack/stack.mjs up",
+    "e2e:stack:down": "node e2e/stack/stack.mjs down",
+    "test:e2e:full": "playwright test -c playwright.e2e.config.ts"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.1.1",

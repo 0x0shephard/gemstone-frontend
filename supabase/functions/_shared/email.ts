@@ -57,7 +57,10 @@ export async function sendEmail(message: OutboundEmail): Promise<string> {
   const from = Deno.env.get('MAIL_FROM')?.trim();
   if (!apiKey || !from) throw new EmailNotConfiguredError();
 
-  const response = await fetch('https://api.resend.com/emails', {
+  // Overridable only so the end-to-end suite can capture mail locally; unset in
+  // every deployed environment.
+  const endpoint = Deno.env.get('RESEND_API_URL')?.trim() || 'https://api.resend.com/emails';
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${apiKey}`,

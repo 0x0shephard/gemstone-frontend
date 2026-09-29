@@ -85,4 +85,18 @@ describe('outbound email', () => {
       '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &#39;quote&#39;',
     );
   });
+
+  it('posts to a configured capture endpoint instead of Resend when one is set', async () => {
+    environment.set('RESEND_API_KEY', 're_test');
+    environment.set('MAIL_FROM', 'Digital Carat <alerts@digitalcarat.io>');
+    environment.set('RESEND_API_URL', 'http://host.docker.internal:4010/emails');
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ id: 'captured-1' }), { status: 200 }),
+    );
+
+    await expect(
+      sendEmail({ to: 'a@example.com', subject: 's', html: '<p>h</p>', text: 't' }),
+    ).resolves.toBe('captured-1');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://host.docker.internal:4010/emails');
+  });
 });

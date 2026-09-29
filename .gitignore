@@ -29,3 +29,6 @@ prompt.md
 
 # Supabase CLI local link/cache state
 supabase/.temp/
+
+# end-to-end local stack output
+e2e/.stack/

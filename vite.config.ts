@@ -29,7 +29,11 @@ export default defineConfig(({ mode }) => {
   // Local development reuses the working Sepolia RPC from the sibling contracts
   // repository without copying its API key into this repository. Explicit shell,
   // CI, and Netlify VITE_RPC_URL values always take precedence.
-  if (!process.env.VITE_RPC_URL) {
+  // A loopback RPC from the mode's env files (the end-to-end build) is kept:
+  // replacing it would point a local-chain build at real Sepolia.
+  const configuredRpc = frontendEnv.VITE_RPC_URL?.trim() ?? '';
+  const localRpc = /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\/?$/.test(configuredRpc);
+  if (!process.env.VITE_RPC_URL && !localRpc) {
     const contractsDir = path.resolve(__dirname, process.env.CONTRACTS_DIR ?? '../gemstone');
     const contractsEnv = loadEnv(mode, contractsDir, '');
     const contractsRpc = contractsEnv.SEPOLIA_RPC_URL?.trim();
