@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+/** Short commit the bundle was built from (Netlify `COMMIT_REF`, else git, else "dev"). */
+declare const __BUILD_COMMIT__: string;
+
 interface ImportMetaEnv {
   readonly VITE_CHAIN_ID?: string;
   readonly VITE_RPC_URL?: string;

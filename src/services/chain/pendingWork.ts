@@ -1,4 +1,5 @@
 import type { Address, Hash } from 'viem';
+import { recordDiagnostic } from '@/lib/diagnostics';
 
 /**
  * A durable record of wallet work that has been started but not finished.
@@ -101,6 +102,7 @@ export function openWork(work: Omit<PendingWork, 'id' | 'createdAt'>): PendingWo
  * Everything else about recovery depends on this one write happening first.
  */
 export function recordBroadcast(id: string, stepIndex: number, hash: Hash): void {
+  recordDiagnostic('tx', 'broadcast', { step: stepIndex, hash });
   write(
     read().map((work) =>
       work.id === id
@@ -120,6 +122,7 @@ export function recordBroadcast(id: string, stepIndex: number, hash: Hash): void
  * returned. This is still potentially broadcast work and must block retries.
  */
 export function recordUnknownBroadcast(id: string, stepIndex: number): void {
+  recordDiagnostic('tx', 'broadcast outcome unknown; retry locked', { step: stepIndex });
   recordStepStatus(id, stepIndex, 'broadcast');
 }
 

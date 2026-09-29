@@ -12,6 +12,8 @@ import { Button, type ButtonVariant, type ButtonSize } from '@/components/ui/But
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
 import { captureProductEvent } from '@/lib/telemetry';
+import { recordDiagnostic } from '@/lib/diagnostics';
+import { walletErrorText } from '@/services/chain/walletRpcRecovery';
 import { useQueryClient } from '@tanstack/react-query';
 
 /**
@@ -205,6 +207,7 @@ export function TxButton({
       } else {
         setError(e instanceof Error ? e.message : 'Transaction failed');
         setState('error');
+        recordDiagnostic('tx', `error ${telemetryFlow}: ${walletErrorText(e)}`);
         captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'error' });
       }
       // A wallet can broadcast successfully even if its relay returns an error.

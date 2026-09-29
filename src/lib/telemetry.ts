@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/react';
 import posthog from 'posthog-js';
 import { env } from '@/config/env';
+import { recordDiagnostic } from './diagnostics';
 
 const ADDRESS = /0x[a-fA-F0-9]{40}/g;
 const SENSITIVE_KEYS =
@@ -67,6 +68,12 @@ export function captureProductEvent(
   event: 'onboarding_step' | 'transaction_started' | 'transaction_confirmed' | 'transaction_failed',
   properties: { flow: string; step?: string; paymentAsset?: 'ETH' | 'USDC'; result?: string },
 ) {
+  // Local only, and independent of analytics consent: it never leaves the device.
+  if (event !== 'onboarding_step') {
+    recordDiagnostic('tx', `${event.replace('transaction_', '')} ${properties.flow}`, {
+      result: properties.result ?? null,
+    });
+  }
   if (!allowedEvents.has(event) || !hasAnalyticsConsent()) return;
   posthog.capture(event, properties);
 }

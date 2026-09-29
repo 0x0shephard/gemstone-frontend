@@ -8,6 +8,8 @@ import { rainbowTheme } from './rainbowTheme';
 import { AuthProvider } from './AuthProvider';
 import { reviveWalletConnectOnReturn } from './walletConnectRevival';
 import { watchPendingWork } from '@/services/chain/reconcilePending';
+import { DiagnosticsRecorder } from '@/components/diagnostics/DiagnosticsRecorder';
+import { DiagnosticsPanel } from '@/components/diagnostics/DiagnosticsPanel';
 
 export default function Web3Providers({ children }: { children: ReactNode }) {
   /*
@@ -30,7 +32,11 @@ export default function Web3Providers({ children }: { children: ReactNode }) {
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider theme={rainbowTheme} modalSize="compact">
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            {children}
+            <DiagnosticsRecorder />
+            <DiagnosticsPanel />
+          </AuthProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

@@ -1,6 +1,7 @@
 import type { Config, Connector } from 'wagmi';
 import { reconnect } from 'wagmi/actions';
 import { isWalletConnectConnector } from '@/services/chain/walletConnectRouting';
+import { recordDiagnostic } from '@/lib/diagnostics';
 
 /**
  * Restores remote wallet state after the phone comes back to the browser.
@@ -104,7 +105,9 @@ export function reviveWalletConnectOnReturn(
     } catch {
       // A concurrent original connect may win; the next bounded round rechecks.
     }
-    return Boolean(config.state.current);
+    const recovered = Boolean(config.state.current);
+    recordDiagnostic('wallet', `return recovery via ${connector.name}`, { recovered });
+    return recovered;
   };
 
   const wakeOnce = async () => {

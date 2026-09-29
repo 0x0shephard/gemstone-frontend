@@ -1,4 +1,5 @@
 import { supabase } from '@/providers/supabase';
+import { recordDiagnostic } from '@/lib/diagnostics';
 
 /**
  * Calls an Edge Function and surfaces the error the function actually returned.
@@ -84,12 +85,19 @@ export async function invokeEdgeFunction<T>(
     transport?.includes('timeout') ||
     (error as { context?: { name?: unknown } } | null)?.context?.name === 'AbortError';
 
-  if (aborted || networkFailure) throw new EdgeFunctionOutcomeUnknownError(name);
+  if (aborted || networkFailure) {
+    recordDiagnostic('server', `${name} outcome unknown`, { aborted: Boolean(aborted) });
+    throw new EdgeFunctionOutcomeUnknownError(name);
+  }
 
   const message =
     (typeof inlineError === 'string' ? inlineError : undefined) ??
     (await bodyMessage(error)) ??
     transport ??
     `${name} failed`;
+  const status = (error as { context?: { status?: unknown } } | null)?.context?.status;
+  recordDiagnostic('server', `${name}: ${message}`, {
+    status: typeof status === 'number' ? status : null,
+  });
   throw new Error(message);
 }

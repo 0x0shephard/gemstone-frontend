@@ -4,6 +4,7 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
+  define: { __BUILD_COMMIT__: JSON.stringify('test') },
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   test: {
     environment: 'jsdom',
