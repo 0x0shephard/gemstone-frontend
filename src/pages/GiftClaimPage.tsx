@@ -123,6 +123,11 @@ function TerminalState({ card }: { card: GiftCardSummary }) {
       body: 'The sender prepared this card but has not finished moving the gemstone into escrow. Try again after they complete the transfer.',
       tone: 'neutral',
     },
+    claiming: {
+      title: 'Claim submitted',
+      body: 'The transfer was submitted and is still being checked. Do not claim again; reopen this card shortly to reconcile the same transaction.',
+      tone: 'neutral',
+    },
     claimed: {
       title: 'Already claimed',
       body: card.transactionHash
@@ -133,6 +138,11 @@ function TerminalState({ card }: { card: GiftCardSummary }) {
     cancelled: {
       title: 'Cancelled by the sender',
       body: 'The sender withdrew this card. If it was meant for you, ask them to issue a new one.',
+      tone: 'neutral',
+    },
+    cancelling: {
+      title: 'Return in progress',
+      body: 'The sender has submitted the escrow return. This card cannot be claimed while that transaction is being checked.',
       tone: 'neutral',
     },
     expired: {

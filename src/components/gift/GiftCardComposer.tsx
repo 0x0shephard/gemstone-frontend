@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DecoratedGem } from '@/services/types';
 import { Modal } from '@/components/ui/Modal';
 import { Field, Labeled, inputClass } from '@/components/ui/Field';
@@ -14,19 +14,26 @@ import {
   type GiftTemplate,
 } from './GiftCardArt';
 import {
+  clearGiftPreparationIntent,
   clearGiftHandoff,
+  inspectGiftPreparationIntent,
+  inspectGiftHandoff,
+  saveGiftPreparationIntent,
   saveGiftHandoff,
-  takeGiftHandoff,
 } from '@/services/offchain/giftHandoff';
 import { dataService } from '@/services';
 import {
   cancelGiftCard,
   confirmGiftCardEscrow,
+  createGiftPreparationKey,
   createGiftCard,
   emailGiftCard,
   giftClaimUrl,
+  resendGiftSenderCopy,
   type CreatedGiftCard,
+  type SenderCopyOutcome,
 } from '@/services/offchain/gift';
+import { EdgeFunctionOutcomeUnknownError } from '@/services/offchain/invoke';
 import { zeroHash, type Hash } from 'viem';
 import {
   cardAsPngBase64,
@@ -41,6 +48,8 @@ import {
   startCanvaAuthorization,
 } from '@/services/offchain/canva';
 import { cn } from '@/lib/cn';
+import { useAuth } from '@/providers/AuthProvider';
+import { env } from '@/config/env';
 
 type Step = 'compose' | 'escrow' | 'issued';
 
@@ -62,6 +71,8 @@ const MAX_MESSAGE = 500;
  * and the card becomes claimable only after the server verifies escrow custody.
  */
 export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardComposerProps) {
+  const { linkedWallet } = useAuth();
+  const account = linkedWallet ?? '';
   /*
    * A card that survived the Canva redirect, if there was one.
    *
@@ -74,52 +85,134 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
    * initialiser separately would hand the card to the first and nothing to the
    * rest.
    */
-  const [restored] = useState(() => takeGiftHandoff(String(gem.gemId)));
+  const [restored] = useState(() =>
+    account
+      ? inspectGiftHandoff({ chainId: env.chainId, account, gemId: String(gem.gemId) })
+      : undefined,
+  );
+  const [pendingPreparation] = useState(() =>
+    account
+      ? inspectGiftPreparationIntent({
+          chainId: env.chainId,
+          account,
+          gemId: String(gem.gemId),
+        })
+      : undefined,
+  );
   const [step, setStep] = useState<Step>(
     restored ? (restored.card.escrowed ? 'issued' : 'escrow') : 'compose',
   );
-  const [recipientEmail, setRecipientEmail] = useState(restored?.recipientEmail ?? '');
-  const [recipientName, setRecipientName] = useState(restored?.recipientName ?? '');
-  const [message, setMessage] = useState(restored?.message ?? '');
+  const [recipientEmail, setRecipientEmail] = useState(
+    restored?.recipientEmail ?? pendingPreparation?.payload.recipientEmail ?? '',
+  );
+  const [recipientName, setRecipientName] = useState(
+    restored?.recipientName ?? pendingPreparation?.payload.recipientName ?? '',
+  );
+  const [message, setMessage] = useState(
+    restored?.message ?? pendingPreparation?.payload.message ?? '',
+  );
   const [template, setTemplate] = useState<GiftTemplate>(
-    (restored?.template as GiftTemplate | undefined) ?? 'classic',
+    (restored?.template as GiftTemplate | undefined) ??
+      (pendingPreparation?.payload.template as GiftTemplate | undefined) ??
+      'classic',
   );
   const [issued, setIssued] = useState<CreatedGiftCard | null>(restored?.card ?? null);
   const [escrowTxHash, setEscrowTxHash] = useState<Hash | undefined>(restored?.escrowTxHash);
   const [error, setError] = useState<string | null>(null);
   const [issuing, setIssuing] = useState(false);
+  const recoveryStarted = useRef(false);
+  const preparationRecoveryStarted = useRef(false);
+
+  const handoffScope = issued
+    ? { chainId: env.chainId, account, giftId: issued.giftId }
+    : { chainId: env.chainId, account, gemId: String(gem.gemId) };
 
   const email = recipientEmail.trim().toLowerCase();
   const emailValid = EMAIL_PATTERN.test(email);
 
-  async function prepare() {
-    if (issuing) return;
-    setIssuing(true);
-    setError(null);
-    try {
-      const card = await createGiftCard({
-        tokenId: gem.tokenId!,
-        recipientEmail: email,
-        recipientName: recipientName.trim() || undefined,
-        message: message.trim() || undefined,
-        template,
-      });
-      setIssued(card);
+  const persist = useCallback(
+    (card: CreatedGiftCard, hash?: Hash) => {
+      if (!account) return;
       saveGiftHandoff({
+        chainId: env.chainId,
+        account,
         gemId: String(gem.gemId),
         card,
         recipientEmail: email,
         recipientName,
         message,
         template,
+        escrowTxHash: hash,
       });
+    },
+    [account, email, gem.gemId, message, recipientName, template],
+  );
+
+  const prepare = useCallback(async () => {
+    if (issuing) return;
+    setIssuing(true);
+    setError(null);
+    const preparationScope = {
+      chainId: env.chainId,
+      account,
+      gemId: String(gem.gemId),
+    };
+    const payload = {
+      tokenId: gem.tokenId!.toString(),
+      recipientEmail: email,
+      recipientName: recipientName.trim(),
+      message: message.trim(),
+      template,
+    };
+    const existing = inspectGiftPreparationIntent(preparationScope);
+    const preparation = existing ?? createGiftPreparationKey();
+    const requestPayload = existing?.payload ?? payload;
+    // Persist the stable request id and one-time code before the first edge
+    // call. A timeout or reload can then reconcile the same server row rather
+    // than rotating the only usable claim secret.
+    if (!existing) saveGiftPreparationIntent({ ...preparationScope, payload, ...preparation });
+    try {
+      const card = await createGiftCard(
+        {
+          tokenId: BigInt(requestPayload.tokenId),
+          recipientEmail: requestPayload.recipientEmail,
+          recipientName: requestPayload.recipientName || undefined,
+          message: requestPayload.message || undefined,
+          template: requestPayload.template as GiftTemplate,
+        },
+        preparation,
+      );
+      clearGiftPreparationIntent(preparationScope);
+      setIssued(card);
+      persist(card);
       setStep('escrow');
     } catch (prepareError) {
+      // Only an unknown outcome may have created the server row, so only that
+      // keeps the stored key for reconciliation. A definite rejection leaves
+      // nothing to reconcile; keeping the key would replay the rejected
+      // request on every attempt and ignore whatever the sender changed.
+      if (!(prepareError instanceof EdgeFunctionOutcomeUnknownError)) {
+        clearGiftPreparationIntent(preparationScope);
+      }
       setError(prepareError instanceof Error ? prepareError.message : 'Could not prepare the gift');
     } finally {
       setIssuing(false);
     }
-  }
+  }, [account, email, gem.gemId, gem.tokenId, issuing, message, persist, recipientName, template]);
+
+  useEffect(() => {
+    if (
+      !open ||
+      restored ||
+      !pendingPreparation ||
+      step !== 'compose' ||
+      preparationRecoveryStarted.current
+    ) {
+      return;
+    }
+    preparationRecoveryStarted.current = true;
+    void prepare();
+  }, [open, pendingPreparation, prepare, restored, step]);
 
   async function finalize(escrowTxHash: Hash) {
     if (!issued || issuing) return;
@@ -128,28 +221,16 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
     try {
       const card = await confirmGiftCardEscrow(issued, escrowTxHash);
       setIssued(card);
-      saveGiftHandoff({
-        gemId: String(gem.gemId),
-        card,
-        recipientEmail: email,
-        recipientName,
-        message,
-        template,
-      });
+      // Activation does not make the one-time code recoverable from the
+      // server. Keep the scoped session copy through the issued screen and
+      // remove it only when the sender explicitly finishes with the card.
+      persist(card, escrowTxHash);
       setStep('issued');
     } catch (confirmError) {
       setError(
         confirmError instanceof Error ? confirmError.message : 'Could not confirm gift escrow',
       );
-      saveGiftHandoff({
-        gemId: String(gem.gemId),
-        card: issued,
-        recipientEmail: email,
-        recipientName,
-        message,
-        template,
-        escrowTxHash,
-      });
+      persist(issued, escrowTxHash);
     } finally {
       setIssuing(false);
     }
@@ -161,20 +242,36 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
    * as proof, so no second wallet transaction is needed.
    */
   useEffect(() => {
-    if (!restored || step !== 'escrow' || escrowTxHash || !issued) return;
+    if (
+      !restored ||
+      restored.awaitingTransfer ||
+      step !== 'escrow' ||
+      !issued ||
+      recoveryStarted.current
+    ) {
+      return;
+    }
+    recoveryStarted.current = true;
     let cancelled = false;
-    void confirmGiftCardEscrow(issued, zeroHash)
+    void confirmGiftCardEscrow(issued, escrowTxHash ?? zeroHash)
       .then((card) => {
         if (cancelled) return;
         setIssued(card);
-        clearGiftHandoff();
+        persist(card, escrowTxHash);
         setStep('issued');
       })
-      .catch(() => undefined);
+      .catch((recoveryError: unknown) => {
+        if (cancelled) return;
+        setError(
+          recoveryError instanceof Error
+            ? recoveryError.message
+            : 'Gift activation still needs attention.',
+        );
+      });
     return () => {
       cancelled = true;
     };
-  }, [escrowTxHash, issued, restored, step]);
+  }, [escrowTxHash, issued, persist, restored, step]);
 
   async function abandonPreparedGift() {
     if (!issued || issuing) return;
@@ -182,7 +279,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
     setError(null);
     try {
       await cancelGiftCard(issued.giftId);
-      clearGiftHandoff();
+      clearGiftHandoff(handoffScope);
       setIssued(null);
       setStep('compose');
     } catch (cancelError) {
@@ -265,6 +362,12 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
             </div>
           </Labeled>
 
+          {/* Without this, a rejected preparation just reset the button. */}
+          {error && (
+            <p role="alert" className="text-[12px] text-ruby">
+              {error}
+            </p>
+          )}
           <div className="grid grid-cols-[auto_1fr] gap-2.5">
             <Button variant="ghost" onClick={onBack}>
               Back
@@ -314,9 +417,13 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
                 pendingLabel="Moving into escrow…"
                 telemetryFlow="gift_escrow"
                 doneLabel={issuing ? 'Confirming escrow…' : 'Finish gift card'}
-                onDone={(result) => {
+                onConfirmed={(result) => {
                   setEscrowTxHash(result.hash);
-                  void finalize(result.hash);
+                  // Store the chain fact before the activation request. If the
+                  // tab closes or the request times out, no second transfer is
+                  // offered and the card can be reconciled on the next mount.
+                  persist(issued, result.hash);
+                  return finalize(result.hash);
                 }}
               >
                 Transfer to escrow
@@ -334,6 +441,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
           recipientEmail={email}
           recipientName={recipientName}
           message={message}
+          account={account}
           onClose={onClose}
         />
       )}
@@ -348,6 +456,7 @@ function IssuedCard({
   recipientEmail,
   recipientName,
   message,
+  account,
   onClose,
 }: {
   gem: DecoratedGem;
@@ -356,6 +465,7 @@ function IssuedCard({
   recipientEmail: string;
   recipientName: string;
   message: string;
+  account: string;
   onClose: () => void;
 }) {
   const holder = useRef<HTMLDivElement>(null);
@@ -366,6 +476,8 @@ function IssuedCard({
   // at the moment the card was issued.
   const [issuedAt] = useState(() => Date.now());
   const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  const [senderCopy, setSenderCopy] = useState<SenderCopyOutcome | undefined>(card.senderCopy);
+  const [resendingCopy, setResendingCopy] = useState(false);
   const [canvaState, setCanvaState] = useState<'idle' | 'working'>('idle');
   // Set only when the browser refused the tab, so the link can be offered.
   const [canvaLink, setCanvaLink] = useState<string>();
@@ -423,6 +535,8 @@ function IssuedCard({
            * only copy in existence and left a live card nobody could claim.
            */
           saveGiftHandoff({
+            chainId: env.chainId,
+            account,
             gemId: String(gem.gemId),
             card,
             recipientEmail,
@@ -456,6 +570,20 @@ function IssuedCard({
     } catch (sendError) {
       setEmailState('idle');
       setNotice(sendError instanceof Error ? sendError.message : 'The card could not be emailed.');
+    }
+  }
+
+  async function resendCopy() {
+    setResendingCopy(true);
+    try {
+      setSenderCopy(await resendGiftSenderCopy(card));
+    } catch (copyError) {
+      setSenderCopy({
+        status: 'failed',
+        reason: copyError instanceof Error ? copyError.message : 'The copy could not be emailed.',
+      });
+    } finally {
+      setResendingCopy(false);
     }
   }
 
@@ -527,9 +655,24 @@ function IssuedCard({
 
       <div className="rounded-[4px] border border-amber/25 bg-amber/[0.06] p-3">
         <p className="text-[11.5px] leading-relaxed text-ink-muted">
-          A printable QR copy is being emailed to your account. You can also save or print this
-          version now. The code is stored hashed and cannot be recovered later.
+          {senderCopy?.status === 'sent'
+            ? 'A printable QR copy was emailed to your account.'
+            : senderCopy
+              ? `Your printable copy was not emailed: ${senderCopy.reason}`
+              : 'Your printable copy has not been emailed yet.'}{' '}
+          Save or print this version now as well. The code is stored hashed and cannot be recovered
+          later.
         </p>
+        {senderCopy?.status !== 'sent' && senderCopy?.status !== 'unavailable' && (
+          <Button
+            variant="ghost"
+            className="mt-2"
+            disabled={resendingCopy}
+            onClick={() => void resendCopy()}
+          >
+            {resendingCopy ? 'Emailing your copy…' : 'Email my copy'}
+          </Button>
+        )}
       </div>
 
       <p className="text-[11.5px] leading-relaxed text-ink-dim">
@@ -638,7 +781,7 @@ function IssuedCard({
       <Button
         block
         onClick={() => {
-          clearGiftHandoff();
+          clearGiftHandoff({ chainId: env.chainId, account, giftId: card.giftId });
           onClose();
         }}
       >

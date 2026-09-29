@@ -46,6 +46,12 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Callers now wait for delivery so they can report it, so a stalled provider
+ * must not hold a request open until the platform kills it.
+ */
+export const EMAIL_SEND_TIMEOUT_MS = 15_000;
+
 export async function sendEmail(message: OutboundEmail): Promise<string> {
   const apiKey = Deno.env.get('RESEND_API_KEY')?.trim();
   const from = Deno.env.get('MAIL_FROM')?.trim();
@@ -66,6 +72,7 @@ export async function sendEmail(message: OutboundEmail): Promise<string> {
       ...(message.replyTo ? { reply_to: message.replyTo } : {}),
       ...(message.attachments?.length ? { attachments: message.attachments } : {}),
     }),
+    signal: AbortSignal.timeout(EMAIL_SEND_TIMEOUT_MS),
   });
 
   if (!response.ok) {

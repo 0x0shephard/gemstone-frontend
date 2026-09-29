@@ -225,6 +225,13 @@ export function metaMaskConnectConnector(
               analytics: { enabled: false, integrationType: 'wagmi-rainbowkit' },
               eventHandlers: handlers,
               skipAutoAnnounce: true,
+            }).catch((error) => {
+              // Client creation may fail while a mobile tab is resuming or the
+              // persisted session store is temporarily unavailable. Keeping a
+              // rejected promise here poisoned every later explicit reconnect
+              // until the whole page was reloaded.
+              instancePromise = undefined;
+              throw error;
             });
           }
           instance = await instancePromise;

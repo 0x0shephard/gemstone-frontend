@@ -2,6 +2,7 @@ import { getAccount, getPublicClient } from '@wagmi/core';
 import {
   BaseError,
   ContractFunctionRevertedError,
+  encodeFunctionData,
   formatUnits,
   isAddress,
   isAddressEqual,
@@ -17,6 +18,7 @@ import {
 import { projectionLogClients, wagmiConfig } from '@/providers/wagmi';
 import {
   NATIVE_ASSET,
+  giftOperatorAddress,
   requireDeploymentManifest,
   type DeploymentManifest,
 } from '@/config/contracts';
@@ -37,6 +39,7 @@ import type {
   CancelRedemptionRequest,
   ConfirmRedemptionRequest,
   ClaimRefundRequest,
+  ClaimReserveCreditRequest,
   ClaimTreasuryPayoutRequest,
   CreateOfferRequest,
   CreateSwapRequest,
@@ -48,6 +51,7 @@ import type {
   OfferRequest,
   PaymentAsset,
   PendingRefund,
+  PendingReserveCredit,
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
@@ -107,12 +111,19 @@ const erc20MetadataAbi = parseAbi([
  */
 const client = getPublicClient(wagmiConfig, { chainId: activeChain.id }) as PublicClient;
 let projectionPromise: Promise<ProjectionSnapshot> | undefined;
+let queuedProjectionPromise: Promise<ProjectionSnapshot> | undefined;
 let settledSnapshot: ProjectionSnapshot | undefined;
 let gemIdsPromise: Promise<bigint[]> | undefined;
 let secondaryFeePctPromise: Promise<number> | undefined;
+const gemReadCache = new Map<
+  string,
+  { promise: Promise<DecoratedGem | undefined>; settledAt?: number }
+>();
 window.addEventListener('dc:transaction-confirmed', () => {
-  projectionPromise = undefined;
   gemIdsPromise = undefined;
+  secondaryFeePctPromise = undefined;
+  gemReadCache.clear();
+  void projection(true).catch(() => undefined);
 });
 
 function contract(moduleName: keyof DeploymentManifest['addresses']) {
@@ -136,6 +147,28 @@ function contract(moduleName: keyof DeploymentManifest['addresses']) {
  */
 const PROJECTION_TTL_MS = 45_000;
 let projectionFetchedAt = 0;
+const blockTimestampCache = new Map<string, Promise<string>>();
+
+export async function occurredAtForBlock(blockNumber: bigint): Promise<string> {
+  const key = blockNumber.toString();
+  let pending = blockTimestampCache.get(key);
+  if (!pending) {
+    pending = client
+      .getBlock({ blockNumber })
+      .then((block) => new Date(Number(block.timestamp) * 1_000).toISOString())
+      .catch((error) => {
+        blockTimestampCache.delete(key);
+        throw error;
+      });
+    blockTimestampCache.set(key, pending);
+    // Activity history can be long. Bound the process cache without changing
+    // correctness; evicted timestamps are simply fetched on a later refresh.
+    if (blockTimestampCache.size > 2_000) {
+      blockTimestampCache.delete(blockTimestampCache.keys().next().value!);
+    }
+  }
+  return pending;
+}
 
 const bidPlacedEvent = parseAbiItem(
   'event BidPlaced(uint256 indexed gemId,address indexed bidder,address paymentAsset,uint256 amount,uint256 usdValue)',
@@ -152,33 +185,101 @@ const redemptionConfirmedEvent = parseAbiItem(
 const redemptionCancelledEvent = parseAbiItem(
   'event RedemptionCancelled(uint256 indexed tokenId,uint256 indexed gemId)',
 );
+const primaryPurchaseEvent = parseAbiItem(
+  'event BuyNow(uint256 indexed gemId,uint256 indexed tokenId,address indexed buyer,address paymentAsset,uint256 amount,uint256 usdValue)',
+);
+const marketplacePurchaseEvent = parseAbiItem(
+  'event Purchased(uint256 indexed tokenId,address indexed buyer,address paymentAsset,uint256 amount,uint256 usdValue)',
+);
+const marketplaceOfferCreatedEvent = parseAbiItem(
+  'event OfferCreated(uint256 indexed offerId,address indexed bidder,uint256 indexed tokenId,address paymentAsset,uint256 amount,uint256 saleUsdValue,uint64 expiry)',
+);
+const marketplaceOfferAcceptedEvent = parseAbiItem(
+  'event OfferAccepted(uint256 indexed offerId,address indexed seller)',
+);
+const swapAcceptedEvent = parseAbiItem(
+  'event OfferAccepted(uint256 indexed offerId,address indexed accepter)',
+);
+const reserveFundedEvent = parseAbiItem(
+  'event ReserveFunded(uint256 indexed gemId,address indexed asset,uint256 amount,uint256 usdValue)',
+);
+
+async function verifiedCallHash(
+  hashes: (Hash | undefined)[],
+  account: Address,
+  request: {
+    address: Address;
+    abi: Abi;
+    functionName: string;
+    args?: readonly unknown[];
+    value?: bigint;
+  },
+  expectedOperationKey?: string,
+): Promise<Hash | undefined> {
+  const expectedInput = encodeFunctionData({
+    abi: request.abi,
+    functionName: request.functionName,
+    args: request.args,
+  } as never).toLowerCase();
+  const expected =
+    expectedOperationKey ??
+    `${request.address.toLowerCase()}:${expectedInput}:${request.value ?? 0n}`;
+  for (const hash of [...hashes].reverse()) {
+    if (!hash) continue;
+    const transaction = await client.getTransaction({ hash }).catch(() => undefined);
+    if (
+      transaction &&
+      transaction.from.toLowerCase() === account.toLowerCase() &&
+      transaction.to &&
+      `${transaction.to.toLowerCase()}:${transaction.input.toLowerCase()}:${transaction.value}` ===
+        expected
+    ) {
+      return hash;
+    }
+  }
+}
+
+function startProjection(): Promise<ProjectionSnapshot> {
+  const running = Promise.resolve(syncProjection(client, { logClients: projectionLogClients }))
+    .then((snapshot) => {
+      settledSnapshot = snapshot;
+      // Freshness begins when work completes, not when a potentially long
+      // historical scan starts.
+      projectionFetchedAt = Date.now();
+      /*
+       * `syncProjection` announces `synced` before returning. Consumers that
+       * refetch on that event can therefore run one tick too early and still
+       * see no settled snapshot. Announce readiness only after publishing it.
+       */
+      window.dispatchEvent(new CustomEvent('dc:chain-snapshot-ready'));
+      return snapshot;
+    })
+    .finally(() => {
+      projectionPromise = undefined;
+    });
+  projectionPromise = running;
+  return running;
+}
 
 function projection(force = false): Promise<ProjectionSnapshot> {
-  if (!force && projectionPromise && Date.now() - projectionFetchedAt > PROJECTION_TTL_MS) {
-    projectionPromise = undefined;
-    // Discovery is bounded by the same clock: a gem registered by someone else
-    // is new state too, and probing for it is what makes it appear at all.
-    gemIdsPromise = undefined;
+  if (!force && settledSnapshot && Date.now() - projectionFetchedAt <= PROJECTION_TTL_MS) {
+    return Promise.resolve(settledSnapshot);
   }
-  if (force || !projectionPromise) {
-    projectionFetchedAt = Date.now();
-    projectionPromise = syncProjection(client, { logClients: projectionLogClients })
-      .then((snapshot) => {
-        settledSnapshot = snapshot;
-        /*
-         * `syncProjection` announces `synced` before returning. Consumers that
-         * refetch on that event can therefore run one tick too early and still
-         * see no settled snapshot. Announce readiness only after publishing it.
-         */
-        window.dispatchEvent(new CustomEvent('dc:chain-snapshot-ready'));
-        return snapshot;
-      })
-      .catch((error) => {
-        projectionPromise = undefined;
-        throw error;
+  if (projectionPromise) {
+    if (!force) return projectionPromise;
+    // Force never overlaps a running scan. Multiple callers share one queued
+    // follow-up, so an older IndexedDB writer cannot finish after a newer one.
+    queuedProjectionPromise ??= projectionPromise
+      .catch(() => undefined)
+      .then(() => startProjection())
+      .finally(() => {
+        queuedProjectionPromise = undefined;
       });
+    return queuedProjectionPromise;
   }
-  return projectionPromise;
+  if (queuedProjectionPromise) return queuedProjectionPromise;
+  gemIdsPromise = undefined;
+  return startProjection();
 }
 
 /**
@@ -284,9 +385,13 @@ async function readRegistryGem(gemId: bigint): Promise<RegistryGem> {
   })) as RegistryGem;
 }
 
-async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
+async function readGemUncached(
+  gemId: bigint,
+  includeTerminal = false,
+): Promise<DecoratedGem | undefined> {
   const registryGem = await readRegistryGem(gemId);
-  if (Number(registryGem.status) === 0 || Number(registryGem.status) === 8) return;
+  if (Number(registryGem.status) === 0 || (!includeTerminal && Number(registryGem.status) === 8))
+    return;
 
   const connectedAddress = getAccount(wagmiConfig).address;
   const [reserveBalanceUsd, reserveShortfallUsd, requiredReserveUsd, canRedeem, details, feePct] =
@@ -321,7 +426,14 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
           ...contract('Marketplace'),
           functionName: 'secondaryFeeBps',
         }) as Promise<number>
-      ).then((basisPoints) => Number(basisPoints) / 100)),
+      )
+        .then((basisPoints) => Number(basisPoints) / 100)
+        .catch((error) => {
+          // A transient RPC failure must be retryable; retaining a rejected
+          // promise made every later gem read fail for the life of the page.
+          secondaryFeePctPromise = undefined;
+          throw error;
+        })),
     ]);
 
   // Standard `attributes` first, then the flat keys used by gems registered before
@@ -349,7 +461,7 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   let listedPriceUsd: bigint | undefined;
   let listingWinningOfferId: bigint | undefined;
   let listingAuctionEnd: bigint | undefined;
-  if (registryGem.tokenId > 0n) {
+  if (registryGem.tokenId > 0n && Number(registryGem.status) !== 8) {
     /*
      * A failed ownership read is unknown ownership, never "no owner". Swallowing
      * this error let `getProfile` report zero tokens even though the NFT existed.
@@ -452,11 +564,59 @@ async function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   return decorate(gem);
 }
 
-async function allGems(): Promise<DecoratedGem[]> {
+const GEM_READ_TTL_MS = 15_000;
+
+function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
+  const key = gemId.toString();
+  const cached = gemReadCache.get(key);
+  if (cached && (!cached.settledAt || Date.now() - cached.settledAt <= GEM_READ_TTL_MS)) {
+    return cached.promise;
+  }
+  const entry: { promise: Promise<DecoratedGem | undefined>; settledAt?: number } = {
+    promise: Promise.resolve(undefined),
+  };
+  entry.promise = readGemUncached(gemId)
+    .then((gem) => {
+      entry.settledAt = Date.now();
+      return gem;
+    })
+    .catch((error) => {
+      gemReadCache.delete(key);
+      throw error;
+    });
+  gemReadCache.set(key, entry);
+  return entry.promise;
+}
+
+async function readGemBatch(): Promise<{ gems: DecoratedGem[]; failures: number }> {
   const ids = await gemIds();
-  return (await Promise.all(ids.map((gemId) => readGem(gemId)))).filter(
-    (gem): gem is DecoratedGem => Boolean(gem),
-  );
+  const results: PromiseSettledResult<DecoratedGem | undefined>[] = new Array(ids.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(6, ids.length) }, async () => {
+    while (cursor < ids.length) {
+      const index = cursor++;
+      try {
+        results[index] = { status: 'fulfilled', value: await readGem(ids[index]) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  });
+  await Promise.all(workers);
+  return {
+    gems: results.flatMap((result) =>
+      result?.status === 'fulfilled' && result.value ? [result.value] : [],
+    ),
+    failures: results.filter((result) => result?.status === 'rejected').length,
+  };
+}
+
+async function allGems(): Promise<DecoratedGem[]> {
+  const result = await readGemBatch();
+  if (result.failures > 0 && result.gems.length === 0) {
+    throw new Error('The gemstone catalogue could not be read from the chain.');
+  }
+  return result.gems;
 }
 
 async function usdToAsset(paymentAsset: Address, usdValue: bigint): Promise<bigint> {
@@ -685,6 +845,57 @@ async function getListings(): Promise<DecoratedGem[]> {
   return gems.filter((gem): gem is DecoratedGem => Boolean(gem?.owner));
 }
 
+function mintedGemId(snapshot: ProjectionSnapshot, tokenId: bigint): bigint | undefined {
+  const minted = snapshot.events.find(
+    (event) =>
+      event.module === 'DGENFT' &&
+      event.eventName === 'DgeMinted' &&
+      event.args.tokenId === tokenId,
+  );
+  return typeof minted?.args.gemId === 'bigint' ? minted.args.gemId : undefined;
+}
+
+function ownerAt(
+  snapshot: ProjectionSnapshot,
+  tokenId: bigint,
+  throughBlock: bigint,
+): Address | undefined {
+  const transfer = [...snapshot.events]
+    .reverse()
+    .find(
+      (event) =>
+        event.module === 'DGENFT' &&
+        event.eventName === 'Transfer' &&
+        event.blockNumber <= throughBlock &&
+        event.args.tokenId === tokenId &&
+        typeof event.args.to === 'string',
+    );
+  if (typeof transfer?.args.to === 'string') return transfer.args.to as Address;
+  const minted = snapshot.events.find(
+    (event) =>
+      event.module === 'DGENFT' &&
+      event.eventName === 'DgeMinted' &&
+      event.blockNumber <= throughBlock &&
+      event.args.tokenId === tokenId &&
+      typeof event.args.to === 'string',
+  );
+  return typeof minted?.args.to === 'string' ? (minted.args.to as Address) : undefined;
+}
+
+async function gemForHistoricalToken(
+  snapshot: ProjectionSnapshot,
+  tokenId: bigint,
+): Promise<DecoratedGem | undefined> {
+  const liveGemId = (await client.readContract({
+    ...contract('DGENFT'),
+    functionName: 'tokenGem',
+    args: [tokenId],
+  })) as bigint;
+  const gemId = liveGemId > 0n ? liveGemId : mintedGemId(snapshot, tokenId);
+  if (!gemId) return;
+  return liveGemId > 0n ? readGem(gemId) : readGemUncached(gemId, true);
+}
+
 async function getOffers(): Promise<Offer[]> {
   const snapshot = await projection();
   const createdEvents = snapshot.events.filter(
@@ -708,12 +919,7 @@ async function getOffers(): Promise<Offer[]> {
       const tokenId = state[1] || (created.args.tokenId as bigint);
       const bidder =
         state[0] === zeroAddress ? (created.args.bidder as Address) : (state[0] as Address);
-      const gemId = (await client.readContract({
-        ...contract('DGENFT'),
-        functionName: 'tokenGem',
-        args: [tokenId],
-      })) as bigint;
-      const gem = await readGem(gemId);
+      const gem = await gemForHistoricalToken(snapshot, tokenId);
       if (!gem) return;
       const [tokenOwner, listing] = await Promise.all([
         client
@@ -722,12 +928,16 @@ async function getOffers(): Promise<Offer[]> {
             functionName: 'ownerOf',
             args: [tokenId],
           })
-          .catch(() => zeroAddress) as Promise<Address>,
-        client.readContract({
-          ...contract('Marketplace'),
-          functionName: 'listings',
-          args: [tokenId],
-        }) as Promise<readonly [Address, bigint]>,
+          .catch(
+            () => ownerAt(snapshot, tokenId, created.blockNumber) ?? zeroAddress,
+          ) as Promise<Address>,
+        client
+          .readContract({
+            ...contract('Marketplace'),
+            functionName: 'listings',
+            args: [tokenId],
+          })
+          .catch(() => [zeroAddress, 0n] as const) as Promise<readonly [Address, bigint]>,
       ]);
       const expiry = state[5] || (created.args.expiry as bigint);
       const expired = expiry <= now;
@@ -800,28 +1010,18 @@ async function getSwaps(): Promise<SwapRequest[]> {
       })) as readonly [Address, bigint, bigint, Address, bigint, boolean, bigint, boolean];
       const offeredTokenId = state[1] || (created.args.offeredTokenId as bigint);
       const requestedTokenId = state[2] || (created.args.requestedTokenId as bigint);
-      const [offeredGemId, requestedGemId] = (await Promise.all([
-        client.readContract({
-          ...contract('DGENFT'),
-          functionName: 'tokenGem',
-          args: [offeredTokenId],
-        }),
-        client.readContract({
-          ...contract('DGENFT'),
-          functionName: 'tokenGem',
-          args: [requestedTokenId],
-        }),
-      ])) as [bigint, bigint];
       const [offered, requested, requestedOwner] = await Promise.all([
-        readGem(offeredGemId),
-        readGem(requestedGemId),
+        gemForHistoricalToken(snapshot, offeredTokenId),
+        gemForHistoricalToken(snapshot, requestedTokenId),
         client
           .readContract({
             ...contract('DGENFT'),
             functionName: 'ownerOf',
             args: [requestedTokenId],
           })
-          .catch(() => zeroAddress) as Promise<Address>,
+          .catch(
+            () => ownerAt(snapshot, requestedTokenId, created.blockNumber) ?? zeroAddress,
+          ) as Promise<Address>,
       ]);
       if (!offered || !requested) return;
       const expiry = state[6] || (created.args.expiry as bigint);
@@ -919,13 +1119,13 @@ async function getRedemptions(): Promise<Redemption[]> {
   return results.filter(Boolean) as Redemption[];
 }
 
-function activityFor(
+async function activityFor(
   snapshot: ProjectionSnapshot,
   address: string | undefined,
   gems: DecoratedGem[],
   offers: Offer[],
   swaps: SwapRequest[],
-): ActivityItem[] {
+): Promise<ActivityItem[]> {
   if (!address) return [];
   const normalized = address.toLowerCase();
   const redemptionOwners = new Map<string, string>();
@@ -949,6 +1149,19 @@ function activityFor(
       )
       .map((offer) => offer.offerId.toString()),
   );
+  for (const event of snapshot.events) {
+    if (
+      event.module !== 'Marketplace' ||
+      event.eventName !== 'OfferCreated' ||
+      typeof event.args.offerId !== 'bigint' ||
+      typeof event.args.tokenId !== 'bigint'
+    )
+      continue;
+    const historicalOwner = ownerAt(snapshot, event.args.tokenId, event.blockNumber);
+    if (historicalOwner?.toLowerCase() === normalized) {
+      relevantOfferIds.add(event.args.offerId.toString());
+    }
+  }
   const relevantSwapIds = new Set(
     swaps
       .filter(
@@ -958,6 +1171,19 @@ function activityFor(
       )
       .map((swap) => swap.offerId.toString()),
   );
+  for (const event of snapshot.events) {
+    if (
+      event.module !== 'SwapEscrow' ||
+      event.eventName !== 'OfferCreated' ||
+      typeof event.args.offerId !== 'bigint' ||
+      typeof event.args.requestedTokenId !== 'bigint'
+    )
+      continue;
+    const requestedOwner = ownerAt(snapshot, event.args.requestedTokenId, event.blockNumber);
+    if (requestedOwner?.toLowerCase() === normalized) {
+      relevantSwapIds.add(event.args.offerId.toString());
+    }
+  }
   const kindLabel = (module: string, eventName: string) => {
     if (module === 'PrimarySaleAuction' && eventName === 'BidPlaced') return 'Minting bid placed';
     if (module === 'Marketplace' && eventName === 'OfferCreated') return 'Token bid placed';
@@ -977,7 +1203,7 @@ function activityFor(
     }
     return eventName.replace(/([a-z])([A-Z])/g, '$1 $2');
   };
-  return snapshot.events
+  const events = snapshot.events
     .filter((event) => {
       const direct = Object.values(event.args).some(
         (value) => typeof value === 'string' && value.toLowerCase() === normalized,
@@ -994,48 +1220,61 @@ function activityFor(
           Boolean(tokenId && redemptionOwners.get(tokenId) === normalized))
       );
     })
-    .slice(-50)
-    .reverse()
-    .map((event) => {
-      const gemId = typeof event.args.gemId === 'bigint' ? event.args.gemId : undefined;
-      const tokenId =
-        typeof event.args.tokenId === 'bigint'
-          ? event.args.tokenId
-          : typeof event.args.offeredTokenId === 'bigint'
-            ? event.args.offeredTokenId
-            : undefined;
-      const gem = gems.find(
-        (candidate) =>
-          (gemId !== undefined && candidate.gemId === gemId) ||
-          (tokenId !== undefined && candidate.tokenId === tokenId),
-      );
-      const usdValue =
-        typeof event.args.usdValue === 'bigint'
-          ? event.args.usdValue
-          : typeof event.args.saleUsdValue === 'bigint'
-            ? event.args.saleUsdValue
-            : undefined;
-      return {
-        kind: kindLabel(event.module, event.eventName),
-        gem: gem?.name ?? event.module,
-        displayId:
-          gem?.displayId ??
-          (gemId !== undefined
-            ? `DGE-${gemId}`
-            : tokenId !== undefined
-              ? `Token #${tokenId}`
-              : 'Protocol'),
-        amount:
-          usdValue !== undefined ? `$${Number(formatUnits(usdValue, 18)).toLocaleString()}` : '—',
-        date: `Block ${event.blockNumber}`,
-        color: event.finalized ? 'var(--dc-emerald)' : 'var(--dc-amber)',
-        txHash: event.transactionHash,
-      };
-    });
+    .reverse();
+  // JSON-RPC logs do not include block timestamps. Load each distinct block
+  // once so gift lifecycle timestamps and chain activity share a real clock.
+  // Small batches avoid flooding a mobile RPC during a cold history sync.
+  const occurredAt = new Map<string, string>();
+  const blockNumbers = [...new Set(events.map((event) => event.blockNumber.toString()))];
+  for (let offset = 0; offset < blockNumbers.length; offset += 8) {
+    const batch = blockNumbers.slice(offset, offset + 8);
+    const values = await Promise.all(
+      batch.map(async (value) => [value, await occurredAtForBlock(BigInt(value))] as const),
+    );
+    for (const [blockNumber, timestamp] of values) occurredAt.set(blockNumber, timestamp);
+  }
+  return events.map((event) => {
+    const gemId = typeof event.args.gemId === 'bigint' ? event.args.gemId : undefined;
+    const tokenId =
+      typeof event.args.tokenId === 'bigint'
+        ? event.args.tokenId
+        : typeof event.args.offeredTokenId === 'bigint'
+          ? event.args.offeredTokenId
+          : undefined;
+    const gem = gems.find(
+      (candidate) =>
+        (gemId !== undefined && candidate.gemId === gemId) ||
+        (tokenId !== undefined && candidate.tokenId === tokenId),
+    );
+    const usdValue =
+      typeof event.args.usdValue === 'bigint'
+        ? event.args.usdValue
+        : typeof event.args.saleUsdValue === 'bigint'
+          ? event.args.saleUsdValue
+          : undefined;
+    return {
+      kind: kindLabel(event.module, event.eventName),
+      gem: gem?.name ?? event.module,
+      displayId:
+        gem?.displayId ??
+        (gemId !== undefined
+          ? `DGE-${gemId}`
+          : tokenId !== undefined
+            ? `Token #${tokenId}`
+            : 'Protocol'),
+      amount:
+        usdValue !== undefined ? `$${Number(formatUnits(usdValue, 18)).toLocaleString()}` : '—',
+      date: `Block ${event.blockNumber}`,
+      occurredAt: occurredAt.get(event.blockNumber.toString()),
+      chainOrder: `${event.blockNumber.toString().padStart(32, '0')}:${String(event.logIndex).padStart(10, '0')}`,
+      color: event.finalized ? 'var(--dc-emerald)' : 'var(--dc-amber)',
+      txHash: event.transactionHash,
+    };
+  });
 }
 
-async function refresh(): Promise<void> {
-  await projection(true);
+function refresh(): void {
+  void projection(true).catch(() => undefined);
 }
 
 export const chainService: IDataService = {
@@ -1054,7 +1293,15 @@ export const chainService: IDataService = {
      * `ownerOf` read, doubling the chance that a phone's transient RPC failure
      * would sink the portfolio. Reuse the same authoritative snapshot instead.
      */
-    const gems = await allGems();
+    const gemBatch = await readGemBatch();
+    const gems = gemBatch.gems;
+    const holdingsSection: ProfileData['sections']['holdings'] =
+      gemBatch.failures > 0
+        ? {
+            state: 'partial',
+            message: `${gemBatch.failures} gemstone${gemBatch.failures === 1 ? '' : 's'} could not be refreshed. Known holdings are still shown.`,
+          }
+        : { state: 'ready' };
     const listings = gems.filter((gem) => Boolean(gem.owner));
     const walletOwned = address
       ? gems.filter((gem) => gem.owner && isAddressEqual(gem.owner, address as Address))
@@ -1102,71 +1349,96 @@ export const chainService: IDataService = {
         swaps: [],
         redemptions: [],
         activity: [],
+        sections: {
+          holdings: holdingsSection,
+          bids: { state: 'syncing', message: 'Auction activity is still syncing.' },
+          offers: { state: 'syncing', message: 'Offer history is still syncing.' },
+          swaps: { state: 'syncing', message: 'Swap history is still syncing.' },
+          redemptions: { state: 'syncing', message: 'Redemptions are still syncing.' },
+          activity: { state: 'syncing', message: 'History is still syncing.' },
+        },
         stats: { ...ownedStats(), activeBids: 0 },
       };
     }
     const bidEvents = latestBidEventsForAddress(snapshot.events, address);
     const now = BigInt(Math.floor(Date.now() / 1_000));
-    const bids = (
-      await Promise.all(
-        bidEvents.map(async (event) => {
-          const gemId = event.args.gemId as bigint;
-          const [gem, auction] = await Promise.all([
-            readGem(gemId),
-            client.readContract({
-              ...contract('PrimarySaleAuction'),
-              functionName: 'auctions',
-              args: [gemId],
-            }) as Promise<
-              readonly [
-                boolean,
-                boolean,
-                bigint,
-                bigint,
-                bigint,
-                Address,
-                Address,
-                bigint,
-                bigint,
-                bigint,
-              ]
-            >,
-          ]);
-          /*
-           * A settled auction is finished business, win or lose.
-           *
-           * Only `exists` was checked, so a bid stayed in the list for good once
-           * the auction closed — reading "Leading · Ended" beside a token that
-           * was already sitting in the portfolio. Settlement is the moment there
-           * is nothing left to do: the winner has the token, and a loser's stake
-           * is a claimable refund shown on the auctions page.
-           *
-           * An auction that has ended but is *not* yet settled stays, because
-           * the sweep has still to act on it.
-           */
-          if (!gem || !auction[0] || auction[1]) return;
-          const mine = event.args.usdValue as bigint;
-          const secondsLeft = Number(auction[3] > now ? auction[3] - now : 0n);
-          const leading =
-            Boolean(address) &&
-            auction[5] !== zeroAddress &&
-            isAddressEqual(auction[5], address as Address);
-          return {
-            gem,
-            myBidFmt: `$${Number(formatUnits(mine, 18)).toLocaleString()}`,
-            topBidFmt: `$${Number(formatUnits(auction[8], 18)).toLocaleString()}`,
-            status: leading ? ('Leading' as const) : ('Outbid' as const),
-            statusColor: leading ? 'var(--dc-emerald)' : 'var(--dc-amber)',
-            secondsLeft,
-          };
-        }),
-      )
-    ).filter((bid): bid is Bid => Boolean(bid));
-    const [offers, swaps, redemptions] = await Promise.all([
+    const bidPromise = Promise.all(
+      bidEvents.map(async (event) => {
+        const gemId = event.args.gemId as bigint;
+        const [gem, auction] = await Promise.all([
+          readGem(gemId),
+          client.readContract({
+            ...contract('PrimarySaleAuction'),
+            functionName: 'auctions',
+            args: [gemId],
+          }) as Promise<
+            readonly [
+              boolean,
+              boolean,
+              bigint,
+              bigint,
+              bigint,
+              Address,
+              Address,
+              bigint,
+              bigint,
+              bigint,
+            ]
+          >,
+        ]);
+        /*
+         * A settled auction is finished business, win or lose.
+         *
+         * Only `exists` was checked, so a bid stayed in the list for good once
+         * the auction closed — reading "Leading · Ended" beside a token that
+         * was already sitting in the portfolio. Settlement is the moment there
+         * is nothing left to do: the winner has the token, and a loser's stake
+         * is a claimable refund shown on the auctions page.
+         *
+         * An auction that has ended but is *not* yet settled stays, because
+         * the sweep has still to act on it.
+         */
+        if (!gem || !auction[0] || auction[1]) return;
+        const mine = event.args.usdValue as bigint;
+        const secondsLeft = Number(auction[3] > now ? auction[3] - now : 0n);
+        const leading =
+          Boolean(address) &&
+          auction[5] !== zeroAddress &&
+          isAddressEqual(auction[5], address as Address);
+        return {
+          gem,
+          myBidFmt: `$${Number(formatUnits(mine, 18)).toLocaleString()}`,
+          topBidFmt: `$${Number(formatUnits(auction[8], 18)).toLocaleString()}`,
+          status: leading ? ('Leading' as const) : ('Outbid' as const),
+          statusColor: leading ? 'var(--dc-emerald)' : 'var(--dc-amber)',
+          secondsLeft,
+        };
+      }),
+    ).then((rows) => rows.filter((bid): bid is Bid => Boolean(bid)));
+    const [bidsResult, offersResult, swapsResult, redemptionsResult] = await Promise.allSettled([
+      bidPromise,
       getOffers(),
       getSwaps(),
       getRedemptions(),
     ]);
+    const bids = bidsResult.status === 'fulfilled' ? bidsResult.value : [];
+    const offers = offersResult.status === 'fulfilled' ? offersResult.value : [];
+    const swaps = swapsResult.status === 'fulfilled' ? swapsResult.value : [];
+    const redemptions = redemptionsResult.status === 'fulfilled' ? redemptionsResult.value : [];
+    const activityResult = await Promise.allSettled([
+      activityFor(snapshot, address, gems, offers, swaps),
+    ]).then(([result]) => result);
+    const activity = activityResult.status === 'fulfilled' ? activityResult.value : [];
+    const sectionFor = (
+      result: PromiseSettledResult<unknown>,
+      label: string,
+    ): ProfileData['sections']['bids'] =>
+      result.status === 'fulfilled'
+        ? { state: snapshot.status.partiallySynced ? 'partial' : 'ready' }
+        : {
+            state: 'error',
+            message: `${label} could not be refreshed. Your holdings are unaffected.`,
+          };
     const normalizedAddress = address?.toLowerCase();
     /*
      * A proposed swap transfers the offered NFT into SwapEscrow immediately.
@@ -1240,7 +1512,23 @@ export const chainService: IDataService = {
               redemption.custodian.toLowerCase() === normalizedAddress,
           )
         : [],
-      activity: activityFor(snapshot, address, gems, offers, swaps),
+      activity,
+      sections: {
+        holdings: holdingsSection,
+        bids: sectionFor(bidsResult, 'Auction bids'),
+        offers: sectionFor(offersResult, 'Offers'),
+        swaps: sectionFor(swapsResult, 'Swaps'),
+        redemptions: sectionFor(redemptionsResult, 'Redemptions'),
+        activity:
+          activityResult.status === 'rejected'
+            ? {
+                state: 'error',
+                message: 'History timestamps could not be refreshed. Your holdings are unaffected.',
+              }
+            : snapshot.status.partiallySynced
+              ? { state: 'partial', message: 'Showing cached history while chain sync catches up.' }
+              : { state: 'ready' },
+      },
       stats: {
         ...ownedStats(),
         activeBids: bids.filter((bid) => bid.secondsLeft > 0).length,
@@ -1346,6 +1634,29 @@ export const chainService: IDataService = {
     );
     return refunds.filter((refund): refund is PendingRefund => Boolean(refund));
   },
+  getPendingReserveCredits: async (address?: string): Promise<PendingReserveCredit[]> => {
+    if (!address || !isAddress(address)) return [];
+    const assets = await getPaymentAssets();
+    const credits = await Promise.all(
+      assets.map(async (asset) => {
+        const amount = (await client.readContract({
+          ...contract('ReserveManager'),
+          functionName: 'pendingReserveClaims',
+          args: [address, asset.address],
+        })) as bigint;
+        if (amount === 0n) return;
+        return {
+          paymentAsset: asset.address,
+          symbol: asset.symbol,
+          amount,
+          amountFmt: `${Number(formatUnits(amount, asset.decimals)).toLocaleString('en-US', {
+            maximumFractionDigits: asset.decimals,
+          })} ${asset.symbol}`,
+        };
+      }),
+    );
+    return credits.filter((credit): credit is PendingReserveCredit => Boolean(credit));
+  },
   getPendingTreasuryPayout: async (
     address?: string,
   ): Promise<PendingTreasuryPayout | undefined> => {
@@ -1379,13 +1690,35 @@ export const chainService: IDataService = {
       request.maximumAmount ?? (await usdToAsset(request.paymentAsset, gem.priceUsd + shortfall));
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.PrimarySaleAuction;
-    const result = await runContractTransaction({
+    const fromBlock = await client.getBlockNumber();
+    const call = {
       ...contract('PrimarySaleAuction'),
       functionName: 'buyNow',
+      intentKey: `buyNow:${request.gemId}`,
       args: [request.gemId, request.paymentAsset, amount],
       ...params,
-    });
-    await refresh();
+      reconcileBroadcast: async (
+        account: Address,
+        observedFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.PrimarySaleAuction,
+          event: primaryPurchaseEvent,
+          args: { gemId: request.gemId, buyer: account },
+          fromBlock: observedFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
     return result;
   },
   buy: async (request: BuyListingRequest): Promise<TxResult> => {
@@ -1413,13 +1746,35 @@ export const chainService: IDataService = {
       request.maximumAmount ?? (await usdToAsset(request.paymentAsset, listing[1] + shortfall));
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.Marketplace;
-    const result = await runContractTransaction({
+    const fromBlock = await client.getBlockNumber();
+    const call = {
       ...contract('Marketplace'),
       functionName: 'buy',
+      intentKey: `buy:${request.tokenId}`,
       args: [request.tokenId, request.paymentAsset, amount],
       ...params,
-    });
-    await refresh();
+      reconcileBroadcast: async (
+        account: Address,
+        observedFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.Marketplace,
+          event: marketplacePurchaseEvent,
+          args: { tokenId: request.tokenId, buyer: account },
+          fromBlock: observedFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
     return result;
   },
   // Both refresh: a listing changes ownership to the Marketplace escrow and adds
@@ -1432,25 +1787,25 @@ export const chainService: IDataService = {
       args: [request.tokenId, request.priceUsd],
       approvals: [
         {
-          kind: 'erc721',
+          kind: 'erc721' as const,
           token: manifest.addresses.DGENFT,
           spender: manifest.addresses.Marketplace,
           amountOrTokenId: request.tokenId,
         },
       ],
-      reconcileBroadcast: async (account) => {
+      reconcileBroadcast: async (account, recoveryFromBlock) => {
         const logs = await client.getLogs({
           address: manifest.addresses.Marketplace,
           event: tokenListedEvent,
           args: { tokenId: request.tokenId, seller: account },
-          fromBlock,
+          fromBlock: recoveryFromBlock ?? fromBlock,
           toBlock: 'latest',
         });
         return [...logs].reverse().find((log) => (log.args.priceUsd ?? 0n) === request.priceUsd)
           ?.transactionHash;
       },
     });
-    await refresh();
+    refresh();
     return result;
   },
   cancelListing: async (request: CancelListingRequest): Promise<TxResult> => {
@@ -1459,7 +1814,7 @@ export const chainService: IDataService = {
       functionName: 'cancel',
       args: [request.tokenId],
     });
-    await refresh();
+    refresh();
     return result;
   },
   getTokenApprovals: async (tokenIds: bigint[]): Promise<Record<string, Address>> => {
@@ -1487,7 +1842,7 @@ export const chainService: IDataService = {
      * Marketplace escrow, not by the seller, and passing the connected wallet
      * would produce an `ERC721IncorrectOwner` revert that says nothing useful.
      */
-    const [owner, locked] = (await Promise.all([
+    const [owner, locked, gemId] = (await Promise.all([
       client.readContract({
         ...contract('DGENFT'),
         functionName: 'ownerOf',
@@ -1498,7 +1853,12 @@ export const chainService: IDataService = {
         functionName: 'transferLocked',
         args: [request.tokenId],
       }),
-    ])) as [Address, boolean];
+      client.readContract({
+        ...contract('DGENFT'),
+        functionName: 'tokenGem',
+        args: [request.tokenId],
+      }),
+    ])) as [Address, boolean, bigint];
 
     if (locked) {
       throw new Error(
@@ -1508,13 +1868,21 @@ export const chainService: IDataService = {
     if (isAddressEqual(owner, manifest.addresses.Marketplace)) {
       throw new Error('This token is escrowed by an active listing. Cancel the listing first.');
     }
+    const reserveBalance = (await client.readContract({
+      ...contract('ReserveManager'),
+      functionName: 'reserveBalanceUsd',
+      args: [gemId],
+    })) as bigint;
+    if (reserveBalance === 0n) {
+      throw new Error('Fund this gemstone’s reserve above zero before transferring it.');
+    }
 
     const result = await runContractTransaction({
       ...contract('DGENFT'),
       functionName: 'safeTransferFrom',
       args: [owner, request.to, request.tokenId],
     });
-    await refresh();
+    refresh();
     return result;
   },
   approveTransfer: (request: ApproveTransferRequest) =>
@@ -1531,26 +1899,8 @@ export const chainService: IDataService = {
       args: [zeroAddress, request.tokenId],
     }),
   bid: async (request: BidRequest) => {
-    const [gem, auctionBefore, fromBlock] = await Promise.all([
+    const [gem, fromBlock] = await Promise.all([
       readRegistryGem(request.gemId),
-      client.readContract({
-        ...contract('PrimarySaleAuction'),
-        functionName: 'auctions',
-        args: [request.gemId],
-      }) as Promise<
-        readonly [
-          boolean,
-          boolean,
-          bigint,
-          bigint,
-          bigint,
-          Address,
-          Address,
-          bigint,
-          bigint,
-          bigint,
-        ]
-      >,
       client.getBlockNumber(),
     ]);
     const shortfall = (await client.readContract({
@@ -1561,28 +1911,29 @@ export const chainService: IDataService = {
     const amount = await usdToAsset(request.paymentAsset, request.saleAmountUsd + shortfall);
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.PrimarySaleAuction;
-    return runContractTransaction({
+    const call = {
       ...contract('PrimarySaleAuction'),
       functionName: 'bid',
+      intentKey: `bid:${request.gemId}`,
       args: [request.gemId, request.paymentAsset, amount],
       ...params,
-      reconcileBroadcast: async (account) => {
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
         const logs = await client.getLogs({
           address: manifest.addresses.PrimarySaleAuction,
           event: bidPlacedEvent,
           args: { gemId: request.gemId, bidder: account },
-          fromBlock,
+          fromBlock: recoveryFromBlock ?? fromBlock,
           toBlock: 'latest',
         });
-        return [...logs]
-          .reverse()
-          .find(
-            (log) =>
-              (log.args.usdValue ?? 0n) >= request.saleAmountUsd &&
-              (log.args.usdValue ?? 0n) > auctionBefore[8],
-          )?.transactionHash;
+        const candidates = logs.map((log) => log.transactionHash);
+        return verifiedCallHash(candidates, account, call, expectedOperationKey);
       },
-    });
+    };
+    return runContractTransaction(call);
   },
   settleAuction: (request: SettleAuctionRequest) =>
     runContractTransaction({
@@ -1601,6 +1952,12 @@ export const chainService: IDataService = {
       ...contract('PrimarySaleAuction'),
       functionName: 'claimRefund',
       args: [request.paymentAsset],
+    }),
+  claimReserveCredit: (request: ClaimReserveCreditRequest) =>
+    runContractTransaction({
+      ...contract('ReserveManager'),
+      functionName: 'claimReserveCredit',
+      args: [request.paymentAsset, request.recipient],
     }),
   claimTreasuryPayout: (request: ClaimTreasuryPayoutRequest) =>
     runContractTransaction({
@@ -1623,12 +1980,34 @@ export const chainService: IDataService = {
     const amount = await usdToAsset(request.paymentAsset, request.saleAmountUsd + shortfall);
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.Marketplace;
-    return runContractTransaction({
+    const fromBlock = await client.getBlockNumber();
+    const call = {
       ...contract('Marketplace'),
       functionName: 'createOffer',
+      intentKey: `createOffer:${request.tokenId}`,
       args: [request.tokenId, request.paymentAsset, amount],
       ...params,
-    });
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.Marketplace,
+          event: marketplaceOfferCreatedEvent,
+          args: { bidder: account, tokenId: request.tokenId },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
   },
   acceptOffer: async (request: OfferRequest) => {
     const offer = (await client.readContract({
@@ -1636,19 +2015,41 @@ export const chainService: IDataService = {
       functionName: 'offers',
       args: [request.offerId],
     })) as readonly [Address, bigint, Address, bigint, bigint, bigint, boolean];
-    return runContractTransaction({
+    const fromBlock = await client.getBlockNumber();
+    const call = {
       ...contract('Marketplace'),
       functionName: 'acceptOffer',
+      intentKey: `acceptOffer:${request.offerId}`,
       args: [request.offerId],
       approvals: [
         {
-          kind: 'erc721',
+          kind: 'erc721' as const,
           token: manifest.addresses.DGENFT,
           spender: manifest.addresses.Marketplace,
           amountOrTokenId: offer[1],
         },
       ],
-    });
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.Marketplace,
+          event: marketplaceOfferAcceptedEvent,
+          args: { offerId: request.offerId, seller: account },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
   },
   refundExpiredOffer: (request: OfferRequest) =>
     runContractTransaction({
@@ -1691,6 +2092,22 @@ export const chainService: IDataService = {
         'WRONG_WALLET',
       );
     }
+    if (isAddressEqual(offeredOwner, requestedOwner)) {
+      throw new TransactionGuardError(
+        'Choose a requested token owned by another wallet. You cannot swap two tokens from the same owner.',
+        'CONTRACT_REVERTED',
+      );
+    }
+    if (
+      isAddressEqual(offeredOwner, manifest.addresses.Marketplace) ||
+      isAddressEqual(offeredOwner, manifest.addresses.SwapEscrow) ||
+      Boolean(giftOperatorAddress && isAddressEqual(offeredOwner, giftOperatorAddress))
+    ) {
+      throw new TransactionGuardError(
+        'The offered token must be held directly in your wallet, not marketplace, gift, or swap custody.',
+        'CONTRACT_REVERTED',
+      );
+    }
     if (offeredLocked) {
       throw new TransactionGuardError(
         'The token you are offering is in redemption. Cancel that redemption before swapping it.',
@@ -1705,7 +2122,8 @@ export const chainService: IDataService = {
     }
     if (
       isAddressEqual(requestedOwner, manifest.addresses.Marketplace) ||
-      isAddressEqual(requestedOwner, manifest.addresses.SwapEscrow)
+      isAddressEqual(requestedOwner, manifest.addresses.SwapEscrow) ||
+      Boolean(giftOperatorAddress && isAddressEqual(requestedOwner, giftOperatorAddress))
     ) {
       throw new TransactionGuardError(
         'The requested token is already held by another marketplace or swap escrow. Choose a token held directly in its owner’s wallet.',
@@ -1728,9 +2146,10 @@ export const chainService: IDataService = {
         amountOrTokenId: cashAmount,
       });
     }
-    return runContractTransaction({
+    const call = {
       ...contract('SwapEscrow'),
       functionName: 'createOffer',
+      intentKey: `createSwap:${request.offeredTokenId}`,
       args: [
         request.offeredTokenId,
         request.requestedTokenId,
@@ -1743,26 +2162,27 @@ export const chainService: IDataService = {
       paymentAmount: request.proposerPays ? cashAmount : undefined,
       value: request.proposerPays && request.paymentAsset === NATIVE_ASSET ? cashAmount : undefined,
       approvals,
-      reconcileBroadcast: async (account) => {
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
         const logs = await client.getLogs({
           address: manifest.addresses.SwapEscrow,
           event: swapCreatedEvent,
           args: { proposer: account, offeredTokenId: request.offeredTokenId },
-          fromBlock,
+          fromBlock: recoveryFromBlock ?? fromBlock,
           toBlock: 'latest',
         });
-        return [...logs]
-          .reverse()
-          .find(
-            (log) =>
-              log.args.requestedTokenId === request.requestedTokenId &&
-              log.args.cashAsset === request.paymentAsset &&
-              log.args.cashAmount === cashAmount &&
-              log.args.proposerPaysCash === request.proposerPays &&
-              log.args.expiry === request.expiresAt,
-          )?.transactionHash;
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
       },
-    });
+    };
+    return runContractTransaction(call);
   },
   acceptSwap: async (request: SwapRequestAction) => {
     const offer = (await client.readContract({
@@ -1776,13 +2196,19 @@ export const chainService: IDataService = {
         'CONTRACT_REVERTED',
       );
     }
-    const [latestBlock, requestedOwner] = await Promise.all([
+    const [latestBlock, requestedOwner, requestedLocked, fromBlock] = await Promise.all([
       client.getBlock(),
       client.readContract({
         ...contract('DGENFT'),
         functionName: 'ownerOf',
         args: [offer[2]],
       }) as Promise<Address>,
+      client.readContract({
+        ...contract('DGENFT'),
+        functionName: 'transferLocked',
+        args: [offer[2]],
+      }) as Promise<boolean>,
+      client.getBlockNumber(),
     ]);
     if (offer[6] <= latestBlock.timestamp) {
       throw new TransactionGuardError(
@@ -1795,6 +2221,12 @@ export const chainService: IDataService = {
       throw new TransactionGuardError(
         `Connect the wallet that owns requested token #${offer[2].toString()} to accept this swap.`,
         'WRONG_WALLET',
+      );
+    }
+    if (requestedLocked) {
+      throw new TransactionGuardError(
+        'The requested token entered redemption and cannot be swapped until its owner cancels redemption.',
+        'CONTRACT_REVERTED',
       );
     }
     const approvals: Approval[] = [
@@ -1813,15 +2245,36 @@ export const chainService: IDataService = {
         amountOrTokenId: offer[4],
       });
     }
-    return runContractTransaction({
+    const call = {
       ...contract('SwapEscrow'),
       functionName: 'acceptOffer',
+      intentKey: `acceptSwap:${request.offerId}`,
       args: [request.offerId],
       paymentAsset: offer[5] ? undefined : offer[3],
       paymentAmount: offer[5] ? undefined : offer[4],
       value: !offer[5] && offer[3] === NATIVE_ASSET ? offer[4] : undefined,
       approvals,
-    });
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.SwapEscrow,
+          event: swapAcceptedEvent,
+          args: { offerId: request.offerId, accepter: account },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
   },
   cancelSwap: (request: SwapRequestAction) =>
     runContractTransaction({
@@ -1845,18 +2298,18 @@ export const chainService: IDataService = {
       ...contract('RedemptionManager'),
       functionName: 'cancelRedemption',
       args: [request.tokenId],
-      reconcileBroadcast: async () => {
+      reconcileBroadcast: async (_account, recoveryFromBlock) => {
         const logs = await client.getLogs({
           address: manifest.addresses.RedemptionManager,
           event: redemptionCancelledEvent,
           args: { tokenId: request.tokenId },
-          fromBlock,
+          fromBlock: recoveryFromBlock ?? fromBlock,
           toBlock: 'latest',
         });
         return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
       },
     });
-    await refresh();
+    refresh();
     return result;
   },
   /*
@@ -1871,46 +2324,89 @@ export const chainService: IDataService = {
       ...contract('RedemptionManager'),
       functionName: 'confirmRedemption',
       args: [request.tokenId],
-      reconcileBroadcast: async () => {
+      reconcileBroadcast: async (_account, recoveryFromBlock) => {
         const logs = await client.getLogs({
           address: manifest.addresses.RedemptionManager,
           event: redemptionConfirmedEvent,
           args: { tokenId: request.tokenId },
-          fromBlock,
+          fromBlock: recoveryFromBlock ?? fromBlock,
           toBlock: 'latest',
         });
         return [...logs].reverse().find((log) => log.transactionHash)?.transactionHash;
       },
     });
-    await refresh();
+    refresh();
     return result;
   },
   fundReserve: async (request: FundReserveRequest) => {
     const amount = await usdToAsset(request.paymentAsset, request.amountUsd);
+    const fromBlock = await client.getBlockNumber();
     if (request.paymentAsset === NATIVE_ASSET) {
-      return runContractTransaction({
+      const call = {
         ...contract('ReserveManager'),
         functionName: 'fundNative',
+        intentKey: `fundReserve:${request.gemId}`,
         args: [request.gemId],
         value: amount,
         paymentAsset: request.paymentAsset,
         paymentAmount: amount,
-      });
+        reconcileBroadcast: async (
+          account: Address,
+          observedFromBlock?: bigint,
+          expectedOperationKey?: string,
+        ) => {
+          const logs = await client.getLogs({
+            address: manifest.addresses.ReserveManager,
+            event: reserveFundedEvent,
+            args: { gemId: request.gemId },
+            fromBlock: observedFromBlock ?? fromBlock,
+            toBlock: 'latest',
+          });
+          return verifiedCallHash(
+            logs.map((log) => log.transactionHash),
+            account,
+            call,
+            expectedOperationKey,
+          );
+        },
+      };
+      return runContractTransaction(call);
     }
-    return runContractTransaction({
+    const call = {
       ...contract('ReserveManager'),
       functionName: 'fundToken',
+      intentKey: `fundReserve:${request.gemId}`,
       args: [request.gemId, request.paymentAsset, amount],
       paymentAsset: request.paymentAsset,
       paymentAmount: amount,
       approvals: [
         {
-          kind: 'erc20',
+          kind: 'erc20' as const,
           token: request.paymentAsset,
           spender: manifest.addresses.ReserveManager,
           amountOrTokenId: amount,
         },
       ],
-    });
+      reconcileBroadcast: async (
+        account: Address,
+        observedFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.ReserveManager,
+          event: reserveFundedEvent,
+          args: { gemId: request.gemId },
+          fromBlock: observedFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
   },
 };

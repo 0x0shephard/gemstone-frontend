@@ -53,6 +53,11 @@ interface SyncOptions {
   signal?: AbortSignal;
   onProgress?: (scannedThrough: bigint, latestBlock: bigint) => void;
   logClients?: PublicClient[];
+  onChunk?: (
+    fromBlock: bigint,
+    scannedThrough: bigint,
+    events: ProjectedEvent[],
+  ) => void | Promise<void>;
 }
 
 function announce(detail: Record<string, unknown>) {
@@ -286,6 +291,7 @@ export async function scanLogs(
 
   while (cursor <= latestBlock) {
     if (options.signal?.aborted) throw new DOMException('Projection sync cancelled', 'AbortError');
+    const chunkFrom = cursor;
     const toBlock = cursor + range - 1n > latestBlock ? latestBlock : cursor + range - 1n;
     try {
       /*
@@ -302,10 +308,18 @@ export async function scanLogs(
         );
         logs.push(...results.flat());
       }
+      const chunkEvents: ProjectedEvent[] = [];
       for (const log of logs) {
         const projected = decodeLog(log, finalizedThrough);
-        if (projected) events.push(projected);
+        if (projected) {
+          events.push(projected);
+          chunkEvents.push(projected);
+        }
       }
+      // Cold replays checkpoint only complete address/range batches. A phone
+      // suspended halfway through a 466k-block replay can resume from here
+      // instead of discarding every successful request made so far.
+      await options.onChunk?.(chunkFrom, toBlock, chunkEvents);
       cursor = toBlock + 1n;
       options.onProgress?.(toBlock, latestBlock);
       if (logs.length < 1_000 && range < ceiling) range *= 2n;
@@ -344,8 +358,19 @@ export async function syncProjection(
       prior > RECENT_RESCAN_BLOCKS + manifest.deploymentBlock
         ? prior - RECENT_RESCAN_BLOCKS
         : manifest.deploymentBlock;
+    const coldStart = !cached.meta;
     const rescanned = await scanLogs(client, fromBlock, latestBlock, finalizedThrough, {
       ...options,
+      onChunk: async (chunkFrom, scannedThrough, chunkEvents) => {
+        if (coldStart) {
+          await replaceRange(chunkFrom, chunkEvents, {
+            key: 'meta',
+            scannedThrough: scannedThrough.toString(),
+            latestBlock: latestBlock.toString(),
+          });
+        }
+        await options.onChunk?.(chunkFrom, scannedThrough, chunkEvents);
+      },
       onProgress: (scannedThrough, latest) => {
         options.onProgress?.(scannedThrough, latest);
         announce({
@@ -376,16 +401,23 @@ export async function syncProjection(
       },
     };
   } catch (error) {
-    if (cached.events.length === 0) {
+    // A cold replay may have published durable chunks before a later provider
+    // request failed. Re-read those checkpoints and expose an explicit partial
+    // snapshot instead of throwing away progress or presenting fake emptiness.
+    const durable = await readCache().catch(() => cached);
+    if (durable.events.length === 0 && !durable.meta) {
       announce({ state: 'error' });
       throw error;
     }
-    const scannedThrough = BigInt(cached.meta?.scannedThrough ?? manifest.deploymentBlock);
+    const scannedThrough = BigInt(durable.meta?.scannedThrough ?? manifest.deploymentBlock);
     announce({ state: 'stale', latestBlock: scannedThrough.toString(), cached: true });
     return {
-      events: cached.events,
+      events: durable.events.sort(
+        (left, right) =>
+          Number(left.blockNumber - right.blockNumber) || left.logIndex - right.logIndex,
+      ),
       status: {
-        latestBlock: BigInt(cached.meta?.latestBlock ?? scannedThrough),
+        latestBlock: BigInt(durable.meta?.latestBlock ?? scannedThrough),
         scannedThrough,
         finalizedThrough:
           scannedThrough > FINALITY_CONFIRMATIONS ? scannedThrough - FINALITY_CONFIRMATIONS : 0n,

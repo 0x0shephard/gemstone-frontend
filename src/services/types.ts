@@ -155,6 +155,10 @@ export interface ActivityItem {
   displayId: string;
   amount: string;
   date: string;
+  /** Precise lifecycle time when the source provides one (for example gift records). */
+  occurredAt?: string;
+  /** Stable on-chain fallback order when a block timestamp was not projected. */
+  chainOrder?: string;
   color: string;
   txHash?: Hash;
 }
@@ -205,6 +209,14 @@ export interface PendingRefund {
 }
 
 export interface PendingTreasuryPayout {
+  amount: bigint;
+  amountFmt: string;
+}
+
+/** Reserve returned to a token holder after redemption, held as a pull credit. */
+export interface PendingReserveCredit {
+  paymentAsset: Address;
+  symbol: PaymentAsset['symbol'];
   amount: bigint;
   amountFmt: string;
 }
@@ -288,6 +300,11 @@ export interface ClaimRefundRequest {
 }
 
 export interface ClaimTreasuryPayoutRequest {
+  recipient: Address;
+}
+
+export interface ClaimReserveCreditRequest {
+  paymentAsset: Address;
   recipient: Address;
 }
 

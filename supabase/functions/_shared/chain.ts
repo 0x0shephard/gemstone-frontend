@@ -259,14 +259,37 @@ export async function assertOperatorChain(chain: OperatorChain): Promise<void> {
 export async function writeAndConfirm(
   chain: OperatorChain,
   parameters: Parameters<OperatorChain['publicClient']['simulateContract']>[0],
+  lifecycle?:
+    | ((hash: Hash) => void | Promise<void>)
+    | {
+        nonce?: number;
+        onSubmitting?: (nonce: number) => void | Promise<void>;
+        onSubmitted?: (hash: Hash) => void | Promise<void>;
+      },
 ): Promise<Hash> {
   const simulation = await chain.publicClient.simulateContract({
     ...parameters,
     account: chain.account,
   } as Parameters<OperatorChain['publicClient']['simulateContract']>[0]);
-  const hash = await chain.walletClient.writeContract(
-    simulation.request as Parameters<OperatorChain['walletClient']['writeContract']>[0],
-  );
+  const onSubmitted = typeof lifecycle === 'function' ? lifecycle : lifecycle?.onSubmitted;
+  let request = simulation.request as Parameters<OperatorChain['walletClient']['writeContract']>[0];
+  if (typeof lifecycle === 'object') {
+    const nonce =
+      lifecycle.nonce ??
+      (await chain.publicClient.getTransactionCount({
+        address: chain.account.address,
+        blockTag: 'pending',
+      }));
+    // The durable intent is recorded before the RPC submission begins. Losing
+    // the write response can therefore never be mistaken for a pre-broadcast
+    // failure, and an eventual retry can reuse this exact nonce.
+    await lifecycle.onSubmitting?.(nonce);
+    request = { ...request, nonce };
+  }
+  const hash = await chain.walletClient.writeContract(request);
+  // Persist external side effects before waiting. If receipt polling times out,
+  // the caller can reconcile this exact hash instead of sending a duplicate.
+  await onSubmitted?.(hash);
   const receipt = await chain.publicClient.waitForTransactionReceipt({
     hash,
     confirmations: 1,

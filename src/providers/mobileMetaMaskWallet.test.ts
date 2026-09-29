@@ -34,6 +34,28 @@ function configuredConnector(restoredAccounts: string[] = []) {
 }
 
 describe('mobile MetaMask Connect', () => {
+  it('retries client creation after a transient initialization failure', async () => {
+    const request = vi.fn(async () => [account]);
+    const client = {
+      accounts: [account],
+      getChainId: vi.fn(() => '0xaa36a7'),
+      getProvider: vi.fn(() => ({ request })),
+    } as unknown as MetamaskConnectEVM;
+    const createClient = vi
+      .fn<typeof createEVMClient>()
+      .mockRejectedValueOnce(new Error('session store unavailable'))
+      .mockResolvedValueOnce(client);
+    const config = createConfig({
+      chains: [sepolia],
+      connectors: [metaMaskConnectConnector({ createClient })],
+      transports: { [sepolia.id]: http('https://rpc.sepolia.example') },
+    });
+
+    await expect(config.connectors[0].getProvider()).rejects.toThrow('session store unavailable');
+    await expect(config.connectors[0].getProvider()).resolves.toBeDefined();
+    expect(createClient).toHaveBeenCalledTimes(2);
+  });
+
   it('uses MetaMask Connect rather than identifying as WalletConnect', () => {
     const { connector } = configuredConnector();
     expect(connector.id).toBe('metaMaskConnect');

@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "generatedFrom": "../gemstone/out",
   "sha256": {
-    "DGENFT": "34a73d4675e3f3d47552725efd0ce9772474d3bbec9fc119d2e2fd3b921feb8d",
+    "DGENFT": "21391252f92d7375ed0a58f6a48813fcdfbc720873f2e310e6d793497195a2f2",
     "GemRegistry": "a5eee81ea8d5adb4101f6e424b81404b798a3cc18b175328c34225c14cce1b60",
     "PaymentTokenRegistry": "c7d9bb70301695f5c0c09e83baeade09aab9762bac6e3272e97c66a61a5a9a82",
-    "ReserveManager": "f6e4ac4a1e670aff308b994b1334cab8913232ba1da1f16243d6857888e6ee86",
+    "ReserveManager": "c02f1afc0aa03e5c47df1c573966c89877eec55247a2a856a97c1be996758ba7",
     "Treasury": "27c63ba90311d1edd35321ee54dc2b1dd0ce68631f8fb545b218c2dfca686f35",
     "PrimarySaleAuction": "32900b220a11adcab0fd9dd1dc090b1c7cc935251557c6425d87dc2bf6475195",
     "Marketplace": "c6fa6d4dcf2bee847d66ec416a312be6d3ad4d94a191f537135727b392b403bc",
-    "SwapEscrow": "e7f84bbaa0b5c733fae1fb2dfad94ca444122c87ef89a444969e4737d1f79add",
+    "SwapEscrow": "12b56849bbbc126ad8c4c08ecbed7c170e78e5fece9631eb53fe5ebed22cac2b",
     "RedemptionManager": "185b1c93332a215dc6d0d376826ecf374c7fe6e0836ecc2bdacddcd30b6b2d95",
     "ComplianceRegistry": "6f5a66302267a7c5c9d93f5d95677aee81e14dbed54381563764114b14b1ac6e"
   }

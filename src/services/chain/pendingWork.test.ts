@@ -1,17 +1,21 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   closeWork,
+  findPendingBroadcast,
   hasBroadcastStep,
   listPendingWork,
   nextStepIndex,
   openWork,
   recordBroadcast,
+  recordUnknownBroadcast,
   recordStepStatus,
 } from './pendingWork';
 import type { Address, Hash } from 'viem';
 
 const ACCOUNT = '0xcc624ffa5df1f3f4b30aa8abd30186a86254f406' as Address;
 const HASH = ('0x' + 'ab'.repeat(32)) as Hash;
+const OPERATION_KEY = 'marketplace:buy:token-1';
+const INTENT_KEY = 'buy:token-1';
 
 const work = () =>
   openWork({
@@ -19,6 +23,9 @@ const work = () =>
     label: 'Purchase listing',
     account: ACCOUNT,
     chainId: 11155111,
+    operationKey: OPERATION_KEY,
+    intentKey: INTENT_KEY,
+    fromBlock: '100',
     steps: [
       { kind: 'approval', label: 'Approve the payment allowance', status: 'waiting' },
       { kind: 'call', label: 'Confirm the transaction', status: 'waiting' },
@@ -49,6 +56,18 @@ describe('pending work', () => {
     expect(hasBroadcastStep(listPendingWork()[0])).toBe(false);
     recordBroadcast(opened.id, 0, HASH);
     expect(hasBroadcastStep(listPendingWork()[0])).toBe(true);
+  });
+
+  it('durably blocks retries when the wallet lost the response before returning a hash', () => {
+    const opened = work();
+    recordUnknownBroadcast(opened.id, 1);
+
+    const [recovered] = listPendingWork();
+    expect(recovered.steps[1].status).toBe('broadcast');
+    expect(recovered.steps[1].hash).toBeUndefined();
+    expect(hasBroadcastStep(recovered)).toBe(true);
+    expect(findPendingBroadcast(INTENT_KEY, ACCOUNT, 11155111)?.id).toBe(opened.id);
+    expect(findPendingBroadcast('buy:token-2', ACCOUNT, 11155111)).toBeUndefined();
   });
 
   it('resumes at the first step that has not confirmed', () => {
@@ -82,6 +101,16 @@ describe('pending work', () => {
     stale[0].createdAt = Date.now() - 48 * 60 * 60 * 1_000;
     localStorage.setItem('dc:pending-work', JSON.stringify(stale));
     expect(listPendingWork().find((item) => item.id === opened.id)).toBeUndefined();
+  });
+
+  it('does not age out a hashless ambiguous send and expose a duplicate retry', () => {
+    const opened = work();
+    recordUnknownBroadcast(opened.id, 1);
+    const stale = JSON.parse(localStorage.getItem('dc:pending-work')!) as { createdAt: number }[];
+    stale[0].createdAt = Date.now() - 48 * 60 * 60 * 1_000;
+    localStorage.setItem('dc:pending-work', JSON.stringify(stale));
+
+    expect(listPendingWork().find((item) => item.id === opened.id)).toBeDefined();
   });
 
   it('reads a corrupt store as empty rather than throwing', () => {

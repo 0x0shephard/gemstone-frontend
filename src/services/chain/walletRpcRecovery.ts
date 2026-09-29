@@ -66,4 +66,4 @@ export async function recoverAmbiguousWalletBroadcast(
 }
 
 export const WALLET_NETWORK_FAILURE_MESSAGE =
-  'MetaMask lost its Sepolia connection while returning to the browser. No matching transaction appeared yet. Reopen MetaMask, confirm Sepolia is selected, then return and try once more.';
+  'The wallet lost its connection after the send request. The transaction may still have been broadcast, so do not submit it again. Check wallet activity and return here for reconciliation.';

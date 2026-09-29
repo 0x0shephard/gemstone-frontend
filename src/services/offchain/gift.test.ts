@@ -32,4 +32,9 @@ describe('giftCardState', () => {
     expect(giftCardState(row('active', '2000-01-01T00:00:00.000Z'))).toBe('expired');
     expect(giftCardState(row('cancelled', '2000-01-01T00:00:00.000Z'))).toBe('cancelled');
   });
+
+  it('keeps uncertain chain mutations visibly pending', () => {
+    expect(giftCardState(row('claim_pending', '2999-01-01T00:00:00.000Z'))).toBe('claiming');
+    expect(giftCardState(row('cancel_pending', '2999-01-01T00:00:00.000Z'))).toBe('cancelling');
+  });
 });

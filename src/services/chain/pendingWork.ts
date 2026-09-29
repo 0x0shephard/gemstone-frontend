@@ -20,7 +20,7 @@ import type { Address, Hash } from 'viem';
 
 const STORAGE_KEY = 'dc:pending-work';
 
-/** Anything older than this is assumed settled and stops being offered. */
+/** Hash-backed or never-sent work older than this stops being offered. */
 const MAX_AGE_MS = 24 * 60 * 60 * 1_000;
 
 export type PendingStepStatus = 'waiting' | 'broadcast' | 'confirmed' | 'failed';
@@ -40,6 +40,12 @@ export interface PendingWork {
   label: string;
   account: Address;
   chainId: number;
+  /** Exact contract call identity; prevents one unknown purchase locking every purchase. */
+  operationKey?: string;
+  /** Stable product intent, independent of a quote or reserve shortfall changing. */
+  intentKey?: string;
+  /** Block immediately before submission, used for authoritative event reconciliation. */
+  fromBlock?: string;
   steps: PendingStep[];
   createdAt: number;
 }
@@ -68,7 +74,13 @@ function write(items: PendingWork[]): void {
 /** Everything still in flight, newest first, with stale entries dropped. */
 export function listPendingWork(): PendingWork[] {
   const cutoff = Date.now() - MAX_AGE_MS;
-  const live = read().filter((work) => work.createdAt > cutoff);
+  const live = read().filter(
+    (work) =>
+      work.createdAt > cutoff ||
+      // No age proves that a hashless ambiguous send did not land. Keep this
+      // safety lock until flow-specific chain state can reconcile it.
+      work.steps.some((step) => step.status === 'broadcast' && !step.hash),
+  );
   return [...live].sort((a, b) => b.createdAt - a.createdAt);
 }
 
@@ -101,6 +113,14 @@ export function recordBroadcast(id: string, stepIndex: number, hash: Hash): void
         : work,
     ),
   );
+}
+
+/**
+ * Marks a send whose wallet response was lost before the transaction hash was
+ * returned. This is still potentially broadcast work and must block retries.
+ */
+export function recordUnknownBroadcast(id: string, stepIndex: number): void {
+  recordStepStatus(id, stepIndex, 'broadcast');
 }
 
 export function recordStepStatus(id: string, stepIndex: number, status: PendingStepStatus): void {
@@ -136,4 +156,18 @@ export function nextStepIndex(work: PendingWork): number {
  */
 export function hasBroadcastStep(work: PendingWork): boolean {
   return work.steps.some((step) => step.status === 'broadcast');
+}
+
+export function findPendingBroadcast(
+  intentKey: string,
+  account: Address,
+  chainId: number,
+): PendingWork | undefined {
+  return listPendingWork().find(
+    (work) =>
+      work.intentKey === intentKey &&
+      work.chainId === chainId &&
+      work.account.toLowerCase() === account.toLowerCase() &&
+      hasBroadcastStep(work),
+  );
 }

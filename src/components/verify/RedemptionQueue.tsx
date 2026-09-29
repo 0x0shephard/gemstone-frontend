@@ -28,10 +28,14 @@ export function RedemptionQueue() {
   const {
     data: redemptions = [],
     isLoading,
+    isFetching,
+    isError,
+    error,
     refetch,
   } = useQuery({
     queryKey: ['verify', 'redemptions'],
     queryFn: () => dataService.getRedemptions(),
+    placeholderData: (previous) => previous,
   });
 
   const connected = address?.toLowerCase();
@@ -51,7 +55,25 @@ export function RedemptionQueue() {
         </StatusBadge>
       </div>
 
-      {isLoading ? (
+      {isError && (
+        <div
+          role="alert"
+          className="m-3 flex flex-wrap items-center justify-between gap-2 rounded-[4px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] text-amber"
+        >
+          <span>
+            {redemptions.length > 0
+              ? 'Queue refresh failed. Showing the last result.'
+              : error instanceof Error
+                ? error.message
+                : 'The redemption queue could not be loaded.'}
+          </span>
+          <button type="button" className="font-semibold underline" onClick={() => void refetch()}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {isLoading && redemptions.length === 0 ? (
         <p className="px-4 py-6 text-[12px] text-ink-dim">Reading open redemptions…</p>
       ) : redemptions.length === 0 ? (
         <p className="px-4 py-6 text-[12px] text-ink-dim">
@@ -100,7 +122,7 @@ export function RedemptionQueue() {
                     {!isConnected
                       ? 'Connect the custodian wallet to confirm a handover.'
                       : isCustodian
-                        ? 'Confirming burns the token and releases the reserve to you. It cannot be undone — do it once the stone is physically with its owner.'
+                        ? 'Confirming returns the remaining reserve to the token owner, then burns the token. It cannot be undone — do it once the stone is physically with its owner.'
                         : 'This stone is held by a different custodian, so it cannot be confirmed from the connected wallet.'}
                   </p>
                   <div className="flex shrink-0 flex-wrap gap-2">
@@ -132,6 +154,11 @@ export function RedemptionQueue() {
           })}
         </ul>
       )}
+      {isFetching && !isLoading && (
+        <p className="border-t border-line/[0.06] px-4 py-2 text-[11px] text-ink-dim">
+          Refreshing redemption queue…
+        </p>
+      )}
     </Card>
   );
 }
@@ -145,7 +172,7 @@ export function RedemptionQueue() {
  */
 function FulfillmentDisclosure({ tokenId, enabled }: { tokenId: bigint; enabled: boolean }) {
   const [shown, setShown] = useState(false);
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['verify', 'fulfillment', String(tokenId)],
     queryFn: () => loadRedemptionFulfillment(String(tokenId)),
     enabled: shown && enabled,
@@ -170,10 +197,15 @@ function FulfillmentDisclosure({ tokenId, enabled }: { tokenId: bigint; enabled:
       {isLoading ? (
         <p className="text-[11.5px] text-ink-dim">Reading delivery details…</p>
       ) : isError ? (
-        <p className="text-[11.5px] text-ink-dim">
-          Could not read the delivery details. Do not confirm until you can — the token is burned
-          either way.
-        </p>
+        <div className="flex items-start justify-between gap-3 text-[11.5px] text-ink-dim">
+          <p>
+            Could not read the delivery details. Do not confirm until you can — the token is burned
+            either way.
+          </p>
+          <button type="button" className="font-semibold underline" onClick={() => void refetch()}>
+            Retry
+          </button>
+        </div>
       ) : !data ? (
         <p className="text-[11.5px] text-ink-dim">
           This redemption has no delivery record. It predates the commitment flow, so arrange the

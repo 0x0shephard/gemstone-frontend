@@ -29,6 +29,15 @@ describe('invokeEdgeFunction', () => {
     });
   });
 
+  it('sets a deadline covering the complete edge invocation', async () => {
+    invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
+    await invokeEdgeFunction('v1-gift-create', {}, 4321);
+    expect(invokeMock).toHaveBeenCalledWith('v1-gift-create', {
+      body: {},
+      timeout: 4321,
+    });
+  });
+
   it('surfaces the message the function actually returned', async () => {
     invokeMock.mockResolvedValue(httpError({ error: 'A verified primary wallet is required' }));
     await expect(invokeEdgeFunction('v1-seller-activate')).rejects.toThrow(

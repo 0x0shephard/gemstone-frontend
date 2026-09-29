@@ -53,13 +53,12 @@ export function PendingRefunds() {
             </div>
             <TxButton
               size="sm"
-              action={async () => {
-                const result = await dataService.claimRefund({
+              action={() =>
+                dataService.claimRefund({
                   paymentAsset: refund.paymentAsset,
-                });
-                await refetch();
-                return result;
-              }}
+                })
+              }
+              onConfirmed={() => refetch().then(() => undefined)}
               pendingLabel="Withdrawing…"
               telemetryFlow="auction_refund_claim"
             >

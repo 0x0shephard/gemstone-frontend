@@ -10,6 +10,7 @@ import type {
   CancelRedemptionRequest,
   ConfirmRedemptionRequest,
   ClaimRefundRequest,
+  ClaimReserveCreditRequest,
   ClaimTreasuryPayoutRequest,
   CreateOfferRequest,
   CreateSwapRequest,
@@ -22,6 +23,7 @@ import type {
   OfferRequest,
   PaymentAsset,
   PendingRefund,
+  PendingReserveCredit,
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
@@ -44,6 +46,14 @@ export interface ProfileData {
   swaps: SwapRequest[];
   redemptions: Redemption[];
   activity: ActivityItem[];
+  /** Independent truthfulness for sections that may rely on different RPC/event sources. */
+  sections: Record<
+    'holdings' | 'bids' | 'offers' | 'swaps' | 'redemptions' | 'activity',
+    {
+      state: 'ready' | 'syncing' | 'partial' | 'error';
+      message?: string;
+    }
+  >;
   stats: {
     portfolioValueUsd: number;
     ownedCount: number;
@@ -76,6 +86,7 @@ export interface IDataService {
   getFeeTiers(): Promise<FeeTier[]>;
   getPaymentAssets(): Promise<PaymentAsset[]>;
   getPendingAuctionRefunds(address?: string): Promise<PendingRefund[]>;
+  getPendingReserveCredits(address?: string): Promise<PendingReserveCredit[]>;
   getPendingTreasuryPayout(address?: string): Promise<PendingTreasuryPayout | undefined>;
   /**
    * Who, if anyone, may move each of these tokens on the owner's behalf.
@@ -97,6 +108,7 @@ export interface IDataService {
   settleAuction(request: SettleAuctionRequest): Promise<TxResult>;
   settleListingAuction(request: SettleListingAuctionRequest): Promise<TxResult>;
   claimRefund(request: ClaimRefundRequest): Promise<TxResult>;
+  claimReserveCredit(request: ClaimReserveCreditRequest): Promise<TxResult>;
   claimTreasuryPayout(request: ClaimTreasuryPayoutRequest): Promise<TxResult>;
   createOffer(request: CreateOfferRequest): Promise<TxResult>;
   acceptOffer(request: OfferRequest): Promise<TxResult>;

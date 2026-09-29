@@ -16,6 +16,25 @@ export function requireClient() {
   return supabase;
 }
 
+export const EDGE_FUNCTION_DEADLINE_MS = 45_000;
+
+/**
+ * The request may have reached the function even though the browser stopped
+ * waiting. Mutation callers must reconcile by idempotency key/hash before they
+ * offer another submit; this error intentionally distinguishes that state from
+ * a definite server rejection.
+ */
+export class EdgeFunctionOutcomeUnknownError extends Error {
+  readonly outcomeUnknown = true;
+
+  constructor(readonly functionName: string) {
+    super(
+      `Could not reach the server (${functionName}) before the request ended. Its result may be pending; do not submit the same mutation again until it is reconciled.`,
+    );
+    this.name = 'EdgeFunctionOutcomeUnknownError';
+  }
+}
+
 /** Pulls `{ error }` out of an unread error response body, if there is one. */
 async function bodyMessage(error: unknown): Promise<string | undefined> {
   const context = (error as { context?: unknown } | null)?.context;
@@ -39,8 +58,15 @@ async function bodyMessage(error: unknown): Promise<string | undefined> {
 export async function invokeEdgeFunction<T>(
   name: string,
   body: Record<string, unknown> = {},
+  deadlineMs = EDGE_FUNCTION_DEADLINE_MS,
 ): Promise<T> {
-  const { data, error } = await requireClient().functions.invoke(name, { body });
+  const { data, error } = await requireClient().functions.invoke(name, {
+    body,
+    // Supabase forwards this to an AbortController around the complete fetch,
+    // including response-body parsing. A Promise.race would merely stop the UI
+    // waiting while leaving the network operation alive.
+    timeout: deadlineMs,
+  });
   const inlineError = (data as { error?: unknown } | null)?.error;
 
   if (!error && !inlineError) return data as T;
@@ -53,13 +79,17 @@ export async function invokeEdgeFunction<T>(
    * in the app, so it is replaced with something the user can act on.
    */
   const networkFailure = transport?.includes('Failed to send a request');
+  const aborted =
+    transport?.includes('aborted') ||
+    transport?.includes('timeout') ||
+    (error as { context?: { name?: unknown } } | null)?.context?.name === 'AbortError';
+
+  if (aborted || networkFailure) throw new EdgeFunctionOutcomeUnknownError(name);
 
   const message =
     (typeof inlineError === 'string' ? inlineError : undefined) ??
     (await bodyMessage(error)) ??
-    (networkFailure
-      ? 'Could not reach the server. Check your connection and try again.'
-      : transport) ??
+    transport ??
     `${name} failed`;
   throw new Error(message);
 }

@@ -31,14 +31,19 @@ import { dgeNftAbi } from '@/contracts/abis';
 import type { TxResult } from '@/services/types';
 import {
   BroadcastPendingError,
+  BroadcastOutcomeUnknownError,
   WalletResponseTimeoutError,
   announceStep,
   awaitGesture,
+  captureStepGate,
+  type StepGateLease,
 } from './txSteps';
 import {
   closeWork,
+  findPendingBroadcast,
   openWork,
   recordBroadcast,
+  recordUnknownBroadcast,
   recordStepStatus,
   type PendingStep,
 } from './pendingWork';
@@ -77,7 +82,12 @@ const erc721ApprovalEvent = parseAbiItem(
   'event Approval(address indexed owner,address indexed approved,uint256 indexed tokenId)',
 );
 
-export { BroadcastPendingError, announceStep, setStepGate } from './txSteps';
+export {
+  BroadcastOutcomeUnknownError,
+  BroadcastPendingError,
+  announceStep,
+  acquireStepGate,
+} from './txSteps';
 export type { StepPrompt, TransactionStep } from './txSteps';
 
 export class TransactionGuardError extends Error {
@@ -115,8 +125,24 @@ interface ContractTransaction {
   paymentAsset?: Address;
   paymentAmount?: bigint;
   approvals?: Approval[];
+  /** Stable semantic identity that must not contain a mutable quote or shortfall. */
+  intentKey?: string;
   /** Find a write that landed even though the mobile wallet lost its RPC response. */
-  reconcileBroadcast?: (account: Address) => Promise<Hash | undefined>;
+  reconcileBroadcast?: (
+    account: Address,
+    fromBlock?: bigint,
+    expectedOperationKey?: string,
+  ) => Promise<Hash | undefined>;
+}
+
+/** Exact, stable identity for one value-moving contract call. */
+export function operationFingerprint(input: ContractTransaction): string {
+  const data = encodeFunctionData({
+    abi: input.abi,
+    functionName: input.functionName,
+    args: input.args,
+  } as never);
+  return `${input.address.toLowerCase()}:${data.toLowerCase()}:${input.value ?? 0n}`;
 }
 
 async function requireVerifiedWallet(): Promise<Address> {
@@ -178,12 +204,16 @@ async function requireVerifiedWallet(): Promise<Address> {
   return account.address;
 }
 
-async function ensureChain(): Promise<void> {
+async function ensureChain(gestureGate: StepGateLease | null): Promise<void> {
   const account = getAccount(wagmiConfig);
   if (account.chainId === env.chainId) return;
 
   if (isWalletConnectConnector(account.connector) && account.connector?.getProvider) {
-    const provider = (await account.connector.getProvider()) as WalletConnectProviderLike;
+    const provider = (await withPreflightTimeout(
+      account.connector.getProvider(),
+      'The wallet session did not respond. Reopen the wallet and return here; no transaction was sent.',
+      CHAIN_PREFLIGHT_TIMEOUT_MS,
+    )) as WalletConnectProviderLike;
     if (walletConnectSupportsChain(provider, env.chainId)) return;
     throw new TransactionGuardError(
       `Reconnect the wallet and approve ${activeChain.name} when asked. The current WalletConnect session did not authorise it.`,
@@ -198,12 +228,15 @@ async function ensureChain(): Promise<void> {
    * response to a request the wallet never displayed. Give it its own fresh tap
    * exactly like approvals and contract calls.
    */
-  await awaitGesture({
-    index: 0,
-    total: 1,
-    label: `Switch wallet to ${activeChain.name}`,
-    kind: 'network',
-  });
+  await awaitGesture(
+    {
+      index: 0,
+      total: 1,
+      label: `Switch wallet to ${activeChain.name}`,
+      kind: 'network',
+    },
+    gestureGate,
+  );
   announceStep('switching-network');
   const switched = await withPreflightTimeout(
     switchChain(wagmiConfig, { chainId: env.chainId }),
@@ -224,27 +257,40 @@ interface PreparedWrite {
   functionName: string;
   args?: readonly unknown[];
   value?: bigint;
+  chainId?: number;
 }
 
-/** Submit a simulated write, routing multichain WalletConnect sessions directly. */
-async function submitPreparedWrite(account: Address, request: PreparedWrite): Promise<Hash> {
+/** Prepare routing before the tap, then return the wallet request itself. */
+async function prepareWriteSubmission(
+  account: Address,
+  request: PreparedWrite,
+): Promise<() => Promise<Hash>> {
   const connector = getAccount(wagmiConfig).connector;
   if (!isWalletConnectConnector(connector) || !connector?.getProvider) {
-    return (await writeContract(wagmiConfig, request as never)) as Hash;
+    return async () =>
+      (await writeContract(wagmiConfig, {
+        ...request,
+        chainId: env.chainId,
+      } as never)) as Hash;
   }
 
-  const provider = (await connector.getProvider()) as WalletConnectProviderLike;
+  const provider = (await withPreflightTimeout(
+    connector.getProvider(),
+    'The wallet session did not respond. Reopen the wallet and return here; no transaction was sent.',
+    CHAIN_PREFLIGHT_TIMEOUT_MS,
+  )) as WalletConnectProviderLike;
   const data = encodeFunctionData({
     abi: request.abi,
     functionName: request.functionName,
     args: request.args,
   } as never);
-  return requestWalletConnectTransaction(provider, env.chainId, {
-    from: account,
-    to: request.address,
-    data,
-    ...(request.value && request.value > 0n ? { value: toHex(request.value) } : {}),
-  });
+  return () =>
+    requestWalletConnectTransaction(provider, env.chainId, {
+      from: account,
+      to: request.address,
+      data,
+      ...(request.value && request.value > 0n ? { value: toHex(request.value) } : {}),
+    });
 }
 
 async function ensureFunds(
@@ -255,8 +301,9 @@ async function ensureFunds(
   if (!asset || amount === undefined || amount === 0n) return;
   const balance =
     asset === NATIVE_ASSET
-      ? (await getBalance(wagmiConfig, { address: account })).value
+      ? (await getBalance(wagmiConfig, { address: account, chainId: env.chainId })).value
       : ((await readContract(wagmiConfig, {
+          chainId: env.chainId,
           address: asset,
           abi: erc20Abi,
           functionName: 'balanceOf',
@@ -280,12 +327,13 @@ async function planApproval(
 ): Promise<
   {
     label: string;
-    send: () => Promise<Hash>;
+    prepare: () => Promise<() => Promise<Hash>>;
     reconcile: () => Promise<Hash | undefined>;
   }[]
 > {
   if (approval.kind === 'erc20') {
     const allowance = (await readContract(wagmiConfig, {
+      chainId: env.chainId,
       address: approval.token,
       abi: erc20Abi,
       functionName: 'allowance',
@@ -295,18 +343,20 @@ async function planApproval(
     const fromBlock = await getBlockNumber(wagmiConfig, { chainId: env.chainId });
     const approvalStep = (amount: bigint, label: string) => ({
       label,
-      send: async () => {
+      prepare: async () => {
         const simulation = await simulateContract(wagmiConfig, {
+          chainId: env.chainId,
           account,
           address: approval.token,
           abi: erc20Abi,
           functionName: 'approve',
           args: [approval.spender, amount],
         });
-        return submitPreparedWrite(account, simulation.request);
+        return prepareWriteSubmission(account, simulation.request);
       },
       reconcile: async () => {
         const current = (await readContract(wagmiConfig, {
+          chainId: env.chainId,
           address: approval.token,
           abi: erc20Abi,
           functionName: 'allowance',
@@ -340,6 +390,7 @@ async function planApproval(
   }
 
   const approved = (await readContract(wagmiConfig, {
+    chainId: env.chainId,
     address: approval.token,
     abi: dgeNftAbi,
     functionName: 'getApproved',
@@ -350,18 +401,20 @@ async function planApproval(
   return [
     {
       label: 'Approve the gemstone transfer',
-      send: async () => {
+      prepare: async () => {
         const simulation = await simulateContract(wagmiConfig, {
+          chainId: env.chainId,
           account,
           address: approval.token,
           abi: dgeNftAbi,
           functionName: 'approve',
           args: [approval.spender, approval.amountOrTokenId],
         });
-        return submitPreparedWrite(account, simulation.request);
+        return prepareWriteSubmission(account, simulation.request);
       },
       reconcile: async () => {
         const current = (await readContract(wagmiConfig, {
+          chainId: env.chainId,
           address: approval.token,
           abi: dgeNftAbi,
           functionName: 'getApproved',
@@ -403,11 +456,21 @@ async function runStep(
   step: {
     kind: 'approval' | 'call';
     label: string;
-    send: () => Promise<Hash>;
+    prepare: () => Promise<() => Promise<Hash>>;
     reconcile?: () => Promise<Hash | undefined>;
   },
+  gestureGate: StepGateLease | null,
 ): Promise<Hash> {
-  await awaitGesture({ index, total, label: step.label, kind: step.kind });
+  // Finish every public RPC operation before advertising a tappable wallet
+  // step. The final gesture now leads directly to the wallet request instead of
+  // being consumed by a simulation that can stall while the app switch expires.
+  announceStep('checking');
+  const send = await withPreflightTimeout(
+    step.prepare(),
+    'The transaction safety check did not respond. Check your connection and try again; no transaction was sent.',
+    CHAIN_PREFLIGHT_TIMEOUT_MS,
+  );
+  await awaitGesture({ index, total, label: step.label, kind: step.kind }, gestureGate);
 
   announceStep(step.kind === 'approval' ? 'approving' : 'awaiting-signature');
   let timeoutId: number | undefined;
@@ -420,14 +483,18 @@ async function runStep(
   let hash: Hash;
   try {
     try {
-      hash = await Promise.race([step.send(), walletTimeout]);
+      hash = await Promise.race([send(), walletTimeout]);
     } catch (sendError) {
       const recovered = step.reconcile
         ? await recoverAmbiguousWalletBroadcast(sendError, step.reconcile)
         : undefined;
       if (!recovered) {
-        if (isAmbiguousWalletBroadcastError(sendError)) {
-          throw new Error(WALLET_NETWORK_FAILURE_MESSAGE, { cause: sendError });
+        if (
+          sendError instanceof WalletResponseTimeoutError ||
+          isAmbiguousWalletBroadcastError(sendError)
+        ) {
+          recordUnknownBroadcast(workId, index);
+          throw new BroadcastOutcomeUnknownError(WALLET_NETWORK_FAILURE_MESSAGE, workId);
         }
         throw sendError;
       }
@@ -441,7 +508,11 @@ async function runStep(
   announceStep('confirming');
   let receipt;
   try {
-    receipt = await waitForTransactionReceipt(wagmiConfig, { hash, timeout: RECEIPT_TIMEOUT_MS });
+    receipt = await waitForTransactionReceipt(wagmiConfig, {
+      chainId: env.chainId,
+      hash,
+      timeout: RECEIPT_TIMEOUT_MS,
+    });
   } catch (waitError) {
     /*
      * Broadcast, outcome unknown. Every branch here keeps the hash and leaves
@@ -489,6 +560,7 @@ export function decodeTransactionError(error: unknown): Error {
   // Carries a hash, and must reach the UI intact — losing it here would put the
   // caller back where it started, offering a retry on a live transaction.
   if (error instanceof BroadcastPendingError) return error;
+  if (error instanceof BroadcastOutcomeUnknownError) return error;
   if (error instanceof WalletResponseTimeoutError) return error;
   if (error instanceof PreflightTimeoutError) return error;
   if (error instanceof BaseError) {
@@ -537,6 +609,7 @@ export function decodeTransactionError(error: unknown): Error {
 
 export async function runContractTransaction(input: ContractTransaction): Promise<TxResult> {
   let work: { id: string } | undefined;
+  const gestureGate = captureStepGate();
   try {
     /*
      * Everything that can be settled without the wallet happens first.
@@ -550,7 +623,9 @@ export async function runContractTransaction(input: ContractTransaction): Promis
      */
     announceStep('checking');
     const account = await requireVerifiedWallet();
-    await ensureChain();
+    const operationKey = operationFingerprint(input);
+    const intentKey = input.intentKey ?? operationKey;
+    await ensureChain(gestureGate);
     await withPreflightTimeout(
       ensureFunds(account, input.paymentAsset, input.paymentAmount),
       'The balance check did not respond. Check your connection and try again; no transaction was sent.',
@@ -560,7 +635,7 @@ export async function runContractTransaction(input: ContractTransaction): Promis
     const planned: {
       kind: 'approval' | 'call';
       label: string;
-      send: () => Promise<Hash>;
+      prepare: () => Promise<() => Promise<Hash>>;
       reconcile?: () => Promise<Hash | undefined>;
     }[] = [];
     for (const approval of input.approvals ?? []) {
@@ -572,8 +647,44 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       planned.push(...steps.map((step) => ({ kind: 'approval' as const, ...step })));
     }
 
+    const unresolved = findPendingBroadcast(intentKey, account, env.chainId);
+    if (unresolved) {
+      const unknownStep = unresolved.steps.find(
+        (step) => step.status === 'broadcast' && !step.hash,
+      );
+      if (unknownStep?.kind === 'approval') {
+        // Approvals move no funds. Whether the old approval landed (and is now
+        // sufficient) or did not land / is too small for a changed quote, the
+        // freshly planned approval state is authoritative and safe to execute.
+        closeWork(unresolved.id);
+      } else if (unknownStep?.kind === 'call' && input.reconcileBroadcast) {
+        const observed = await input.reconcileBroadcast(
+          account,
+          unresolved.fromBlock ? BigInt(unresolved.fromBlock) : undefined,
+          unresolved.operationKey,
+        );
+        if (observed) {
+          closeWork(unresolved.id);
+          window.dispatchEvent(
+            new CustomEvent('dc:transaction-confirmed', { detail: { hash: observed } }),
+          );
+          return { hash: observed, status: 'success' };
+        }
+        throw new BroadcastOutcomeUnknownError(
+          'A previous transaction for this exact action may still be on chain. Do not submit it again until its chain outcome can be verified.',
+          unresolved.id,
+        );
+      } else {
+        throw new BroadcastOutcomeUnknownError(
+          'A previous transaction for this exact action may still be on chain. Do not submit it again until wallet activity or chain reconciliation resolves it.',
+          unresolved.id,
+        );
+      }
+    }
+
     const simulateCall = () =>
       simulateContract(wagmiConfig, {
+        chainId: env.chainId,
         account,
         address: input.address,
         abi: input.abi,
@@ -609,8 +720,10 @@ export async function runContractTransaction(input: ContractTransaction): Promis
     planned.push({
       kind: 'call',
       label: needsApprovalFirst ? 'Confirm the transaction' : 'Confirm in your wallet',
-      reconcile: input.reconcileBroadcast ? () => input.reconcileBroadcast!(account) : undefined,
-      send: async () => {
+      reconcile: input.reconcileBroadcast
+        ? () => input.reconcileBroadcast!(account, undefined, operationKey)
+        : undefined,
+      prepare: async () => {
         // Simulated here when approvals came first, so the allowance granted by
         // the step above is in place and the simulation describes reality.
         const request = (
@@ -621,15 +734,23 @@ export async function runContractTransaction(input: ContractTransaction): Promis
             CHAIN_PREFLIGHT_TIMEOUT_MS,
           ))
         ).request;
-        return submitPreparedWrite(account, request);
+        return prepareWriteSubmission(account, request);
       },
     });
 
+    const fromBlock = await withPreflightTimeout(
+      getBlockNumber(wagmiConfig, { chainId: env.chainId }),
+      'The chain status check did not respond. Check your connection and try again; no transaction was sent.',
+      CHAIN_PREFLIGHT_TIMEOUT_MS,
+    );
     const opened = openWork({
       flow: input.functionName,
       label: input.functionName,
       account,
       chainId: env.chainId,
+      operationKey,
+      intentKey,
+      fromBlock: fromBlock.toString(),
       steps: planned.map<PendingStep>((step) => ({
         kind: step.kind,
         label: step.label,
@@ -640,7 +761,7 @@ export async function runContractTransaction(input: ContractTransaction): Promis
 
     let last: Hash | undefined;
     for (const [index, step] of planned.entries()) {
-      last = await runStep(opened.id, index, planned.length, step);
+      last = await runStep(opened.id, index, planned.length, step, gestureGate);
     }
 
     // Only once every step confirmed. A record left open is a record something
@@ -654,7 +775,12 @@ export async function runContractTransaction(input: ContractTransaction): Promis
      * reached the chain, so the record is noise and would offer a resume for
      * work that does not exist.
      */
-    if (!(error instanceof BroadcastPendingError) && work) closeWork(work.id);
+    if (
+      !(error instanceof BroadcastPendingError) &&
+      !(error instanceof BroadcastOutcomeUnknownError) &&
+      work
+    )
+      closeWork(work.id);
     throw decodeTransactionError(error);
   }
 }

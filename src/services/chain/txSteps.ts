@@ -44,22 +44,57 @@ export interface StepPrompt {
   kind: 'network' | 'approval' | 'call';
 }
 
-type StepGate = (prompt: StepPrompt) => Promise<void>;
+type StepGate = (prompt: StepPrompt, signal: AbortSignal) => Promise<void>;
 
-let stepGate: StepGate | undefined;
+export interface StepGateLease {
+  token: symbol;
+  gate: StepGate;
+  controller: AbortController;
+}
+
+let stepGate: StepGateLease | undefined;
+
+export class TransactionGestureCancelledError extends Error {
+  constructor() {
+    super('Transaction cancelled before anything was sent.');
+    this.name = 'TransactionGestureCancelledError';
+  }
+}
 
 /**
  * Registers the gate. A single slot, cleared by the caller when its run ends:
  * two writes at once would contend, which is a limitation rather than a guard,
  * and an acceptable one since a wallet serves one request at a time anyway.
  */
-export function setStepGate(gate: StepGate | undefined): void {
-  stepGate = gate;
+export function acquireStepGate(gate: StepGate): (() => void) | undefined {
+  if (stepGate) return;
+  const owned: StepGateLease = {
+    token: Symbol('transaction-step-gate'),
+    gate,
+    controller: new AbortController(),
+  };
+  stepGate = owned;
+  return () => {
+    // Stale cleanup from an older button must never clear a newer owner.
+    if (stepGate?.token !== owned.token) return;
+    owned.controller.abort(new TransactionGestureCancelledError());
+    stepGate = undefined;
+  };
+}
+
+/** Binds one transaction run to the gate that owned it at startup. */
+export function captureStepGate(): StepGateLease | null {
+  return stepGate ?? null;
 }
 
 /** Resolves immediately when nothing is registered, which is what tests want. */
-export async function awaitGesture(prompt: StepPrompt): Promise<void> {
-  if (stepGate) await stepGate(prompt);
+export async function awaitGesture(
+  prompt: StepPrompt,
+  owned: StepGateLease | null = captureStepGate(),
+): Promise<void> {
+  if (!owned) return;
+  if (owned.controller.signal.aborted) throw owned.controller.signal.reason;
+  await owned.gate(prompt, owned.controller.signal);
 }
 
 /**
@@ -77,6 +112,17 @@ export class BroadcastPendingError extends Error {
   ) {
     super(message);
     this.name = 'BroadcastPendingError';
+  }
+}
+
+/** A wallet send may have landed, but its RPC response contained no hash. */
+export class BroadcastOutcomeUnknownError extends Error {
+  constructor(
+    message: string,
+    readonly workId: string,
+  ) {
+    super(message);
+    this.name = 'BroadcastOutcomeUnknownError';
   }
 }
 

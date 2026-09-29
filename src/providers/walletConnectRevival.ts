@@ -37,12 +37,32 @@ interface WalletConnectRevivalOptions {
     parameters: { connectors: readonly Connector[] },
   ) => Promise<unknown>;
   retryDelaysMs?: readonly number[];
+  /** Per provider/session operation. A stalled connector must not own recovery forever. */
+  operationTimeoutMs?: number;
 }
 
 const DEFAULT_RECOVERY_DELAYS_MS = [0, 250, 750, 1_500, 3_000] as const;
+const DEFAULT_OPERATION_TIMEOUT_MS = 4_000;
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeout = window.setTimeout(
+          () => reject(new Error('Wallet recovery timed out')),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) window.clearTimeout(timeout);
+  }
 }
 
 /** The relayer, wherever this version of the stack happens to keep it. */
@@ -69,77 +89,77 @@ export function reviveWalletConnectOnReturn(
 
   const reconnectAction = options.reconnectAction ?? reconnect;
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RECOVERY_DELAYS_MS;
+  const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
   let waking: Promise<void> | undefined;
   let disposed = false;
 
-  const recoverApprovedSession = async (connector: Connector) => {
-    for (const delayMs of retryDelaysMs) {
-      if (delayMs > 0) await wait(delayMs);
-      if (disposed || document.visibilityState !== 'visible') return;
-      if (config.state.current) return;
-
-      /*
-       * Approval and relay delivery are separate events. Directly after the
-       * app switch the provider can still report unauthorised, then expose the
-       * approved session a few hundred milliseconds after its socket resumes.
-       * Polling is bounded to one short return window and never opens the
-       * wallet: `isAuthorized` only inspects the session already on the client.
-       */
-      let authorised = false;
-      try {
-        authorised = await connector.isAuthorized();
-      } catch {
-        // The next bounded attempt can still succeed after the relay settles.
-      }
-      if (!authorised) continue;
-
-      try {
-        /*
-         * The original RainbowKit connect promise may belong to the browser
-         * task Android or iOS suspended. Reconnect is the missing second half:
-         * it reads the approved WalletConnect session and writes its accounts
-         * into wagmi, making `useAccount()` connected without another prompt.
-         */
-        await reconnectAction(config, { connectors: [connector] });
-      } catch {
-        // A concurrent original connect may win; re-check state on the retry.
-      }
-      // Successful wagmi recovery always assigns `current`; reading that key
-      // also avoids relying on a status value TypeScript narrowed before the
-      // asynchronous reconnect action mutated the external store.
-      if (config.state.current) return;
+  const recoverApprovedSession = async (connector: Connector): Promise<boolean> => {
+    try {
+      if (!(await bounded(connector.isAuthorized(), operationTimeoutMs))) return false;
+    } catch {
+      return false;
     }
+    try {
+      await bounded(reconnectAction(config, { connectors: [connector] }), operationTimeoutMs);
+    } catch {
+      // A concurrent original connect may win; the next bounded round rechecks.
+    }
+    return Boolean(config.state.current);
   };
 
   const wakeOnce = async () => {
     const connected = config.state.connections.get(config.state.current ?? '')?.connector;
     const canRecover = (candidate: Connector | undefined) =>
       candidate?.id === 'metaMaskConnect' || isWalletConnectConnector(candidate);
-    const connector = canRecover(connected) ? connected : config.connectors.find(canRecover);
-    if (!connector?.getProvider) return;
+    /*
+     * A disconnected wagmi store can still retain the connector that owned the
+     * last session. Try that first, then every recoverable connector. Selecting
+     * only the first configured wallet meant an unauthorised MetaMask row hid
+     * an already-approved Rainbow/Trust/WalletConnect session behind it.
+     */
+    const persisted = [...config.state.connections.values()].map((entry) => entry.connector);
+    const candidates = [connected, ...persisted, ...config.connectors].filter(
+      (candidate, index, all): candidate is Connector =>
+        Boolean(canRecover(candidate) && all.indexOf(candidate) === index),
+    );
 
-    let provider: unknown;
-    try {
-      provider = await connector.getProvider();
-    } catch {
-      return;
+    const prepared: Connector[] = [];
+    for (const connector of candidates) {
+      if (disposed) return;
+      let provider: unknown;
+      try {
+        provider = connector.getProvider
+          ? await bounded(connector.getProvider(), operationTimeoutMs)
+          : undefined;
+      } catch {
+        // A broken candidate must not prevent inspection of the next wallet.
+        continue;
+      }
+
+      const relayer = findRelayer(provider);
+      if (relayer?.restartTransport) {
+        try {
+          await bounded(relayer.restartTransport(), operationTimeoutMs);
+        } catch {
+          // Session inspection can still work when the relay private API moved.
+        }
+      }
+      // A connected session only needs its suspended transport revived. Do not
+      // attempt to register it again, but do not skip the restart above.
+      if (config.state.current) return;
+      prepared.push(connector);
     }
 
-    const relayer = findRelayer(provider);
-    if (relayer?.restartTransport) {
-      try {
-        /*
-         * Do not trust `relayer.connected` here. On iOS it can remain true
-         * after the underlying WebSocket was suspended. A transport restart is
-         * idempotent, and this whole return path is coalesced below.
-         */
-        await relayer.restartTransport();
-      } catch {
-        // Session recovery can still work when this private API changes.
+    /* Poll all candidates per delivery round. An unauthorised first wallet no
+     * longer consumes the complete retry schedule before an approved second
+     * connector is even inspected. These checks never open a wallet prompt. */
+    for (const delayMs of retryDelaysMs) {
+      if (delayMs > 0) await wait(delayMs);
+      if (disposed || document.visibilityState !== 'visible' || config.state.current) return;
+      for (const connector of prepared) {
+        if (await recoverApprovedSession(connector)) return;
       }
     }
-
-    await recoverApprovedSession(connector);
   };
 
   const wake = () => {

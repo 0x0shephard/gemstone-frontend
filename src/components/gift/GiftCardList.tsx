@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { isAddressEqual, zeroAddress, type Address } from 'viem';
+import { isAddressEqual, zeroAddress, zeroHash, type Address } from 'viem';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -13,17 +13,29 @@ import { dataService } from '@/services';
 import { useAuth } from '@/providers/AuthProvider';
 import {
   cancelGiftCard,
+  confirmGiftCardEscrow,
   giftCardState,
   listGiftCards,
+  resumeGiftCard,
   type GiftCardRow,
   type GiftCardState,
 } from '@/services/offchain/gift';
 import type { DecoratedGem } from '@/services/types';
+import {
+  clearGiftHandoff,
+  listGiftHandoffs,
+  saveGiftHandoff,
+} from '@/services/offchain/giftHandoff';
+import { env } from '@/config/env';
+import { useGem } from '@/hooks/useData';
+import { GiftCardComposer } from './GiftCardComposer';
 
 const TONE: Record<GiftCardState, 'success' | 'warning' | 'neutral'> = {
   pending: 'warning',
   active: 'success',
+  claiming: 'warning',
   claimed: 'success',
+  cancelling: 'warning',
   cancelled: 'neutral',
   expired: 'warning',
 };
@@ -31,7 +43,9 @@ const TONE: Record<GiftCardState, 'success' | 'warning' | 'neutral'> = {
 const LABEL: Record<GiftCardState, string> = {
   pending: 'Waiting for escrow',
   active: 'Awaiting claim',
+  claiming: 'Claim transfer pending',
   claimed: 'Claimed',
+  cancelling: 'Return transfer pending',
   cancelled: 'Cancelled',
   expired: 'Expired',
 };
@@ -44,14 +58,20 @@ const LABEL: Record<GiftCardState, string> = {
  */
 export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
   const queryClient = useQueryClient();
-  const { user } = useAuth();
+  const { user, linkedWallet } = useAuth();
   const [error, setError] = useState<string | null>(null);
 
   // Keyed by account. These rows carry recipient names, email addresses and
   // personal messages, and a key that does not name the account is shared by
   // every account that uses this tab. Sign-out clears the cache as well; this is
   // the half that also holds within a session.
-  const { data: allCards, isLoading } = useQuery({
+  const {
+    data: allCards,
+    isLoading,
+    isError: cardsFailed,
+    error: cardsError,
+    refetch: retryCards,
+  } = useQuery({
     queryKey: ['giftCards', user?.id ?? 'anonymous'],
     queryFn: listGiftCards,
     enabled: Boolean(user),
@@ -70,8 +90,15 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
    * is precisely what the stranded-approvals panel exists to catch.
    */
   const cards = (allCards ?? []).filter(
-    (card) => card.status === 'pending_escrow' || card.status === 'active',
+    (card) =>
+      card.status === 'pending_escrow' ||
+      card.status === 'active' ||
+      card.status === 'claim_pending' ||
+      card.status === 'cancel_pending',
   );
+  const recoveries = linkedWallet
+    ? listGiftHandoffs({ chainId: env.chainId, account: linkedWallet })
+    : [];
 
   /*
    * Every owned token, not only the ones with a card.
@@ -86,7 +113,11 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
       ...owned.filter((gem) => gem.tokenId !== undefined).map((gem) => String(gem.tokenId)),
     ]),
   ];
-  const { data: approvals } = useQuery({
+  const {
+    data: approvals,
+    isError: approvalsFailed,
+    refetch: retryApprovals,
+  } = useQuery({
     queryKey: ['giftCardApprovals', tokenIds.join(',')],
     queryFn: () => dataService.getTokenApprovals(tokenIds.map((id) => BigInt(id))),
     enabled: tokenIds.length > 0,
@@ -114,10 +145,19 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
       setError(cancelError instanceof Error ? cancelError.message : 'Could not cancel the card'),
   });
 
-  if (isLoading) return <CardGridSkeleton count={2} />;
+  if (isLoading && !allCards) return <CardGridSkeleton count={2} />;
+  if (cardsFailed && !allCards) {
+    return (
+      <EmptyState
+        title="Gift cards could not be loaded"
+        hint={cardsError instanceof Error ? cardsError.message : 'Try the request again.'}
+        action={<Button onClick={() => void retryCards()}>Retry</Button>}
+      />
+    );
+  }
   // An empty state is only honest when there is genuinely nothing outstanding.
   // A stranded approval is outstanding whether or not a card exists.
-  if (cards.length === 0 && strandedApprovals.length === 0) {
+  if (!cardsFailed && !approvalsFailed && cards.length === 0 && strandedApprovals.length === 0) {
     return (
       <EmptyState
         title="No gift cards"
@@ -128,6 +168,28 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
 
   return (
     <div className="space-y-3">
+      {cardsFailed && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-[4px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] text-amber"
+        >
+          <span>Refresh failed. Showing the last gift-card list.</span>
+          <Button size="sm" variant="ghost" onClick={() => void retryCards()}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {approvalsFailed && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-[4px] border border-amber/25 bg-amber/[0.07] px-3 py-2 text-[12px] text-amber"
+        >
+          <span>Token permissions could not be refreshed. Gift cards are still shown.</span>
+          <Button size="sm" variant="ghost" onClick={() => void retryApprovals()}>
+            Retry
+          </Button>
+        </div>
+      )}
       {error && (
         <p
           role="alert"
@@ -166,6 +228,7 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
         <GiftCardRowItem
           key={card.id}
           card={card}
+          recovery={recoveries.find((handoff) => handoff.card.giftId === card.id)}
           gem={owned.find((gem) => gem.tokenId?.toString() === card.token_id)}
           approvedTo={approvals?.[card.token_id]}
           onCancel={() => {
@@ -181,18 +244,69 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
 
 function GiftCardRowItem({
   card,
+  recovery,
   gem,
   approvedTo,
   onCancel,
   cancelling,
 }: {
   card: GiftCardRow;
+  recovery?: ReturnType<typeof listGiftHandoffs>[number];
   gem?: DecoratedGem;
   approvedTo?: Address;
   onCancel: () => void;
   cancelling: boolean;
 }) {
   const queryClient = useQueryClient();
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const activation = useMutation({
+    mutationFn: async () => {
+      if (!recovery) throw new Error('The recovery code is no longer available in this tab.');
+      return confirmGiftCardEscrow(recovery.card, recovery.escrowTxHash ?? zeroHash);
+    },
+    onSuccess: () => {
+      if (recovery) {
+        clearGiftHandoff({
+          chainId: recovery.chainId,
+          account: recovery.account,
+          giftId: recovery.card.giftId,
+        });
+      }
+      void queryClient.invalidateQueries({ queryKey: ['giftCards'] });
+    },
+    onError: (activationError: unknown) =>
+      setRecoveryError(
+        activationError instanceof Error
+          ? activationError.message
+          : 'Could not confirm the gift escrow.',
+      ),
+  });
+  const { linkedWallet } = useAuth();
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const resume = useMutation({
+    mutationFn: () => resumeGiftCard(card.id),
+    onSuccess: (resumed) => {
+      if (!linkedWallet || !card.gem_id) return;
+      // The composer restores from this record on mount: straight to activation
+      // when custody is already proven, otherwise to the transfer step.
+      saveGiftHandoff({
+        chainId: env.chainId,
+        account: linkedWallet,
+        gemId: card.gem_id,
+        card: resumed,
+        recipientEmail: card.recipient_email,
+        recipientName: card.recipient_name ?? '',
+        message: card.message ?? '',
+        template: card.template,
+        awaitingTransfer: resumed.custody === 'sender',
+      });
+      setResumeOpen(true);
+    },
+    onError: (resumeError: unknown) =>
+      setRecoveryError(
+        resumeError instanceof Error ? resumeError.message : 'Could not resume the gift card.',
+      ),
+  });
   const state = giftCardState(card);
 
   /*
@@ -237,6 +351,8 @@ function GiftCardRowItem({
             {expires.toLocaleDateString()}
           </span>
         )}
+        {state === 'claiming' && <span>Claim submitted; checking chain confirmation</span>}
+        {state === 'cancelling' && <span>Return submitted; checking chain confirmation</span>}
         {state === 'claimed' && card.claimed_wallet && (
           <span className="font-mono">
             Sent to {shortenAddress(card.claimed_wallet as Address)}
@@ -253,6 +369,68 @@ function GiftCardRowItem({
           </a>
         )}
       </div>
+
+      {recoveryError && (
+        <p role="alert" className="text-[11.5px] text-ruby">
+          {recoveryError}
+        </p>
+      )}
+
+      {card.status === 'pending_escrow' && recovery && (
+        <div className="rounded-[4px] border border-amber/25 bg-amber/[0.06] p-3">
+          <p className="text-[11.5px] leading-relaxed text-ink-muted">
+            This card has a saved recovery code. Confirm escrow without transferring the token
+            again.
+          </p>
+          <Button
+            className="mt-2"
+            size="sm"
+            variant="secondary"
+            disabled={activation.isPending}
+            onClick={() => {
+              setRecoveryError(null);
+              activation.mutate();
+            }}
+          >
+            {activation.isPending ? 'Checking escrow…' : 'Resume gift activation'}
+          </Button>
+        </div>
+      )}
+
+      {card.status === 'pending_escrow' && !recovery && card.gem_id && linkedWallet && (
+        <div className="rounded-[4px] border border-amber/25 bg-amber/[0.06] p-3">
+          <p className="text-[11.5px] leading-relaxed text-ink-muted">
+            This setup was interrupted before the card was issued. Finishing it here issues a new
+            claim code, and needs no second transfer if the token is already in escrow.
+          </p>
+          <Button
+            className="mt-2"
+            size="sm"
+            variant="secondary"
+            disabled={resume.isPending}
+            onClick={() => {
+              setRecoveryError(null);
+              resume.mutate();
+            }}
+          >
+            {resume.isPending ? 'Resuming…' : 'Finish gift card'}
+          </Button>
+        </div>
+      )}
+
+      {resumeOpen && card.gem_id && (
+        <ResumedComposer
+          gemId={card.gem_id}
+          onClose={() => {
+            setResumeOpen(false);
+            void queryClient.invalidateQueries();
+          }}
+          onUnavailable={() => {
+            setResumeOpen(false);
+            setRecoveryError('The gemstone could not be loaded. Try Finish gift card again.');
+          }}
+        />
+      )}
 
       {canRevoke && (
         <div className="rounded-[4px] border border-amber/25 bg-amber/[0.06] p-3">
@@ -294,4 +472,26 @@ function GiftCardRowItem({
       )}
     </Card>
   );
+}
+
+/**
+ * The composer for a resumed card. The token may already sit in escrow, so the
+ * gem is loaded by id rather than taken from the sender's current holdings.
+ */
+function ResumedComposer({
+  gemId,
+  onClose,
+  onUnavailable,
+}: {
+  gemId: string;
+  onClose: () => void;
+  onUnavailable: () => void;
+}) {
+  const { data: gem, isLoading, isError } = useGem(gemId);
+  const unavailable = isError || (!isLoading && !gem);
+  useEffect(() => {
+    if (unavailable) onUnavailable();
+  }, [onUnavailable, unavailable]);
+  if (!gem) return null;
+  return <GiftCardComposer gem={gem} open onClose={onClose} onBack={onClose} />;
 }

@@ -97,6 +97,23 @@ describe('projection log scanning', () => {
     );
   });
 
+  it('publishes only complete range checkpoints so a cold replay can resume', async () => {
+    const { client } = cappedProvider(1_000n);
+    const checkpoints: Array<[bigint, bigint]> = [];
+
+    await scanLogs(client, 100n, 2_100n, 0n, {
+      onChunk: async (fromBlock, throughBlock) => {
+        checkpoints.push([fromBlock, throughBlock]);
+      },
+    });
+
+    expect(checkpoints[0]?.[0]).toBe(100n);
+    expect(checkpoints.at(-1)?.[1]).toBe(2_100n);
+    checkpoints.slice(1).forEach(([fromBlock], index) => {
+      expect(fromBlock).toBe(checkpoints[index][1] + 1n);
+    });
+  });
+
   it('gives up instead of looping when even the minimum span is rejected', async () => {
     const { client } = cappedProvider(1n);
 

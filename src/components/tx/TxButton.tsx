@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { TxResult } from '@/services/types';
 import {
   BroadcastPendingError,
+  BroadcastOutcomeUnknownError,
   WalletResponseTimeoutError,
-  setStepGate,
+  acquireStepGate,
   type StepPrompt,
   type TransactionStep,
 } from '@/services/chain/txSteps';
@@ -59,6 +60,8 @@ interface TxButtonProps {
    * ever saw the hash or the explorer link.
    */
   onDone?: (result: TxResult) => void;
+  /** Runs automatically after confirmation; failure cannot undo chain success. */
+  onConfirmed?: (result: TxResult) => void | Promise<void>;
   /** Label for the dismissal button shown after success. */
   doneLabel?: string;
   telemetryFlow?: string;
@@ -77,6 +80,7 @@ export function TxButton({
   block,
   disabled,
   onDone,
+  onConfirmed,
   doneLabel = 'Done',
   telemetryFlow = 'transaction',
 }: TxButtonProps) {
@@ -86,10 +90,13 @@ export function TxButton({
   const [hash, setHash] = useState<string | null>(null);
   const [result, setResult] = useState<TxResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [followUpError, setFollowUpError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<StepPrompt>();
   // Resolves the gate promise. A ref rather than state: the pipeline is awaiting
   // this exact function, and a re-render must not hand it a different one.
   const continueRef = useRef<(() => void) | undefined>(undefined);
+  const releaseGateRef = useRef<(() => void) | undefined>(undefined);
+  const mountedRef = useRef(true);
 
   /*
    * Steps arrive as window events rather than through the action signature, so
@@ -110,10 +117,20 @@ export function TxButton({
     return () => window.removeEventListener('dc:transaction-step', onStep);
   }, []);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      releaseGateRef.current?.();
+      releaseGateRef.current = undefined;
+    };
+  }, []);
+
   async function run() {
     setState('pending');
     setStep(undefined);
     setError(null);
+    setFollowUpError(null);
     captureProductEvent('transaction_started', { flow: telemetryFlow });
 
     /*
@@ -125,17 +142,28 @@ export function TxButton({
      * time regardless, and every screen here disables its button while a
      * transaction is in flight.
      */
-    setStepGate(
-      (nextPrompt) =>
-        new Promise<void>((resolve) => {
+    const releaseGate = acquireStepGate(
+      (nextPrompt, signal) =>
+        new Promise<void>((resolve, reject) => {
+          const cancel = () => reject(signal.reason);
+          signal.addEventListener('abort', cancel, { once: true });
           setPrompt(nextPrompt);
           setState('awaiting-gesture');
           continueRef.current = () => {
+            signal.removeEventListener('abort', cancel);
             setState('pending');
             resolve();
           };
         }),
     );
+    if (!releaseGate) {
+      setState('error');
+      setError(
+        'Another wallet transaction is waiting. Finish or cancel it before starting this one.',
+      );
+      return;
+    }
+    releaseGateRef.current = releaseGate;
 
     try {
       const res = await action();
@@ -143,7 +171,19 @@ export function TxButton({
       setResult(res);
       setState('success');
       captureProductEvent('transaction_confirmed', { flow: telemetryFlow, result: 'success' });
-      await queryClient.invalidateQueries();
+      void queryClient.invalidateQueries();
+      if (onConfirmed) {
+        void Promise.resolve()
+          .then(() => onConfirmed(res))
+          .catch((cause) => {
+            if (!mountedRef.current) return;
+            setFollowUpError(
+              cause instanceof Error
+                ? cause.message
+                : 'The transaction confirmed, but its follow-up could not finish.',
+            );
+          });
+      }
     } catch (e) {
       if (e instanceof BroadcastPendingError) {
         // Sent, outcome unknown. No retry is offered: the hash is the useful
@@ -152,7 +192,10 @@ export function TxButton({
         setError(e.message);
         setState('broadcast');
         captureProductEvent('transaction_failed', { flow: telemetryFlow, result: 'broadcast' });
-      } else if (e instanceof WalletResponseTimeoutError) {
+      } else if (
+        e instanceof BroadcastOutcomeUnknownError ||
+        e instanceof WalletResponseTimeoutError
+      ) {
         setError(e.message);
         setState('unknown');
         captureProductEvent('transaction_failed', {
@@ -168,7 +211,8 @@ export function TxButton({
       // Refreshing chain-backed data removes work that actually completed.
       void queryClient.invalidateQueries();
     } finally {
-      setStepGate(undefined);
+      releaseGate();
+      releaseGateRef.current = undefined;
       continueRef.current = undefined;
     }
   }
@@ -255,6 +299,14 @@ export function TxButton({
               <Button variant="secondary" size={size} block={block} onClick={() => onDone(result!)}>
                 {doneLabel}
               </Button>
+            )}
+            {followUpError && (
+              <p
+                role="alert"
+                className="rounded-[4px] border border-amber/25 bg-amber/[0.06] px-3 py-2 text-[11.5px] leading-relaxed text-amber"
+              >
+                Transaction confirmed, but the next workflow step needs attention: {followUpError}
+              </p>
             )}
           </div>
         )}

@@ -16,6 +16,8 @@ import type { SwapRequest } from '@/services/types';
 import { useAccount } from 'wagmi';
 import type { Address } from 'viem';
 import { groupActionableSwaps } from '@/services/chain/marketPresentation';
+import { directSwapOwner, swapReserveEligible } from '@/lib/gem';
+import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
 
 /*
  * Named for what the swap is waiting on rather than for the contract's internal
@@ -152,7 +154,19 @@ export default function SwapsPage() {
   const { data: swaps, isLoading, isError } = useSwaps();
   const { address } = useAccount();
   const { data: profile } = useProfile(address);
-  const ownedGems = (profile?.owned ?? []).filter((gem) => !gem.listingSeller);
+  const redemptionTokenIds = new Set(
+    (profile?.redemptions ?? []).map((redemption) => redemption.tokenId.toString()),
+  );
+  const ownedGems = (profile?.owned ?? []).filter(
+    (gem) =>
+      directSwapOwner(gem, address, [
+        contractAddresses.Marketplace,
+        contractAddresses.SwapEscrow,
+        giftOperatorAddress,
+      ]) === 'viewer' &&
+      Boolean(gem.tokenId && !redemptionTokenIds.has(gem.tokenId.toString())) &&
+      swapReserveEligible(gem),
+  );
   const modals = useGemModals();
   const [offeredId, setOfferedId] = useState('');
   const offered = ownedGems.find((g) => g.gemId.toString() === offeredId);

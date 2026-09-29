@@ -53,7 +53,7 @@ export function SendTokenModal({ gem, open, onClose }: SendTokenModalProps) {
     >
       <ModalGemHeader gem={gem} />
       {mode === 'choose' ? (
-        <ChooseRoute onPick={setMode} />
+        <ChooseRoute gem={gem} onPick={setMode} />
       ) : (
         <WalletTransfer gem={gem} onBack={() => setMode('choose')} onDone={close} />
       )}
@@ -61,19 +61,27 @@ export function SendTokenModal({ gem, open, onClose }: SendTokenModalProps) {
   );
 }
 
-function ChooseRoute({ onPick }: { onPick: (mode: Mode) => void }) {
+function ChooseRoute({ gem, onPick }: { gem: DecoratedGem; onPick: (mode: Mode) => void }) {
+  const blocked = gem.reserve <= 0;
   return (
     <div className="grid gap-2.5">
       <RouteCard
         title="Send to wallet address"
         detail="Straight ERC-721 transfer to an address you already know. Arrives as soon as the transaction confirms."
         onClick={() => onPick('wallet')}
+        disabled={blocked}
       />
       <RouteCard
         title="Make a gift card"
         detail="A printable card with a QR code. The token stays in Digital Carat escrow until the recipient verifies the invited email and connects a wallet."
         onClick={() => onPick('gift')}
+        disabled={blocked}
       />
+      {blocked && (
+        <p className="text-[11.5px] text-amber">
+          Fund this gemstone’s reserve above zero before transferring or gifting it.
+        </p>
+      )}
     </div>
   );
 }
@@ -82,16 +90,19 @@ function RouteCard({
   title,
   detail,
   onClick,
+  disabled = false,
 }: {
   title: string;
   detail: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="dc-btn-anim group rounded-[4px] border border-line/[0.1] bg-panel p-4 text-left transition-colors hover:border-line/[0.2] hover:bg-line/[0.045]"
+      disabled={disabled}
+      className="dc-btn-anim group rounded-[4px] border border-line/[0.1] bg-panel p-4 text-left transition-colors hover:border-line/[0.2] hover:bg-line/[0.045] disabled:cursor-not-allowed disabled:opacity-45"
     >
       <div className="flex items-center justify-between gap-3">
         <span className="text-[14px] font-semibold text-ink">{title}</span>
@@ -142,6 +153,11 @@ function WalletTransfer({
           That is the wallet you are connected with — the token is already there.
         </p>
       )}
+      {gem.reserve <= 0 && (
+        <p className="text-[11.5px] text-amber">
+          Fund this gemstone’s reserve above zero before transferring or gifting it.
+        </p>
+      )}
       <div className="rounded-[4px] border border-amber/25 bg-amber/[0.06] p-3">
         <p className="text-[11.5px] leading-relaxed text-ink-muted">
           Check the address carefully. A transfer to the wrong address cannot be reversed by anyone,
@@ -154,7 +170,7 @@ function WalletTransfer({
         </Button>
         <TxButton
           block
-          disabled={!valid || isSelf}
+          disabled={!valid || isSelf || gem.reserve <= 0}
           action={() =>
             dataService.transferToken({
               tokenId: gem.tokenId!,

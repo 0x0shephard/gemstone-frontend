@@ -17,6 +17,8 @@ export const qk = {
   paymentAssets: ['paymentAssets'] as const,
   pendingAuctionRefunds: (address?: string) =>
     ['pendingAuctionRefunds', address ?? 'disconnected'] as const,
+  pendingReserveCredits: (address?: string) =>
+    ['pendingReserveCredits', address ?? 'disconnected'] as const,
   pendingTreasuryPayout: (address?: string) =>
     ['pendingTreasuryPayout', address ?? 'disconnected'] as const,
 };
@@ -56,6 +58,12 @@ export const usePendingAuctionRefunds = (address?: string) =>
   useQuery({
     queryKey: qk.pendingAuctionRefunds(address),
     queryFn: () => dataService.getPendingAuctionRefunds(address),
+    enabled: Boolean(address),
+  });
+export const usePendingReserveCredits = (address?: string) =>
+  useQuery({
+    queryKey: qk.pendingReserveCredits(address),
+    queryFn: () => dataService.getPendingReserveCredits(address),
     enabled: Boolean(address),
   });
 export const usePendingTreasuryPayout = (address?: string) =>

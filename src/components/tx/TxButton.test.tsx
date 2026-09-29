@@ -57,6 +57,21 @@ describe('TxButton', () => {
     expect(onDone).toHaveBeenCalledWith(RESULT);
   });
 
+  it('fires onConfirmed automatically and keeps success when the follow-up rejects', async () => {
+    const onConfirmed = vi.fn(() => {
+      throw new Error('Activation will retry');
+    });
+    const onDone = vi.fn();
+    renderButton({ onConfirmed, onDone });
+
+    await userEvent.click(screen.getByRole('button', { name: /pay/i }));
+    await screen.findByRole('link');
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith(RESULT));
+    expect(screen.getByRole('link')).toHaveTextContent(/transaction confirmed/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/activation will retry/i);
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
   it('surfaces a failure and leaves the action retryable', async () => {
     const action = vi.fn(async () => {
       throw new Error('Insufficient payment-asset balance.');
@@ -99,6 +114,48 @@ describe('TxButton', () => {
     expect(action).toHaveBeenCalledTimes(1);
 
     await userEvent.click(switchButton);
+    await screen.findByRole('link');
+  });
+
+  it('cancels an unmounted gesture owner so a later button can transact', async () => {
+    const firstAction = vi.fn(async () => {
+      await awaitGesture({ index: 0, total: 1, label: 'Open first wallet', kind: 'call' });
+      return RESULT;
+    });
+    const first = renderButton({ action: firstAction });
+    await userEvent.click(screen.getByRole('button', { name: /pay/i }));
+    await screen.findByRole('button', { name: 'Open first wallet' });
+    first.unmount();
+
+    const secondAction = vi.fn(async () => {
+      await awaitGesture({ index: 0, total: 1, label: 'Open second wallet', kind: 'call' });
+      return RESULT;
+    });
+    renderButton({ action: secondAction });
+    await userEvent.click(screen.getByRole('button', { name: /pay/i }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open second wallet' }));
+    await screen.findByRole('link');
+    expect(secondAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a competing transaction without stealing the active gesture gate', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const gated = (label: string) => async () => {
+      await awaitGesture({ index: 0, total: 1, label, kind: 'call' });
+      return RESULT;
+    };
+    render(
+      <QueryClientProvider client={client}>
+        <TxButton action={gated('Continue first')}>First</TxButton>
+        <TxButton action={gated('Continue second')}>Second</TxButton>
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'First' }));
+    const firstPrompt = await screen.findByRole('button', { name: 'Continue first' });
+    await userEvent.click(screen.getByRole('button', { name: 'Second' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/another wallet transaction/i);
+    await userEvent.click(firstPrompt);
     await screen.findByRole('link');
   });
 });

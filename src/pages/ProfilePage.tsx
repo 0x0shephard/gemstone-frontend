@@ -1,6 +1,7 @@
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { usePendingTreasuryPayout, useProfile } from '@/hooks/useData';
+import { usePendingReserveCredits, usePendingTreasuryPayout, useProfile } from '@/hooks/useData';
 import { useAuth } from '@/providers/AuthProvider';
 import { useKyc } from '@/hooks/useKyc';
 import { StatTile } from '@/components/ui/StatTile';
@@ -16,7 +17,7 @@ import { Card } from '@/components/ui/Card';
 import { CardGridSkeleton, EmptyState } from '@/components/ui/States';
 import { fmtUsd, shortenAddress } from '@/lib/format';
 import { WalletAddress } from '@/components/wallet/WalletAddress';
-import type { Bid, Offer } from '@/services/types';
+import type { Bid, Offer, PendingReserveCredit } from '@/services/types';
 import { AnalyticsConsent } from '@/components/privacy/AnalyticsConsent';
 import { PendingRefunds } from '@/components/wallet/PendingRefunds';
 import { TxButton } from '@/components/tx/TxButton';
@@ -25,7 +26,7 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { GiftCardList } from '@/components/gift/GiftCardList';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
-import { isAddressEqual } from 'viem';
+import { isAddress, isAddressEqual, type Address } from 'viem';
 
 const TABS = ['owned', 'bids', 'offers', 'swaps', 'gifts', 'redeem', 'history'] as const;
 type Tab = (typeof TABS)[number];
@@ -37,6 +38,8 @@ export default function ProfilePage() {
   const { data: profile, isLoading, isError, error, refetch } = useProfile(address);
   const { data: pendingProceeds, refetch: refetchPendingProceeds } =
     usePendingTreasuryPayout(address);
+  const { data: reserveCredits, refetch: refetchReserveCredits } =
+    usePendingReserveCredits(address);
   const modals = useGemModals();
   /*
    * Deep-linkable so the mobile dock's "Token Bids" can land directly on that
@@ -68,6 +71,17 @@ export default function ProfilePage() {
     { key: 'redeem', label: 'Redemption', count: profile?.redemptions.length ?? 0 },
     { key: 'history', label: 'History', count: '—' },
   ];
+  const sectionKey =
+    tab === 'owned'
+      ? 'holdings'
+      : tab === 'redeem'
+        ? 'redemptions'
+        : tab === 'history'
+          ? 'activity'
+          : tab === 'gifts'
+            ? undefined
+            : tab;
+  const section = sectionKey && profile?.sections[sectionKey];
 
   return (
     <div className="space-y-6">
@@ -97,6 +111,14 @@ export default function ProfilePage() {
 
       <PendingRefunds />
 
+      {address && reserveCredits && reserveCredits.length > 0 && (
+        <ReserveCreditsCard
+          beneficiary={address}
+          credits={reserveCredits}
+          onConfirmed={() => refetchReserveCredits().then(() => undefined)}
+        />
+      )}
+
       {address && pendingProceeds && (
         <Card className="dc-facet-border flex flex-wrap items-center justify-between gap-4 p-5">
           <div>
@@ -111,11 +133,8 @@ export default function ProfilePage() {
             </p>
           </div>
           <TxButton
-            action={async () => {
-              const result = await dataService.claimTreasuryPayout({ recipient: address });
-              await refetchPendingProceeds();
-              return result;
-            }}
+            action={() => dataService.claimTreasuryPayout({ recipient: address })}
+            onConfirmed={() => refetchPendingProceeds().then(() => undefined)}
             pendingLabel="Claiming proceeds…"
             telemetryFlow="treasury_claim"
           >
@@ -187,6 +206,32 @@ export default function ProfilePage() {
       </div>
 
       <Tabs tabs={tabs} value={tab} onChange={setTab} />
+
+      {section && section.state !== 'ready' && (
+        <Card
+          className={
+            section.state === 'error'
+              ? 'border-ruby/25 bg-ruby/[0.05] p-3.5'
+              : 'border-amber/25 bg-amber/[0.05] p-3.5'
+          }
+        >
+          <p className="text-[12px] leading-relaxed text-ink-muted">
+            {section.message ??
+              (section.state === 'syncing'
+                ? 'This section is still syncing from the chain.'
+                : 'This section is showing the data that could be verified so far.')}
+          </p>
+          {section.state === 'error' && (
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="dc-btn-anim mt-2 h-8 rounded-[4px] border border-line/[0.12] px-3 text-[11.5px] font-semibold text-ink"
+            >
+              Retry this section
+            </button>
+          )}
+        </Card>
+      )}
 
       {/* Tab content */}
       {isLoading ? (
@@ -316,7 +361,7 @@ export default function ProfilePage() {
                       <div className="mt-3 flex flex-col gap-2.5 border-t border-line/[0.06] pt-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-[11.5px] leading-relaxed text-ink-dim">
                           {isCustodian
-                            ? 'You are the custodian for this stone. Confirming burns the token, releases the reserve to you, and cannot be undone — do it once the stone is physically with its owner.'
+                            ? 'You are the custodian for this stone. Confirming burns the token and credits its remaining reserve to the token holder for a separate claim; it cannot be undone. Confirm only after physical handover.'
                             : 'Waiting on the custodian to confirm the physical handover. Cancelling returns the token to normal and unlocks transfers.'}
                         </p>
                         <div className="flex shrink-0 flex-wrap gap-2">
@@ -358,6 +403,96 @@ export default function ProfilePage() {
       <AnalyticsConsent />
       <GemActionModals state={modals.state} onClose={modals.close} />
     </div>
+  );
+}
+
+export function ReserveCreditsCard({
+  beneficiary,
+  credits,
+  onConfirmed,
+}: {
+  beneficiary: Address;
+  credits: PendingReserveCredit[];
+  onConfirmed: () => void | Promise<void>;
+}) {
+  const [recipient, setRecipient] = useState<string>(beneficiary);
+  useEffect(() => setRecipient(beneficiary), [beneficiary]);
+  const recipientIsValid = isAddress(recipient);
+
+  const claim = (credit: PendingReserveCredit) => {
+    if (!isAddress(recipient)) {
+      return Promise.reject(new Error('Enter a valid EVM wallet address for the recipient.'));
+    }
+    return dataService.claimReserveCredit({
+      paymentAsset: credit.paymentAsset,
+      recipient,
+    });
+  };
+
+  return (
+    <Card className="dc-facet-border p-5">
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sapphire">
+          Redeemed-token reserve
+        </div>
+        <div className="mt-1 font-display text-[21px] font-medium text-ink">
+          Reserve credit ready to claim
+        </div>
+        <p className="mt-1 max-w-[62ch] text-[12px] leading-relaxed text-ink-muted">
+          Only the connected holder wallet can authorize this claim. Choose where to receive it; use
+          another EOA if the connected smart wallet cannot accept native funds or tokens.
+        </p>
+      </div>
+
+      <label
+        htmlFor="reserve-credit-recipient"
+        className="mt-4 block text-[10.5px] font-semibold uppercase tracking-[0.12em] text-ink-dim"
+      >
+        Recipient wallet
+      </label>
+      <input
+        id="reserve-credit-recipient"
+        value={recipient}
+        onChange={(event) => setRecipient(event.target.value.trim())}
+        spellCheck={false}
+        autoComplete="off"
+        aria-invalid={!recipientIsValid}
+        className="mt-1.5 h-10 w-full rounded-[4px] border border-line/[0.12] bg-line/[0.03] px-3 font-mono text-[12px] text-ink outline-none focus:border-sapphire/50"
+      />
+      {!recipientIsValid && (
+        <p role="alert" className="mt-1.5 text-[11px] text-ruby">
+          Enter a valid EVM wallet address.
+        </p>
+      )}
+
+      <div className="mt-4 divide-y divide-line/[0.06] border-t border-line/[0.06]">
+        {credits.map((credit) => (
+          <div
+            key={credit.paymentAsset}
+            className="flex flex-wrap items-center justify-between gap-3 py-3"
+          >
+            <div>
+              <div className="font-mono text-[15px] font-semibold tracking-[-0.02em] text-ink">
+                {credit.amountFmt}
+              </div>
+              <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-dim">
+                {credit.symbol}
+              </div>
+            </div>
+            <TxButton
+              size="sm"
+              action={() => claim(credit)}
+              onConfirmed={onConfirmed}
+              disabled={!recipientIsValid}
+              pendingLabel="Claiming reserve…"
+              telemetryFlow="reserve_credit_claim"
+            >
+              Claim {credit.symbol}
+            </TxButton>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 

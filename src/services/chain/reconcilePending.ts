@@ -28,6 +28,11 @@ async function settle(client: PublicClient, work: PendingWork): Promise<boolean>
   for (const [index, step] of work.steps.entries()) {
     if (step.status !== 'broadcast' || !step.hash) {
       if (step.status === 'waiting') settled = false;
+      // The wallet may have broadcast but lost the JSON-RPC response before it
+      // returned a hash. Flow-specific state must authoritatively reconcile
+      // this record; absence of a hash is never evidence that it is safe to
+      // close and submit the value-moving call again.
+      if (step.status === 'broadcast' && !step.hash) settled = false;
       continue;
     }
     const receipt = await client

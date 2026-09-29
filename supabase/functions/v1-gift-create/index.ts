@@ -6,12 +6,7 @@ import { json, preflight } from '../_shared/cors.ts';
 import { dgeNftAbi, dgeNftAddress, operatorChain } from '../_shared/chain.ts';
 import { canonicalSiteOrigin } from '../_shared/origins.ts';
 import { emailConfigured, escapeHtml, sendEmail } from '../_shared/email.ts';
-import {
-  formatGiftCode,
-  generateGiftCode,
-  hashGiftCode,
-  normalizeGiftCode,
-} from '../_shared/gift.ts';
+import { formatGiftCode, hashGiftCode, normalizeGiftCode } from '../_shared/gift.ts';
 
 /**
  * Prepares and activates an email-bound escrow gift.
@@ -42,12 +37,11 @@ interface GiftRow {
   recipient_name: string | null;
   message: string | null;
   template: string;
+  client_request_id: string | null;
 }
 
 const SELECT =
-  'id,token_id::text,gem_id::text,code_hash,status,custody_mode,escrow_wallet,expires_at,sender_wallet,recipient_email,recipient_name,message,template';
-
-declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
+  'id,token_id::text,gem_id::text,code_hash,status,custody_mode,escrow_wallet,expires_at,sender_wallet,recipient_email,recipient_name,message,template,client_request_id';
 
 function utf8Base64(value: string): string {
   const bytes = new TextEncoder().encode(value);
@@ -76,22 +70,45 @@ function printableSenderCopy(card: GiftRow, code: string, senderName: string) {
   return { claimUrl, displayCode, printable };
 }
 
+/** Enough to recover from a bounced or filtered copy; not a mail cannon. */
+const MAX_SENDER_COPIES_PER_DAY = 5;
+
+/**
+ * What happened to the sender's printable copy.
+ *
+ * This used to be fire-and-forget: a Resend rejection was only a console line,
+ * while the issued screen told the sender a copy "is being emailed". Returning
+ * the outcome lets the screen tell the truth and offer a resend.
+ */
+type SenderCopyOutcome =
+  | { status: 'sent' }
+  | { status: 'unavailable'; reason: string }
+  | { status: 'failed'; reason: string };
+
 async function sendSenderCopy(
   user: { id: string; email?: string | null },
   admin: ReturnType<typeof adminClient>,
   card: GiftRow,
   code: string,
-) {
-  if (!emailConfigured() || !user.email) return;
-  const { data: existingDelivery } = await admin
-    .from('audit_records')
-    .select('id')
-    .eq('entity_type', 'gift_card')
-    .eq('entity_id', card.id)
-    .eq('action', 'gift.sender_copy_sent')
-    .limit(1)
-    .maybeSingle();
-  if (existingDelivery) return;
+  { force = false }: { force?: boolean } = {},
+): Promise<SenderCopyOutcome> {
+  if (!emailConfigured()) {
+    return { status: 'unavailable', reason: 'Email delivery is not configured yet.' };
+  }
+  if (!user.email) {
+    return { status: 'unavailable', reason: 'Your account has no email address to send to.' };
+  }
+  if (!force) {
+    const { data: existingDelivery } = await admin
+      .from('audit_records')
+      .select('id')
+      .eq('entity_type', 'gift_card')
+      .eq('entity_id', card.id)
+      .eq('action', 'gift.sender_copy_sent')
+      .limit(1)
+      .maybeSingle();
+    if (existingDelivery) return { status: 'sent' };
+  }
   const { data: profile } = await admin
     .from('profiles')
     .select('full_name')
@@ -112,19 +129,26 @@ async function sendSenderCopy(
     ],
   });
   await audit(user.id, 'gift.sender_copy_sent', 'gift_card', card.id, { messageId });
+  return { status: 'sent' };
 }
 
-function queueSenderCopy(
+/**
+ * Sends the copy without letting a mail failure undo an activation that has
+ * already happened on chain and in the database.
+ */
+async function deliverSenderCopy(
   user: { id: string; email?: string | null },
   admin: ReturnType<typeof adminClient>,
   card: GiftRow,
   code: string,
-) {
-  const task = sendSenderCopy(user, admin, card, code).catch((error) =>
-    console.error('Could not email sender gift-card copy', error),
-  );
-  if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(task);
-  else void task;
+  options?: { force?: boolean },
+): Promise<SenderCopyOutcome> {
+  try {
+    return await sendSenderCopy(user, admin, card, code, options);
+  } catch (error) {
+    console.error('Could not email sender gift-card copy', error);
+    return { status: 'failed', reason: safeErrorMessage(error, 'The copy could not be emailed.') };
+  }
 }
 
 async function escrowTransferProven(
@@ -135,12 +159,12 @@ async function escrowTransferProven(
   escrowTxHash: string,
 ): Promise<boolean> {
   const nft = dgeNftAddress();
-  const owner = await chain.publicClient
+  const owner = await chain.logsClient
     .readContract({ address: nft, abi: dgeNftAbi, functionName: 'ownerOf', args: [tokenId] })
     .catch(() => null);
   if (owner && getAddress(owner) === escrowWallet) return true;
   if (!TX_HASH.test(escrowTxHash)) return false;
-  const receipt = await chain.publicClient
+  const receipt = await chain.logsClient
     .getTransactionReceipt({ hash: escrowTxHash as Hash })
     .catch(() => null);
   if (!receipt || receipt.status !== 'success') return false;
@@ -215,8 +239,8 @@ Deno.serve(async (request) => {
         return json({ error: 'The configured gift escrow wallet has changed' }, 409);
       }
       if (card.status === 'active') {
-        queueSenderCopy(user, admin, card, code);
-        return json(giftResponse(card, code, true));
+        const senderCopy = await deliverSenderCopy(user, admin, card, code);
+        return json({ ...giftResponse(card, code, true), senderCopy });
       }
       if (card.status !== 'pending_escrow') {
         return json({ error: 'That gift setup is no longer pending' }, 409);
@@ -226,7 +250,7 @@ Deno.serve(async (request) => {
       }
 
       const tokenId = BigInt(card.token_id);
-      const locked = (await chain.publicClient.readContract({
+      const locked = (await chain.logsClient.readContract({
         address: nft,
         abi: dgeNftAbi,
         functionName: 'transferLocked',
@@ -257,11 +281,135 @@ Deno.serve(async (request) => {
         escrowWallet,
         transactionHash: TX_HASH.test(escrowTxHash) ? escrowTxHash : null,
       });
-      queueSenderCopy(user, admin, activated as GiftRow, code);
-      return json(giftResponse(activated as GiftRow, code, true));
+      const senderCopy = await deliverSenderCopy(user, admin, activated as GiftRow, code);
+      return json({ ...giftResponse(activated as GiftRow, code, true), senderCopy });
+    }
+
+    /*
+     * Finish a pending card from any tab or device.
+     *
+     * The one-time code is the only thing that can confirm a pending card, and it
+     * lived solely in the preparing tab's session storage. A tab closed or
+     * replaced during the MetaMask round trip therefore stranded the card even
+     * when the token had already moved into escrow. A pending card is not
+     * claimable, so its code has never been usable by anyone: the signed-in
+     * sender may replace it with a fresh one (supplied by the client, so a lost
+     * response can be retried with the same value) and continue, without a
+     * second wallet transfer when custody is already proven.
+     */
+    if (action === 'resume') {
+      const giftId = String(body.giftId ?? '');
+      const code = normalizeGiftCode(body.code);
+      if (!UUID.test(giftId) || !code) return json({ error: 'That gift setup is not valid' }, 400);
+      const { data } = await admin
+        .from('gift_cards')
+        .select(SELECT)
+        .eq('id', giftId)
+        .eq('sender_id', user.id)
+        .maybeSingle();
+      const card = data as GiftRow | null;
+      if (!card || card.custody_mode !== 'operator_escrow') {
+        return json({ error: 'That gift setup is not available' }, 404);
+      }
+      if (card.status !== 'pending_escrow') {
+        return json({ error: 'That gift setup is no longer pending' }, 409);
+      }
+      if (getAddress(card.escrow_wallet) !== escrowWallet) {
+        return json({ error: 'The configured gift escrow wallet has changed' }, 409);
+      }
+      if (new Date(card.expires_at).getTime() <= Date.now()) {
+        return json({ error: 'This gift setup has expired. Cancel it to release the token.' }, 409);
+      }
+      const owner = getAddress(
+        (await chain.logsClient.readContract({
+          address: nft,
+          abi: dgeNftAbi,
+          functionName: 'ownerOf',
+          args: [BigInt(card.token_id)],
+        })) as string,
+      );
+      const custody =
+        owner === escrowWallet
+          ? 'escrow'
+          : owner === getAddress(card.sender_wallet)
+            ? 'sender'
+            : null;
+      if (!custody) {
+        return json(
+          { error: 'This token has left your wallet, so the setup cannot continue. Cancel it.' },
+          409,
+        );
+      }
+      const { data: reissued } = await admin
+        .from('gift_cards')
+        .update({ code_hash: await hashGiftCode(code) })
+        .eq('id', card.id)
+        .eq('status', 'pending_escrow')
+        .select(SELECT)
+        .maybeSingle();
+      if (!reissued) return json({ error: 'That gift setup is no longer pending' }, 409);
+      await audit(user.id, 'gift.code_reissued', 'gift_card', card.id, {
+        tokenId: card.token_id,
+        custody,
+      });
+      return json({ ...giftResponse(reissued as GiftRow, code, false), custody });
+    }
+
+    if (action === 'sender_copy') {
+      const giftId = String(body.giftId ?? '');
+      const code = normalizeGiftCode(body.code);
+      if (!UUID.test(giftId) || !code) return json({ error: 'That gift card is not valid' }, 400);
+      const { data } = await admin
+        .from('gift_cards')
+        .select(SELECT)
+        .eq('id', giftId)
+        .eq('sender_id', user.id)
+        .eq('code_hash', await hashGiftCode(code))
+        .maybeSingle();
+      const card = data as GiftRow | null;
+      if (!card) return json({ error: 'That gift card is not yours to send' }, 404);
+      if (card.status !== 'active') {
+        return json({ error: 'Only an active gift card can be emailed' }, 409);
+      }
+      const since = new Date(Date.now() - 86_400_000).toISOString();
+      const { count } = await admin
+        .from('audit_records')
+        .select('id', { count: 'exact', head: true })
+        .eq('entity_type', 'gift_card')
+        .eq('entity_id', card.id)
+        .eq('action', 'gift.sender_copy_sent')
+        .gte('created_at', since);
+      if ((count ?? 0) >= MAX_SENDER_COPIES_PER_DAY) {
+        return json(
+          { error: `Your copy has already been emailed ${MAX_SENDER_COPIES_PER_DAY} times today` },
+          429,
+        );
+      }
+      const senderCopy = await deliverSenderCopy(user, admin, card, code, { force: true });
+      return json({ senderCopy });
     }
 
     if (action !== 'prepare') return json({ error: 'Unknown action' }, 400);
+
+    const clientRequestId = String(body.clientRequestId ?? '');
+    const suppliedCode = normalizeGiftCode(body.code);
+    if (!UUID.test(clientRequestId) || !suppliedCode) {
+      return json({ error: 'Gift preparation idempotency data is invalid' }, 400);
+    }
+    const suppliedHash = await hashGiftCode(suppliedCode);
+    const { data: prior } = await admin
+      .from('gift_cards')
+      .select(SELECT)
+      .eq('sender_id', user.id)
+      .eq('client_request_id', clientRequestId)
+      .maybeSingle();
+    if (prior) {
+      const priorCard = prior as GiftRow;
+      if (priorCard.code_hash !== suppliedHash) {
+        return json({ error: 'That gift preparation key was already used' }, 409);
+      }
+      return json(giftResponse(priorCard, suppliedCode, priorCard.status !== 'pending_escrow'));
+    }
 
     const tokenIdRaw = String(body.tokenId ?? '').trim();
     if (!/^\d+$/.test(tokenIdRaw) || tokenIdRaw === '0') {
@@ -324,12 +472,20 @@ Deno.serve(async (request) => {
       return json({ error: 'This token is locked while its redemption is in progress' }, 409);
     }
 
-    const { data: custody } = await admin
+    /*
+     * Latest recorded term, not `maybeSingle()` alone: a gem with more than one
+     * dated submission row made PostgREST return an error, the error was
+     * dropped, and the sender was told no date existed at all.
+     */
+    const { data: custody, error: custodyError } = await admin
       .from('seller_submissions')
       .select('reserve_escrow_ends_at')
       .eq('onchain_gem_id', gemId.toString())
       .not('reserve_escrow_ends_at', 'is', null)
+      .order('reserve_escrow_ends_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
+    if (custodyError) throw custodyError;
     if (!custody?.reserve_escrow_ends_at) {
       return json(
         {
@@ -344,7 +500,32 @@ Deno.serve(async (request) => {
       return json({ error: 'This gemstone’s reserve escrow has already ended' }, 409);
     }
 
-    const code = generateGiftCode();
+    /*
+     * Retire stale setups before claiming the token's one open slot.
+     *
+     * A `pending_escrow` row is only a preparation record, and it never expires
+     * on its own. When the tab closed before the transfer (or the card was set
+     * up by a previous owner), its one-time code was gone and every later setup
+     * for this token hit the open-card unique index and answered 409 until
+     * someone found Cancel in the portfolio. The ownership read above proves
+     * the token is still in the sender's wallet, not escrow, so no pending row
+     * for it can be backed by custody; replacing it loses nothing claimable.
+     */
+    const { data: superseded, error: supersedeError } = await admin
+      .from('gift_cards')
+      .update({ status: 'cancelled', returned_at: new Date().toISOString() })
+      .eq('token_id', tokenId.toString())
+      .eq('status', 'pending_escrow')
+      .select('id');
+    if (supersedeError) throw supersedeError;
+    for (const stale of superseded ?? []) {
+      await audit(user.id, 'gift.superseded', 'gift_card', stale.id as string, {
+        tokenId: tokenId.toString(),
+        holder: senderWallet,
+      });
+    }
+
+    const code = suppliedCode;
     const { data: inserted, error } = await admin
       .from('gift_cards')
       .insert({
@@ -353,6 +534,7 @@ Deno.serve(async (request) => {
         token_id: tokenId.toString(),
         gem_id: gemId.toString(),
         code_hash: await hashGiftCode(code),
+        client_request_id: clientRequestId,
         recipient_email: recipientEmail,
         recipient_name: recipientName,
         message: message || null,
@@ -366,8 +548,20 @@ Deno.serve(async (request) => {
       .single();
     if (error) {
       if (error.code === '23505') {
+        const { data: raced } = await admin
+          .from('gift_cards')
+          .select(SELECT)
+          .eq('sender_id', user.id)
+          .eq('client_request_id', clientRequestId)
+          .maybeSingle();
+        if (raced && (raced as GiftRow).code_hash === suppliedHash) {
+          return json(giftResponse(raced as GiftRow, code, false));
+        }
         return json(
-          { error: 'This token already has a pending or active gift. Cancel it first.' },
+          {
+            error:
+              'This token already has a live gift card, or one being claimed or cancelled. Finish or cancel it from your portfolio first.',
+          },
           409,
         );
       }

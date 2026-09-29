@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { purchaseQuote, reserveShortfallUsd, shortfallLabel, swapReserveEligible } from './gem';
+import {
+  directSwapOwner,
+  purchaseQuote,
+  reserveShortfallUsd,
+  shortfallLabel,
+  swapReserveEligible,
+} from './gem';
 import type { Gem } from '@/services/types';
 
 const USD = 10n ** 18n;
@@ -47,11 +53,36 @@ describe('reserveShortfallUsd', () => {
 });
 
 describe('swapReserveEligible', () => {
-  it('allows partial reserves above ten percent and blocks the boundary', () => {
-    expect(swapReserveEligible({ reserve: 100 })).toBe(true);
-    expect(swapReserveEligible({ reserve: 10.01 })).toBe(true);
-    expect(swapReserveEligible({ reserve: 10 })).toBe(false);
-    expect(swapReserveEligible({ reserve: 0 })).toBe(false);
+  it('allows any positive reserve and blocks only an empty one', () => {
+    expect(swapReserveEligible({ reserve: 100, reserveBalanceUsd: 1_000n * 10n ** 18n })).toBe(
+      true,
+    );
+    expect(swapReserveEligible({ reserve: 10, reserveBalanceUsd: 100n * 10n ** 18n })).toBe(true);
+    // Rounds to 0% in the UI but is a positive balance on chain.
+    expect(swapReserveEligible({ reserve: 0, reserveBalanceUsd: 1n })).toBe(true);
+    expect(swapReserveEligible({ reserve: 0, reserveBalanceUsd: 0n })).toBe(false);
+  });
+
+  it('passes a gem with no reserve requirement, as the contract does', () => {
+    expect(swapReserveEligible({ reserve: 100, reserveBalanceUsd: 0n })).toBe(true);
+  });
+});
+
+describe('directSwapOwner', () => {
+  const viewer = '0x0000000000000000000000000000000000000001';
+  const other = '0x0000000000000000000000000000000000000002';
+  const escrow = '0x0000000000000000000000000000000000000003';
+
+  it('distinguishes a directly owned offered token from another wallet target', () => {
+    expect(directSwapOwner({ tokenId: 1n, owner: viewer }, viewer)).toBe('viewer');
+    expect(directSwapOwner({ tokenId: 2n, owner: other }, viewer)).toBe('other');
+  });
+
+  it('excludes listings and every configured custody address', () => {
+    expect(
+      directSwapOwner({ tokenId: 1n, owner: other, listingSeller: viewer }, viewer),
+    ).toBeUndefined();
+    expect(directSwapOwner({ tokenId: 1n, owner: escrow }, viewer, [escrow])).toBeUndefined();
   });
 });
 

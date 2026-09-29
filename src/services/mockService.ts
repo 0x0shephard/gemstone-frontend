@@ -138,6 +138,14 @@ export const mockService: IDataService = {
       swaps: buildSwaps(),
       redemptions: buildRedemptions(),
       activity,
+      sections: {
+        holdings: { state: 'ready' },
+        bids: { state: 'ready' },
+        offers: { state: 'ready' },
+        swaps: { state: 'ready' },
+        redemptions: { state: 'ready' },
+        activity: { state: 'ready' },
+      },
       stats: {
         portfolioValueUsd: owned.reduce((s, g) => s + g.value, 0),
         ownedCount: owned.length,
@@ -172,6 +180,7 @@ export const mockService: IDataService = {
         amountFmt: '0.125 ETH',
       },
     ]),
+  getPendingReserveCredits: () => delay([]),
   getPendingTreasuryPayout: () =>
     delay({
       amount: 400000000000000000n,
@@ -192,6 +201,7 @@ export const mockService: IDataService = {
   settleAuction: ok,
   settleListingAuction: ok,
   claimRefund: ok,
+  claimReserveCredit: ok,
   claimTreasuryPayout: ok,
   createOffer: ok,
   acceptOffer: ok,

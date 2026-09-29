@@ -7,12 +7,17 @@ import { PaymentAssetSelector } from '@/components/payment/PaymentAssetSelector'
 import { ReserveStatus } from '@/components/gem/ReserveStatus';
 import { ModalGemHeader, SummaryRow, assetAmountPreview } from './parts';
 import { dataService } from '@/services';
-import { purchaseQuote, reserveShortfallUsd, swapReserveEligible } from '@/lib/gem';
+import {
+  directSwapOwner,
+  purchaseQuote,
+  reserveShortfallUsd,
+  swapReserveEligible,
+} from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
-import { useGems, useProfile } from '@/hooks/useData';
-import { contractAddresses, NATIVE_ASSET } from '@/config/contracts';
-import { isAddressEqual, zeroHash } from 'viem';
+import { useGems, useProfile, useRedemptions } from '@/hooks/useData';
+import { contractAddresses, giftOperatorAddress, NATIVE_ASSET } from '@/config/contracts';
+import { zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
 import { env } from '@/config/env';
 import { createRedemptionCommitment } from '@/services/offchain/workflows';
@@ -385,27 +390,23 @@ export function SwapModal({
   const { address } = useAccount();
   const { data: gems = [] } = useGems();
   const { data: profile } = useProfile(address);
+  const { data: allRedemptions = [] } = useRedemptions();
   const requesting = direction === 'request';
   // Offering someone else's token is impossible, so the picker lists only what
   // the connected wallet actually owns.
   const redemptionTokenIds = new Set(
-    (profile?.redemptions ?? []).map((redemption) => redemption.tokenId.toString()),
+    allRedemptions.map((redemption) => redemption.tokenId.toString()),
   );
   const marketplaceAddress = contractAddresses.Marketplace;
   const swapEscrowAddress = contractAddresses.SwapEscrow;
+  const custodyAddresses = [marketplaceAddress, swapEscrowAddress, giftOperatorAddress] as const;
   const choices = (requesting ? (profile?.owned ?? []) : gems).filter((candidate) => {
-    if (!candidate.tokenId || candidate.listingSeller) return false;
+    if (!candidate.tokenId) return false;
     if (redemptionTokenIds.has(candidate.tokenId.toString())) return false;
-    if (
-      candidate.owner &&
-      ((marketplaceAddress && isAddressEqual(candidate.owner, marketplaceAddress)) ||
-        (swapEscrowAddress && isAddressEqual(candidate.owner, swapEscrowAddress)))
-    ) {
-      return false;
-    }
-    return (
-      !requesting || Boolean(address && candidate.owner && isAddressEqual(candidate.owner, address))
-    );
+    const owner = directSwapOwner(candidate, address, custodyAddresses);
+    // Offered picker: directly held by the viewer. Requested picker: minted,
+    // unlocked candidates held by somebody else, never the viewer's other gem.
+    return requesting ? owner === 'viewer' : owner === 'other';
   });
   const [requestedId, setRequestedId] = useState('');
   const [delta, setDelta] = useState('');
@@ -415,6 +416,12 @@ export function SwapModal({
   // `offered` is what leaves the proposer's wallet; `requested` is what arrives.
   const offered = requesting ? counterpart : gem;
   const requested = requesting ? gem : counterpart;
+  const viewedGemOwner = directSwapOwner(gem, address, custodyAddresses);
+  const viewedGemEligible = requesting
+    ? viewedGemOwner === 'other' &&
+      Boolean(gem.tokenId && !redemptionTokenIds.has(gem.tokenId.toString()))
+    : viewedGemOwner === 'viewer' &&
+      Boolean(gem.tokenId && !redemptionTokenIds.has(gem.tokenId.toString()));
   const reservesEligible = Boolean(
     offered && requested && swapReserveEligible(offered) && swapReserveEligible(requested),
   );
@@ -461,8 +468,8 @@ export function SwapModal({
       {counterpart && <ReserveStatus gem={counterpart} />}
       {counterpart && !reservesEligible && (
         <p className="rounded-[4px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
-          Each gemstone must have more than 10% of its required reserve funded. Partial reserves
-          above that threshold can still be swapped.
+          A gemstone with an empty reserve cannot be swapped. Any funded reserve, even a partial
+          one, is enough.
         </p>
       )}
       <Field
@@ -530,6 +537,7 @@ export function SwapModal({
         disabled={
           !offered?.tokenId ||
           !requested?.tokenId ||
+          !viewedGemEligible ||
           !reservesEligible ||
           cashAmountUsd === null ||
           (cashAmountUsd > 0n && !asset)

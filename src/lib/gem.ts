@@ -1,4 +1,4 @@
-import { formatUnits } from 'viem';
+import { formatUnits, isAddressEqual, type Address } from 'viem';
 import type { Gem, GemType, DecoratedGem } from '@/services/types';
 import { fmtUsd, fmtCarats } from './format';
 
@@ -83,11 +83,26 @@ export function reserveShortfallUsd(g: Gem): number {
 
 /**
  * Swaps preserve ownership of the same two reserve-backed assets; they do not
- * consume either reserve. The protocol therefore permits a partially funded
- * stone, but blocks one at or below ten percent coverage.
+ * consume either reserve. Any positive reserve therefore qualifies, and only an
+ * empty one blocks the swap, matching `SwapEscrow._requireSwapReserve`.
+ *
+ * Read from the raw balance, not the rounded percentage: a balance under 0.01%
+ * of the requirement displays as 0% yet is still swappable on chain. A gem with
+ * no reserve requirement reports 100% and passes, as the contract lets it.
  */
-export function swapReserveEligible(g: Pick<Gem, 'reserve'>): boolean {
-  return g.reserve > 10;
+export function swapReserveEligible(g: Pick<Gem, 'reserve' | 'reserveBalanceUsd'>): boolean {
+  return g.reserveBalanceUsd > 0n || g.reserve >= 100;
+}
+
+/** A swap side must be a live token held by a wallet, never protocol/gift custody. */
+export function directSwapOwner(
+  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller'>,
+  viewer: Address | undefined,
+  custody: readonly (Address | undefined)[] = [],
+): 'viewer' | 'other' | undefined {
+  if (!gem.tokenId || !gem.owner || gem.listingSeller) return;
+  if (custody.some((address) => address && isAddressEqual(gem.owner!, address))) return;
+  return viewer && isAddressEqual(gem.owner, viewer) ? 'viewer' : 'other';
 }
 
 export interface PurchaseQuote {

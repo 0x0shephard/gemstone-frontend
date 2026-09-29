@@ -34,6 +34,28 @@ describe('WalletConnect revival', () => {
     cleanup();
   });
 
+  it('restarts the active connected session without trying to reconnect it', async () => {
+    const restart = vi.fn(async () => {});
+    const reconnectAction = vi.fn(async () => {});
+    const config = configWithRelayer(restart);
+    const connector = config.connectors[0];
+    config.state.current = 'active-session';
+    config.state.connections.set('active-session', {
+      accounts: ['0x0000000000000000000000000000000000000001'],
+      chainId: 11155111,
+      connector,
+    } as never);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    const cleanup = reviveWalletConnectOnReturn(config, {
+      reconnectAction,
+      retryDelaysMs: [0],
+    });
+    await vi.waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
+    expect(reconnectAction).not.toHaveBeenCalled();
+    cleanup();
+  });
+
   it('also wakes on focus and removes every listener during cleanup', async () => {
     const restart = vi.fn(async () => {});
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
@@ -141,6 +163,72 @@ describe('WalletConnect revival', () => {
 
     await vi.waitFor(() => expect(reconnectAction).toHaveBeenCalledTimes(1));
     expect(isAuthorized).toHaveBeenCalledTimes(2);
+    cleanup();
+  });
+
+  it('skips an unauthorised first wallet and restores the approved connector', async () => {
+    const first = {
+      id: 'metaMaskConnect',
+      type: 'metaMask',
+      isAuthorized: vi.fn(async () => false),
+      getProvider: vi.fn(async () => ({})),
+    };
+    const second = {
+      id: 'rainbow',
+      type: 'walletConnect',
+      isAuthorized: vi.fn(async () => true),
+      getProvider: vi.fn(async () => ({})),
+    };
+    const config = {
+      state: { connections: new Map(), current: null, status: 'disconnected' },
+      connectors: [first, second],
+    } as unknown as Config;
+    const reconnectAction = vi.fn(async (target: Config) => {
+      target.state.current = 'rainbow-uid';
+    });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    const cleanup = reviveWalletConnectOnReturn(config, {
+      reconnectAction,
+      retryDelaysMs: [0],
+      operationTimeoutMs: 50,
+    });
+
+    await vi.waitFor(() => expect(reconnectAction).toHaveBeenCalledTimes(1));
+    expect(reconnectAction).toHaveBeenCalledWith(config, { connectors: [second] });
+    cleanup();
+  });
+
+  it('bounds a stalled provider and can recover another connector on the same wake', async () => {
+    const first = {
+      id: 'metaMaskConnect',
+      type: 'metaMask',
+      isAuthorized: vi.fn(async () => false),
+      getProvider: vi.fn(() => new Promise<never>(() => undefined)),
+    };
+    const second = {
+      id: 'walletConnect',
+      type: 'walletConnect',
+      isAuthorized: vi.fn(async () => true),
+      getProvider: vi.fn(async () => ({})),
+    };
+    const config = {
+      state: { connections: new Map(), current: null, status: 'disconnected' },
+      connectors: [first, second],
+    } as unknown as Config;
+    const reconnectAction = vi.fn(async (target: Config) => {
+      target.state.current = 'wc-uid';
+    });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+
+    const cleanup = reviveWalletConnectOnReturn(config, {
+      reconnectAction,
+      retryDelaysMs: [0],
+      operationTimeoutMs: 5,
+    });
+    await vi.waitFor(() =>
+      expect(reconnectAction).toHaveBeenCalledWith(config, { connectors: [second] }),
+    );
     cleanup();
   });
 });

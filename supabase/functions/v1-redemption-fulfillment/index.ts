@@ -2,6 +2,8 @@ import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { NotACustodianError, canConfirmCustody, requireVerifier } from '../_shared/verifier.ts';
+import { getAddress, isAddress } from 'npm:viem@2';
+import { gemRegistryAbi, operatorChain } from '../_shared/chain.ts';
 
 /**
  * Delivery details for an open redemption, for the custodian who must fulfil it.
@@ -35,10 +37,10 @@ Deno.serve(async (request) => {
     const tokenId = String(body.tokenId ?? '');
     if (!/^\d+$/.test(tokenId)) return json({ error: 'A numeric token id is required' }, 400);
 
-    const { data: record, error } = await admin
+    const { data: records, error } = await admin
       .from('redemption_requests')
       .select(
-        'id,gem_id::text,token_id::text,fulfillment_method,fulfillment_details,status,created_at',
+        'id,gem_id::text,token_id::text,fulfillment_method,fulfillment_details,status,request_hash,created_at',
       )
       .eq('token_id', tokenId)
       /*
@@ -47,12 +49,51 @@ Deno.serve(async (request) => {
        * rather than remaining available to anyone with a custody role forever.
        */
       .in('status', ['committed', 'onchain_requested'])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .not('request_hash', 'is', null);
     if (error) throw error;
-    if (!record) {
+    if (!records?.length) {
       return json({ error: 'No open redemption request for that token' }, 404);
+    }
+
+    const chain = operatorChain();
+    let record: (typeof records)[number] | undefined;
+    let custodian: string | undefined;
+    for (const candidate of records) {
+      const gem = (await chain.publicClient.readContract({
+        address: chain.addresses.registry,
+        abi: gemRegistryAbi,
+        functionName: 'getGem',
+        args: [BigInt(candidate.gem_id)],
+      })) as { custodian: string; redemptionRequestHash: string };
+      if (
+        candidate.request_hash &&
+        gem.redemptionRequestHash.toLowerCase() === String(candidate.request_hash).toLowerCase()
+      ) {
+        record = candidate;
+        custodian = gem.custodian;
+        break;
+      }
+    }
+    if (!record || !custodian) {
+      return json({ error: 'No delivery record matches the active chain redemption' }, 404);
+    }
+
+    const { data: walletLink } = await admin
+      .from('wallet_links')
+      .select('wallet_address')
+      .eq('profile_id', user.id)
+      .eq('is_primary', true)
+      .not('verified_at', 'is', null)
+      .maybeSingle();
+    if (
+      !walletLink?.wallet_address ||
+      !isAddress(walletLink.wallet_address) ||
+      getAddress(walletLink.wallet_address) !== getAddress(custodian)
+    ) {
+      return json(
+        { error: 'Only this gemstone’s verified custodian may view delivery details' },
+        403,
+      );
     }
 
     await audit(
@@ -69,6 +110,7 @@ Deno.serve(async (request) => {
       method: record.fulfillment_method,
       details: record.fulfillment_details,
       status: record.status,
+      requestHash: record.request_hash,
       requestedAt: record.created_at,
     });
   } catch (error) {
