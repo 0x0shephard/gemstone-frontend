@@ -20,6 +20,10 @@ test('a bid on a listed gem wins its 24-hour auction and mints the token', async
   await bob.context.close();
 
   // Past the auction close; the scheduled sweep settles it exactly as cron would.
+  // Snapshotted first: later journeys set expiries from the browser clock and
+  // must not run on a chain that is a day ahead of it.
+  const beforeTravel = await nft.snapshot();
+  test.info().attach('chain-snapshot', { body: beforeTravel });
   await nft.travel(24 * 60 * 60 + 120);
   const admin = stack.accounts.admin.address;
   await nft.refreshFeed(admin, String(stack.deployment.EthUsdFeed));
@@ -32,5 +36,9 @@ test('a bid on a listed gem wins its 24-hour auction and mints the token', async
   const report = await sweep.text();
   expect(sweep.status, report).toBe(200);
   test.info().annotations.push({ type: 'sweep', description: report });
-  await expect.poll(() => nft.balanceOf(bob.address)).toBe(before + 1n);
+  try {
+    await expect.poll(() => nft.balanceOf(bob.address)).toBe(before + 1n);
+  } finally {
+    await nft.restore(beforeTravel);
+  }
 });

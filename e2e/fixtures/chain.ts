@@ -61,6 +61,12 @@ export function chain(rpc: string, nft: string) {
           () => false,
         ),
     ethBalance: (address: string) => client.getBalance({ address: address as Address }),
+    /** Chain snapshot/restore, so a journey that moves time cannot leak it into the next. */
+    snapshot: () =>
+      client.request({ method: 'evm_snapshot' as never, params: [] as never }) as Promise<string>,
+    async restore(id: string) {
+      await client.request({ method: 'evm_revert' as never, params: [id] as never });
+    },
     /** Moves chain time forward and mines a block. */
     async travel(seconds: number) {
       await client.request({ method: 'evm_increaseTime' as never, params: [seconds] as never });
