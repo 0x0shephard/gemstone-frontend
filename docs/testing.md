@@ -36,6 +36,7 @@ the next request or lose its response.
 | `gift.e2e.ts` | escrow, sender copy, recipient email, claim |
 | `gift-recovery.e2e.ts` | abandoned setup replaced; interrupted gift finished from a new tab |
 | `faults.e2e.ts` | wallet rejection; lost reply after broadcast (no second send) |
+| `redemption.e2e.ts` | request, custodian hand-over in the verify portal, holder claims the reserve |
 
-Not yet covered: auctions, marketplace offers, redemption, verify portal,
+Not yet covered: auctions, marketplace offers, redemption cancellation,
 notifications, and a real-MetaMask (Synpress) nightly set.

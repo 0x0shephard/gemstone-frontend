@@ -6,6 +6,7 @@ const nftAbi = parseAbi([
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenGem(uint256 tokenId) view returns (uint256)',
   'function safeTransferFrom(address from, address to, uint256 tokenId)',
+  'function transferLocked(uint256 tokenId) view returns (bool)',
 ]);
 
 /** Reads straight from the local chain, so assertions never trust the UI's own view. */
@@ -39,6 +40,27 @@ export function chain(rpc: string, nft: string) {
       });
       await client.waitForTransactionReceipt({ hash: hash as `0x${string}` });
     },
+    locked: (tokenId: bigint) =>
+      client.readContract({
+        address: nft as Address,
+        abi: nftAbi,
+        functionName: 'transferLocked',
+        args: [tokenId],
+      }),
+    /** Burned tokens revert on ownerOf. */
+    exists: (tokenId: bigint) =>
+      client
+        .readContract({
+          address: nft as Address,
+          abi: nftAbi,
+          functionName: 'ownerOf',
+          args: [tokenId],
+        })
+        .then(
+          () => true,
+          () => false,
+        ),
+    ethBalance: (address: string) => client.getBalance({ address: address as Address }),
     balanceOf: (owner: string) =>
       client.readContract({
         address: nft as Address,

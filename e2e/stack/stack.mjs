@@ -215,7 +215,7 @@ async function rest(db, pathname, init = {}) {
 async function seedDatabase(db) {
   log('seeding users, wallets and submissions');
   const users = {};
-  for (const role of ['seller', 'alice', 'bob']) {
+  for (const role of ['seller', 'alice', 'bob', 'custodian']) {
     const email = `${role}@e2e.digitalcarat.test`;
     const existing = await rest(db, `/auth/v1/admin/users?email=${encodeURIComponent(email)}`);
     const found = existing?.users?.find((user) => user.email === email);
@@ -246,7 +246,7 @@ async function seedDatabase(db) {
 
   // One registered submission per on-chain gem, dated so gift cards can expire.
   const escrowEnds = new Date(Date.now() + 2 * 365 * 86_400_000).toISOString();
-  for (const gemId of [1, 2, 3, 4, 5, 6, 7, 8]) {
+  for (const gemId of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
     await rest(db, `/rest/v1/seller_submissions?onchain_gem_id=eq.${gemId}`, { method: 'DELETE' });
     await rest(db, '/rest/v1/seller_submissions', {
       method: 'POST',
@@ -262,6 +262,22 @@ async function seedDatabase(db) {
       }),
     });
   }
+  // The custodian confirms hand-overs from the verify portal, which requires an
+  // administrator membership of an admin verifier organisation.
+  const [organization] = await rest(db, '/rest/v1/verifier_organizations?on_conflict=name', {
+    method: 'POST',
+    headers: { prefer: 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify({ name: 'E2E Operations', kind: 'admin' }),
+  });
+  await rest(db, '/rest/v1/verifier_members?on_conflict=profile_id,organization_id', {
+    method: 'POST',
+    headers: { prefer: 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify({
+      profile_id: users.custodian.id,
+      organization_id: organization.id,
+      role: 'org_admin',
+    }),
+  });
   return users;
 }
 
