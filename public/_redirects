@@ -1,3 +1,10 @@
-# /ipfs/* is served by netlify/functions/ipfs.mts (durable-cached, same-origin).
-# Its `config.path` takes precedence over this SPA fallback.
+# Same-origin IPFS. Browsers fired bursts of ~1 MB image requests at public
+# gateways, which answered many with 429 text/plain; Chrome (ORB) and Safari
+# (CORS) then refused to render them. Proxying through this origin removes the
+# cross-origin failure, and each edge node caches the immutable bytes (Pinata
+# sends an 11-month max-age). An edge function and a serverless function with
+# a `durable` CDN policy were both tried for one cross-node copy; neither
+# produced a durable cache layer, and the function adds an execution time
+# limit, so the plain proxy stays. Must stay above the SPA fallback.
+/ipfs/*  https://gateway.pinata.cloud/ipfs/:splat  200
 /*    /index.html   200
