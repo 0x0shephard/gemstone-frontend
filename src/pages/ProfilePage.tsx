@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
-import { usePendingReserveCredits, usePendingTreasuryPayout, useProfile } from '@/hooks/useData';
+import {
+  usePendingReserveCredits,
+  usePendingTreasuryPayout,
+  useProfile,
+  useSwaps,
+} from '@/hooks/useData';
+import { SwapCard } from '@/pages/SwapsPage';
 import { useAuth } from '@/providers/AuthProvider';
 import { useKyc } from '@/hooks/useKyc';
 import { StatTile } from '@/components/ui/StatTile';
@@ -294,34 +300,12 @@ export default function ProfilePage() {
           {tab === 'bids' && <BidsTable rows={profile.bids} />}
           {tab === 'offers' && <OffersTable rows={profile.offers} address={address} />}
 
-          {tab === 'swaps' &&
-            (profile.swaps.length ? (
-              <div className="space-y-3">
-                {profile.swaps.map((s, i) => (
-                  <Card key={i} className="flex items-center gap-3 p-4">
-                    <GemThumb
-                      gem={s.gem}
-                      height={44}
-                      rounded="rounded-[4px]"
-                      showTag={false}
-                      showCarat={false}
-                      className="w-11"
-                    />
-                    <div className="flex-1">
-                      <div className="text-[14px] font-semibold text-ink">
-                        {s.giveName} <span className="text-ink-dim">⇄</span> {s.gem.name}
-                      </div>
-                      <div className="text-[12px] text-emerald">{s.diff}</div>
-                    </div>
-                    <StatusBadge color={s.statusColor} dot>
-                      {s.status}
-                    </StatusBadge>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="No swap requests" />
-            ))}
+          {/*
+            The same actionable cards as the Swaps page: accept a swap proposed
+            to you, cancel one you proposed, or recover an expired one — from
+            here, without going through the gem's Manage screen.
+          */}
+          {tab === 'swaps' && <PortfolioSwaps viewer={address} />}
 
           {tab === 'gifts' && <GiftCardList owned={profile.owned} />}
 
@@ -638,5 +622,24 @@ function OffersTable({ rows, address }: { rows: Offer[]; address?: string }) {
       rowKey={(r) => r.offerId.toString()}
       empty="No offers."
     />
+  );
+}
+
+function PortfolioSwaps({ viewer }: { viewer?: Address }) {
+  const { data: swaps, isLoading } = useSwaps();
+  if (isLoading && !swaps) return <CardGridSkeleton count={2} />;
+  const mine = (swaps ?? []).filter(
+    (swap) =>
+      viewer &&
+      (swap.proposer.toLowerCase() === viewer.toLowerCase() ||
+        swap.requestedOwner.toLowerCase() === viewer.toLowerCase()),
+  );
+  if (!mine.length) return <EmptyState title="No swap requests" />;
+  return (
+    <div className="space-y-3">
+      {mine.map((swap) => (
+        <SwapCard key={swap.offerId.toString()} swap={swap} viewer={viewer} />
+      ))}
+    </div>
   );
 }

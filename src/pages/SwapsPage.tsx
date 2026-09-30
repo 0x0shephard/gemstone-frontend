@@ -73,7 +73,7 @@ function SwapSide({
   );
 }
 
-function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address }) {
+export function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address }) {
   const canCancel = viewer?.toLowerCase() === swap.proposer.toLowerCase();
   const canAccept =
     swap.status === 'Active' && viewer?.toLowerCase() === swap.requestedOwner.toLowerCase();
