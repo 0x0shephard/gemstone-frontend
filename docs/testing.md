@@ -44,5 +44,10 @@ its web servers before global setup, so a fresh clone needs `up` first).
 | `offer.e2e.ts`             | offer on an unlisted token, accepted by the holder                           |
 | `redemption-cancel.e2e.ts` | custodian cancels a redemption from the verify portal                        |
 
-Not yet covered:
-notifications, and a real-MetaMask (Synpress) nightly set.
+Not yet covered: notifications.
+
+A real-MetaMask set with Synpress 4.1.2 was attempted (2026-09-30) and
+dropped: its network-switch selector no longer matches MetaMask's UI, and
+the extension left the browser on its own "wallet ready" screen so the dapp
+tab never became usable. The injected test wallet covers every journey and
+failure case; the phone runbook covers MetaMask's own UI on real devices.
