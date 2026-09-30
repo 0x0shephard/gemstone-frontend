@@ -61,6 +61,23 @@ export function chain(rpc: string, nft: string) {
           () => false,
         ),
     ethBalance: (address: string) => client.getBalance({ address: address as Address }),
+    /** Moves chain time forward and mines a block. */
+    async travel(seconds: number) {
+      await client.request({ method: 'evm_increaseTime' as never, params: [seconds] as never });
+      await client.request({ method: 'evm_mine' as never, params: [] as never });
+    },
+    /** Re-stamps a mock price feed so time travel does not leave prices stale. */
+    async refreshFeed(owner: string, feed: string) {
+      const data = encodeFunctionData({
+        abi: parseAbi(['function refresh()']),
+        functionName: 'refresh',
+      });
+      const hash = await client.request({
+        method: 'eth_sendTransaction' as never,
+        params: [{ from: owner, to: feed, data }] as never,
+      });
+      await client.waitForTransactionReceipt({ hash: hash as `0x${string}` });
+    },
     balanceOf: (owner: string) =>
       client.readContract({
         address: nft as Address,

@@ -92,7 +92,9 @@ Deno.serve(async (request) => {
     await assertOperatorChain(chain);
 
     const gemIds = await discoverGemIds(chain);
-    const now = BigInt(Math.floor(Date.now() / 1_000));
+    // The contracts settle on block time, so that is the clock that decides
+    // whether an auction has closed — not this server's.
+    const now = (await chain.publicClient.getBlock()).timestamp;
     const reopened: string[] = [];
     const settledNow: string[] = [];
     const secondarySettled: string[] = [];

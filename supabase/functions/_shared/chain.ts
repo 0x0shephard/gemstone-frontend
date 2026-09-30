@@ -48,6 +48,20 @@ function configuredChain(rpcUrl: string) {
       decimals: 18,
     },
     rpcUrls: { default: { http: [rpcUrl] } },
+    /*
+     * `defineChain` knows no contracts, and viem's `multicall` refuses to run
+     * without one — so the auction sweep's gem discovery failed on every run.
+     * Multicall3 sits at the same canonical address on Sepolia, Arbitrum and
+     * practically every EVM chain; MULTICALL3_ADDRESS covers any exception.
+     */
+    contracts: {
+      multicall3: {
+        address: getAddress(
+          Deno.env.get('MULTICALL3_ADDRESS')?.trim() ||
+            '0xcA11bde05977b3631167028862bE2a173976CA11',
+        ),
+      },
+    },
     blockExplorers: explorerUrl
       ? { default: { name: 'Block explorer', url: explorerUrl } }
       : undefined,

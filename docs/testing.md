@@ -37,6 +37,7 @@ the next request or lose its response.
 | `gift-recovery.e2e.ts` | abandoned setup replaced; interrupted gift finished from a new tab |
 | `faults.e2e.ts` | wallet rejection; lost reply after broadcast (no second send) |
 | `redemption.e2e.ts` | request, custodian hand-over in the verify portal, holder claims the reserve |
+| `auction.e2e.ts` | bid, 24 h time travel, settlement by the real `v1-auction-refresh` sweep |
 
-Not yet covered: auctions, marketplace offers, redemption cancellation,
+Not yet covered: marketplace offers, redemption cancellation,
 notifications, and a real-MetaMask (Synpress) nightly set.
