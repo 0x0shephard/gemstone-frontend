@@ -15,6 +15,8 @@ import { PriceBreakdown } from '@/components/gem/PriceBreakdown';
 import { ProvenanceChain } from '@/components/gem/ProvenanceChain';
 import { TxButton } from '@/components/tx/TxButton';
 import { dataService } from '@/services';
+import { gemLocation } from '@/lib/gem';
+import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
 
 export default function GemDetailPage() {
   const { gemId = '' } = useParams();
@@ -121,6 +123,20 @@ export default function GemDetailPage() {
             <h1 className="mt-2 font-display text-[30px] font-medium leading-tight tracking-[-0.04em] text-ink sm:text-[36px]">
               {gem.name}
             </h1>
+            {(() => {
+              const location = gemLocation(gem, address, {
+                marketplace: contractAddresses.Marketplace,
+                swapEscrow: contractAddresses.SwapEscrow,
+                giftOperator: giftOperatorAddress,
+              });
+              return (
+                <div className="mt-2">
+                  <StatusBadge tone={location.tone} dot>
+                    {location.label}
+                  </StatusBadge>
+                </div>
+              );
+            })()}
           </div>
 
           <Card className="dc-facet-border p-5 sm:p-6">

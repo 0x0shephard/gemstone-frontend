@@ -1,4 +1,4 @@
-import { formatUnits, isAddressEqual, type Address } from 'viem';
+import { formatUnits, isAddressEqual, zeroAddress, type Address } from 'viem';
 import type { Gem, GemType, DecoratedGem } from '@/services/types';
 import { fmtUsd, fmtCarats } from './format';
 
@@ -95,13 +95,37 @@ export function swapReserveEligible(g: Pick<Gem, 'reserve' | 'reserveBalanceUsd'
 }
 
 /** A swap side must be a live token held by a wallet, never protocol/gift custody. */
+/**
+ * Held by the gift-card escrow on someone else's behalf.
+ *
+ * The escrow wallet is also a real wallet (on Sepolia it is the deployer), so
+ * holding a token there did not mean it was a gift: every token its owner held
+ * showed as "held in gift-card escrow" and none could be swapped. DGENFT's
+ * reserve guard records who deposited each escrowed token; one recorded as the
+ * holder's own, or never deposited, is not a gift.
+ */
+export function inGiftEscrow(
+  gem: Pick<Gem, 'owner' | 'escrowDepositor'>,
+  giftOperator: Address | undefined,
+): boolean {
+  if (!giftOperator || !gem.owner || !isAddressEqual(gem.owner, giftOperator)) return false;
+  return Boolean(
+    gem.escrowDepositor &&
+    !isAddressEqual(gem.escrowDepositor, zeroAddress) &&
+    !isAddressEqual(gem.escrowDepositor, gem.owner),
+  );
+}
+
 export function directSwapOwner(
-  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller'>,
+  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller' | 'escrowDepositor'>,
   viewer: Address | undefined,
+  /** Contract escrows (Marketplace, SwapEscrow): everything they hold is escrowed. */
   custody: readonly (Address | undefined)[] = [],
+  giftOperator?: Address,
 ): 'viewer' | 'other' | undefined {
   if (!gem.tokenId || !gem.owner || gem.listingSeller) return;
   if (custody.some((address) => address && isAddressEqual(gem.owner!, address))) return;
+  if (inGiftEscrow(gem, giftOperator)) return;
   return viewer && isAddressEqual(gem.owner, viewer) ? 'viewer' : 'other';
 }
 
@@ -111,7 +135,16 @@ export function directSwapOwner(
  * reason: silently filtering them made a full portfolio look like no tokens.
  */
 export function swapUnavailableReason(
-  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller' | 'reserve' | 'reserveBalanceUsd'>,
+  gem: Pick<
+    Gem,
+    | 'tokenId'
+    | 'owner'
+    | 'listingSeller'
+    | 'reserve'
+    | 'reserveBalanceUsd'
+    | 'escrowDepositor'
+    | 'transferLocked'
+  >,
   viewer: Address | undefined,
   custody: { marketplace?: Address; swapEscrow?: Address; giftOperator?: Address },
   redeemingTokenIds: ReadonlySet<string>,
@@ -122,11 +155,54 @@ export function swapUnavailableReason(
     Boolean(address && gem.owner && isAddressEqual(gem.owner, address));
   if (heldBy(custody.swapEscrow)) return 'already offered in another swap';
   if (heldBy(custody.marketplace)) return 'held by the marketplace';
-  if (heldBy(custody.giftOperator)) return 'held in gift-card escrow';
+  if (inGiftEscrow(gem, custody.giftOperator)) return 'held in escrow for a gift card';
   if (!viewer || !gem.owner || !isAddressEqual(gem.owner, viewer)) return 'not in your wallet';
-  if (redeemingTokenIds.has(gem.tokenId.toString())) return 'redemption in progress';
+  if (redeemingTokenIds.has(gem.tokenId.toString()) || gem.transferLocked) {
+    return 'redemption in progress';
+  }
   if (!swapReserveEligible(gem)) return 'reserve is empty — fund it to swap';
   return undefined;
+}
+
+export interface GemLocation {
+  label: string;
+  tone: 'success' | 'warning' | 'info' | 'neutral';
+}
+
+/**
+ * Where a gem is right now, in one short label for cards and the detail page:
+ * which contract or wallet holds it and what it is doing there.
+ */
+export function gemLocation(
+  gem: Pick<
+    Gem,
+    | 'tokenId'
+    | 'owner'
+    | 'listingSeller'
+    | 'listingWinningOfferId'
+    | 'escrowDepositor'
+    | 'transferLocked'
+  >,
+  viewer: Address | undefined,
+  custody: { marketplace?: Address; swapEscrow?: Address; giftOperator?: Address },
+): GemLocation {
+  if (!gem.tokenId) return { label: 'Primary auction', tone: 'info' };
+  if (gem.transferLocked) return { label: 'Redemption in progress', tone: 'warning' };
+  if (gem.listingSeller) {
+    return gem.listingWinningOfferId
+      ? { label: 'Auction in progress', tone: 'warning' }
+      : { label: 'Listed for sale', tone: 'info' };
+  }
+  const heldBy = (address?: Address) =>
+    Boolean(address && gem.owner && isAddressEqual(gem.owner, address));
+  if (heldBy(custody.swapEscrow)) return { label: 'Offered in a swap', tone: 'warning' };
+  if (heldBy(custody.marketplace)) return { label: 'Held by the marketplace', tone: 'neutral' };
+  if (inGiftEscrow(gem, custody.giftOperator))
+    return { label: 'In gift-card escrow', tone: 'warning' };
+  if (viewer && gem.owner && isAddressEqual(gem.owner, viewer)) {
+    return { label: 'In your wallet', tone: 'success' };
+  }
+  return { label: "In a collector's wallet", tone: 'neutral' };
 }
 
 export interface PurchaseQuote {

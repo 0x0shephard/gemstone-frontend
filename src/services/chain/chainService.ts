@@ -26,7 +26,7 @@ import { env } from '@/config/env';
 import { activeChain } from '@/config/chains';
 import { ownershipPathSteps } from '@/content/ownershipPath';
 import { contracts } from '@/contracts';
-import { decorate } from '@/lib/gem';
+import { decorate, inGiftEscrow } from '@/lib/gem';
 import type { IDataService, LandingData, ProfileData } from '../IDataService';
 import type {
   ApproveTransferRequest,
@@ -461,6 +461,8 @@ async function readGemUncached(
    * chain rather than a reading of it.
    */
   let owner: Address | undefined;
+  let escrowDepositor: Address | undefined;
+  let transferLocked: boolean | undefined;
   let listingSeller: Address | undefined;
   let listedPriceUsd: bigint | undefined;
   let listingWinningOfferId: bigint | undefined;
@@ -476,6 +478,23 @@ async function readGemUncached(
       functionName: 'ownerOf',
       args: [registryGem.tokenId],
     })) as Address;
+    transferLocked = (await client
+      .readContract({
+        ...contract('DGENFT'),
+        functionName: 'transferLocked',
+        args: [registryGem.tokenId],
+      })
+      .catch(() => undefined)) as boolean | undefined;
+    // Only the gift escrow wallet's tokens need it: see `inGiftEscrow`.
+    if (giftOperatorAddress && isAddressEqual(owner, giftOperatorAddress)) {
+      escrowDepositor = (await client
+        .readContract({
+          ...contract('DGENFT'),
+          functionName: 'escrowDepositor',
+          args: [registryGem.tokenId],
+        })
+        .catch(() => undefined)) as Address | undefined;
+    }
     const listing = (await client
       .readContract({
         ...contract('Marketplace'),
@@ -514,6 +533,8 @@ async function readGemUncached(
     tokenId: registryGem.tokenId > 0n ? registryGem.tokenId : undefined,
     seller: registryGem.seller,
     owner,
+    escrowDepositor,
+    transferLocked,
     /*
      * The ask, never the valuation. This block previously overwrote `valueUsd`
      * and `value` — and then the approved figures were assigned again further
@@ -2104,10 +2125,31 @@ export const chainService: IDataService = {
         'CONTRACT_REVERTED',
       );
     }
+    /*
+     * The gift escrow wallet is also a real wallet, so a token it holds is only
+     * a gift when DGENFT records someone else as its depositor (`inGiftEscrow`).
+     */
+    const heldForGift = async (tokenId: bigint, owner: Address) =>
+      inGiftEscrow(
+        {
+          owner,
+          escrowDepositor:
+            giftOperatorAddress && isAddressEqual(owner, giftOperatorAddress)
+              ? ((await client
+                  .readContract({
+                    ...contract('DGENFT'),
+                    functionName: 'escrowDepositor',
+                    args: [tokenId],
+                  })
+                  .catch(() => undefined)) as Address | undefined)
+              : undefined,
+        },
+        giftOperatorAddress,
+      );
     if (
       isAddressEqual(offeredOwner, manifest.addresses.Marketplace) ||
       isAddressEqual(offeredOwner, manifest.addresses.SwapEscrow) ||
-      Boolean(giftOperatorAddress && isAddressEqual(offeredOwner, giftOperatorAddress))
+      (await heldForGift(request.offeredTokenId, offeredOwner))
     ) {
       throw new TransactionGuardError(
         'The offered token must be held directly in your wallet, not marketplace, gift, or swap custody.',
@@ -2129,7 +2171,7 @@ export const chainService: IDataService = {
     if (
       isAddressEqual(requestedOwner, manifest.addresses.Marketplace) ||
       isAddressEqual(requestedOwner, manifest.addresses.SwapEscrow) ||
-      Boolean(giftOperatorAddress && isAddressEqual(requestedOwner, giftOperatorAddress))
+      (await heldForGift(request.requestedTokenId, requestedOwner))
     ) {
       throw new TransactionGuardError(
         'The requested token is already held by another marketplace or swap escrow. Choose a token held directly in its owner’s wallet.',

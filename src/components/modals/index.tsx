@@ -12,6 +12,7 @@ import {
   purchaseQuote,
   reserveShortfallUsd,
   swapReserveEligible,
+  swapUnavailableReason,
 } from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
@@ -399,11 +400,11 @@ export function SwapModal({
   );
   const marketplaceAddress = contractAddresses.Marketplace;
   const swapEscrowAddress = contractAddresses.SwapEscrow;
-  const custodyAddresses = [marketplaceAddress, swapEscrowAddress, giftOperatorAddress] as const;
+  const custodyAddresses = [marketplaceAddress, swapEscrowAddress] as const;
   const choices = (requesting ? (profile?.owned ?? []) : gems).filter((candidate) => {
     if (!candidate.tokenId) return false;
     if (redemptionTokenIds.has(candidate.tokenId.toString())) return false;
-    const owner = directSwapOwner(candidate, address, custodyAddresses);
+    const owner = directSwapOwner(candidate, address, custodyAddresses, giftOperatorAddress);
     // Offered picker: directly held by the viewer. Requested picker: minted,
     // unlocked candidates held by somebody else, never the viewer's other gem.
     return requesting ? owner === 'viewer' : owner === 'other';
@@ -416,7 +417,7 @@ export function SwapModal({
   // `offered` is what leaves the proposer's wallet; `requested` is what arrives.
   const offered = requesting ? counterpart : gem;
   const requested = requesting ? gem : counterpart;
-  const viewedGemOwner = directSwapOwner(gem, address, custodyAddresses);
+  const viewedGemOwner = directSwapOwner(gem, address, custodyAddresses, giftOperatorAddress);
   const viewedGemEligible = requesting
     ? viewedGemOwner === 'other' &&
       Boolean(gem.tokenId && !redemptionTokenIds.has(gem.tokenId.toString()))
@@ -470,6 +471,33 @@ export function SwapModal({
         <p className="rounded-[4px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber">
           A gemstone with an empty reserve cannot be swapped. Any funded reserve, even a partial
           one, is enough.
+        </p>
+      )}
+      {counterpart && reservesEligible && (gem.reserve < 100 || counterpart.reserve < 100) && (
+        <p className="text-[11.5px] leading-relaxed text-ink-dim">
+          A partial reserve does not block a swap — only an empty one does. The top-up above is
+          needed later, to mint or redeem.
+        </p>
+      )}
+      {!viewedGemEligible && (
+        <p
+          role="alert"
+          className="rounded-[4px] border border-amber/25 bg-amber/5 px-3 py-2 text-[11.5px] text-amber"
+        >
+          {requesting
+            ? 'This token cannot be requested right now: it is listed, escrowed, or in redemption.'
+            : `This token cannot be offered right now: ${
+                swapUnavailableReason(
+                  gem,
+                  address,
+                  {
+                    marketplace: marketplaceAddress,
+                    swapEscrow: swapEscrowAddress,
+                    giftOperator: giftOperatorAddress,
+                  },
+                  redemptionTokenIds,
+                ) ?? 'it is not held directly in your wallet'
+              }.`}
         </p>
       )}
       <Field

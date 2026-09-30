@@ -6,6 +6,8 @@ import {
   shortfallLabel,
   swapReserveEligible,
   swapUnavailableReason,
+  inGiftEscrow,
+  gemLocation,
 } from './gem';
 import type { Gem } from '@/services/types';
 
@@ -177,11 +179,82 @@ describe('swapUnavailableReason', () => {
       swapUnavailableReason(gem({ owner: custody.swapEscrow }), viewer, custody, none),
     ).toMatch(/another swap/);
     expect(
-      swapUnavailableReason(gem({ owner: custody.giftOperator }), viewer, custody, none),
-    ).toMatch(/gift-card escrow/);
+      swapUnavailableReason(
+        gem({ owner: custody.giftOperator, escrowDepositor: viewer }),
+        viewer,
+        custody,
+        none,
+      ),
+    ).toMatch(/gift card/);
     expect(swapUnavailableReason(gem(), viewer, custody, new Set(['7']))).toMatch(/redemption/);
     expect(
       swapUnavailableReason(gem({ reserve: 0, reserveBalanceUsd: 0n }), viewer, custody, none),
     ).toMatch(/reserve is empty/);
+  });
+});
+
+describe('gift escrow held by an operator that is also a real wallet', () => {
+  const operator = '0x00000000000000000000000000000000000000b3' as const;
+  const client = '0x00000000000000000000000000000000000000c1' as const;
+  const custody = {
+    marketplace: '0x00000000000000000000000000000000000000b1' as const,
+    swapEscrow: '0x00000000000000000000000000000000000000b2' as const,
+    giftOperator: operator,
+  };
+  const held = (escrowDepositor?: `0x${string}`) =>
+    ({
+      tokenId: 17n,
+      owner: operator,
+      escrowDepositor,
+      reserve: 40,
+      reserveBalanceUsd: 1n,
+    }) as never;
+
+  it("treats the operator's own tokens as its own, not as gifts", () => {
+    expect(inGiftEscrow(held(operator), operator)).toBe(false);
+    expect(inGiftEscrow(held(), operator)).toBe(false);
+    expect(swapUnavailableReason(held(operator), operator, custody, new Set())).toBeUndefined();
+    expect(
+      directSwapOwner(
+        held(operator),
+        operator,
+        [custody.marketplace, custody.swapEscrow],
+        operator,
+      ),
+    ).toBe('viewer');
+  });
+
+  it("keeps a token deposited by someone else's gift in escrow", () => {
+    expect(inGiftEscrow(held(client), operator)).toBe(true);
+    expect(swapUnavailableReason(held(client), operator, custody, new Set())).toMatch(/gift card/);
+    expect(
+      directSwapOwner(held(client), client, [custody.marketplace, custody.swapEscrow], operator),
+    ).toBeUndefined();
+  });
+});
+
+describe('gemLocation', () => {
+  const viewer = '0x00000000000000000000000000000000000000aa' as const;
+  const custody = {
+    marketplace: '0x00000000000000000000000000000000000000b1' as const,
+    swapEscrow: '0x00000000000000000000000000000000000000b2' as const,
+    giftOperator: '0x00000000000000000000000000000000000000b3' as const,
+  };
+  const at = (over: Record<string, unknown>) =>
+    gemLocation({ tokenId: 1n, owner: viewer, ...over } as never, viewer, custody).label;
+
+  it('says where each gem is right now', () => {
+    expect(at({ tokenId: undefined })).toBe('Primary auction');
+    expect(at({ transferLocked: true })).toBe('Redemption in progress');
+    expect(at({ listingSeller: viewer })).toBe('Listed for sale');
+    expect(at({ listingSeller: viewer, listingWinningOfferId: 3n })).toBe('Auction in progress');
+    expect(at({ owner: custody.swapEscrow })).toBe('Offered in a swap');
+    expect(at({ owner: custody.giftOperator, escrowDepositor: viewer })).toBe(
+      'In gift-card escrow',
+    );
+    expect(at({})).toBe('In your wallet');
+    expect(at({ owner: '0x00000000000000000000000000000000000000dd' })).toBe(
+      "In a collector's wallet",
+    );
   });
 });

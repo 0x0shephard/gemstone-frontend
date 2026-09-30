@@ -7,6 +7,9 @@ import { ProgressBar } from '@/components/ui/ProgressBar';
 import { explorerAddressUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
 import type { Address } from 'viem';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { gemLocation } from '@/lib/gem';
+import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
 
 interface GemCardProps {
   gem: DecoratedGem;
@@ -84,6 +87,19 @@ export function GemCard({
             {gem.typeLabel}
           </span>
         </div>
+
+        {(() => {
+          const location = gemLocation(gem, address, {
+            marketplace: contractAddresses.Marketplace,
+            swapEscrow: contractAddresses.SwapEscrow,
+            giftOperator: giftOperatorAddress,
+          });
+          return (
+            <StatusBadge tone={location.tone} dot>
+              {location.label}
+            </StatusBadge>
+          );
+        })()}
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-[11.5px]">

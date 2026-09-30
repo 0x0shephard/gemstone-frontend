@@ -22,6 +22,13 @@ export interface Gem {
   /** Set only while the token is escrowed in an active Marketplace listing. */
   listingSeller?: Address;
   /**
+   * DGENFT's record of who deposited a token now held by the gift-card escrow
+   * wallet. Read only for tokens that wallet holds; see `inGiftEscrow`.
+   */
+  escrowDepositor?: Address;
+  /** DGENFT transfer lock: set while a redemption request is open. */
+  transferLocked?: boolean;
+  /**
    * What the owner is asking, when listed.
    *
    * Kept apart from `valueUsd`/`value`, which always carry the expert-approved
