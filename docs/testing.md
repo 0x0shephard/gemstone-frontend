@@ -40,6 +40,8 @@ its web servers before global setup, so a fresh clone needs `up` first).
 | `faults.e2e.ts` | wallet rejection; lost reply after broadcast (no second send) |
 | `redemption.e2e.ts` | request, custodian hand-over in the verify portal, holder claims the reserve |
 | `auction.e2e.ts` | bid, 24 h time travel, settlement by the real `v1-auction-refresh` sweep |
+| `offer.e2e.ts` | offer on an unlisted token, accepted by the holder |
+| `redemption-cancel.e2e.ts` | custodian cancels a redemption from the verify portal |
 
-Not yet covered: marketplace offers, redemption cancellation,
+Not yet covered:
 notifications, and a real-MetaMask (Synpress) nightly set.
