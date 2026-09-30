@@ -1,4 +1,4 @@
-import { actor, connectWallet, expect, tapThroughSteps, test } from '../fixtures/stack';
+import { actor, connectWallet, tapThroughSteps, test } from '../fixtures/stack';
 import { chain } from '../fixtures/chain';
 
 test('a holder redeems, the custodian hands over, and the holder claims the reserve', async ({
