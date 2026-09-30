@@ -1,0 +1,46 @@
+name: Upgrade rehearsal
+
+# Runs contract upgrade scripts against a local fork of live Sepolia and checks
+# that tokens keep their owners and gems, escrowed tokens keep their recorded
+# depositors, and transfers still work. Never uses the real deployer key.
+# Requires the SEPOLIA_RPC_URL repository secret.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scripts:
+        description: 'Upgrade scripts in order, space-separated (e.g. UpgradeReserveManager UpgradeRedemptionManager)'
+        required: true
+      extra_env:
+        description: 'Optional KEY=value pairs for the scripts, space-separated (e.g. LEGACY_ESCROW_TOKEN_IDS=8,12)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: 0x0shephard/gemstone-contracts
+          path: gemstone
+          submodules: recursive
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm ci
+      - name: Rehearse
+        env:
+          CONTRACTS_DIR: gemstone
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          SCRIPTS: ${{ inputs.scripts }}
+          EXTRA_ENV: ${{ inputs.extra_env }}
+        run: |
+          for pair in $EXTRA_ENV; do export "$pair"; done
+          node scripts/rehearse-upgrade.mjs $SCRIPTS
