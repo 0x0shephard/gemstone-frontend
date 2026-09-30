@@ -24,7 +24,7 @@
     "build:favicon": "node scripts/build-favicon.mjs",
     "e2e:stack": "node e2e/stack/stack.mjs up",
     "e2e:stack:down": "node e2e/stack/stack.mjs down",
-    "test:e2e:full": "for p in desktop-chrome android-chrome iphone-webkit; do playwright test -c playwright.e2e.config.ts --project=$p || exit 1; done"
+    "test:e2e:full": "for p in desktop-chrome android-chrome iphone-webkit; do node e2e/stack/stack.mjs up && E2E_REUSE_STACK=1 playwright test -c playwright.e2e.config.ts --project=$p || exit 1; done"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.1.1",

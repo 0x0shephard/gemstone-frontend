@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DecoratedGem } from '@/services/types';
 import { cn } from '@/lib/cn';
 
-const IMAGE_GATEWAY_TIMEOUT_MS = 8_000;
+// Long enough for a cold resize (the CDN fetches the ~1 MB original, ~7 s
+// measured), short enough to leave a gateway that never answers.
+const IMAGE_GATEWAY_TIMEOUT_MS = 20_000;
 
 interface GemThumbProps {
   gem: DecoratedGem;

@@ -18,8 +18,13 @@ for (const route of ['/', '/marketplace', '/auctions', '/swaps', '/gift']) {
   test(`live ${route} renders without console errors`, async ({ page }) => {
     const errors: string[] = [];
     let gatewayErrors = 0;
+    // Third-party throttling (IPFS gateways, public RPC fallbacks) answers 429
+    // without CORS headers; the app fails over to the next source. Counted and
+    // annotated so the trend is visible, but only app errors fail the canary.
     const isGateway = (text: string) =>
-      /ipfs|pinata|dweb\.link|gateway|not allowed by Access-Control-Allow-Origin/i.test(text);
+      /ipfs|pinata|dweb\.link|gateway|rpc\.|publicnode|not allowed by Access-Control-Allow-Origin/i.test(
+        text,
+      );
     page.on('pageerror', (error) => {
       if (isGateway(error.message)) gatewayErrors += 1;
       else errors.push(error.message);
@@ -33,7 +38,7 @@ for (const route of ['/', '/marketplace', '/auctions', '/swaps', '/gift']) {
         gatewayErrors += 1;
       else if (!/Failed to load resource/.test(text)) errors.push(text);
     });
-    test.info().annotations.push({ type: 'ipfs-gateway-errors', description: '0' });
+    test.info().annotations.push({ type: 'third-party-throttling', description: '0' });
     await page.goto(`${SITE}${route}`);
     await expect(page.locator('h1, h2').first()).toBeVisible();
     await expect(page.getByText('Deployment configuration is incomplete')).toHaveCount(0);

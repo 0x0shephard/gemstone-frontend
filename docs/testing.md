@@ -24,6 +24,8 @@ The browser wallet is `e2e/fixtures/testWallet.ts`: an injected EIP-1193
 provider that forwards to anvil, with `window.__e2eWallet` controls to reject
 the next request or lose its response.
 
+`npm run test:e2e:full` brings the stack up before each project (Playwright starts
+its web servers before global setup, so a fresh clone needs `up` first).
 `E2E_REUSE_STACK=1` skips the reset while iterating on one journey.
 `npm run e2e:stack:down` stops anvil and Supabase.
 

@@ -17,6 +17,15 @@
 [images]
   remote_images = ["https://gateway\\.pinata\\.cloud/ipfs/.*"]
 
+# IPFS bytes never change for a CID. Durable caching shares one copy across
+# every edge node, so Pinata is asked for each file once rather than once per
+# node (without it every request was an edge miss and took 6-7 s).
+[[headers]]
+  for = "/ipfs/*"
+  [headers.values]
+    Netlify-CDN-Cache-Control = "public, durable, max-age=31536000, immutable"
+    Cache-Control = "public, max-age=31536000, immutable"
+
 [context.deploy-preview.environment]
   VITE_DATA_MODE = "mock"
 

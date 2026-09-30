@@ -41,7 +41,7 @@ describe('GemThumb', () => {
     const { container } = render(<GemThumb gem={gem} />);
     expect(container.querySelector('img')).toHaveAttribute('src', gem.imageCandidates?.[0]);
 
-    act(() => vi.advanceTimersByTime(8_000));
+    act(() => vi.advanceTimersByTime(20_000));
 
     expect(container.querySelector('img')).toHaveAttribute('src', gem.imageCandidates?.[1]);
   });

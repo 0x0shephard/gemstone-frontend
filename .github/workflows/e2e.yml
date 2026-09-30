@@ -38,10 +38,18 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
+      # Playwright starts its web servers before global setup, and they read the
+      # files `up` writes, so the stack comes up as its own step first.
+      - name: Start local stack
+        env:
+          CI: 'true'
+          CONTRACTS_DIR: gemstone
+        run: node e2e/stack/stack.mjs up
       - name: Run journeys
         env:
           CI: 'true'
           CONTRACTS_DIR: gemstone
+          E2E_REUSE_STACK: '1'
         run: npx playwright test -c playwright.e2e.config.ts --project=${{ matrix.project }}
       - if: failure()
         uses: actions/upload-artifact@v4
