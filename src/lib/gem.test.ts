@@ -258,3 +258,17 @@ describe('gemLocation', () => {
     );
   });
 });
+
+describe('gift escrow from the open-gift lookup', () => {
+  const operator = '0x00000000000000000000000000000000000000b3' as const;
+  const client = '0x00000000000000000000000000000000000000c1' as const;
+
+  it('trusts the database over a stale deposit record after a self-transfer', () => {
+    // DGE-14: the client's gift was cancelled back into the escrow wallet itself,
+    // so DGENFT still names the client as depositor.
+    const cancelled = { owner: operator, escrowDepositor: client, giftEscrowed: false };
+    const open = { owner: operator, escrowDepositor: client, giftEscrowed: true };
+    expect(inGiftEscrow(cancelled as never, operator)).toBe(false);
+    expect(inGiftEscrow(open as never, operator)).toBe(true);
+  });
+});

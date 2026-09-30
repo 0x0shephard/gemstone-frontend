@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   recordUnknownBroadcast: vi.fn(),
   closeWork: vi.fn(),
   findPendingBroadcast: vi.fn(),
+  publicClient: {} as Record<string, unknown>,
 }));
 
 vi.mock('@wagmi/core', () => ({
@@ -27,7 +28,7 @@ vi.mock('@wagmi/core', () => ({
   }),
   getBalance: vi.fn(),
   getBlockNumber: mocks.getBlockNumber,
-  getPublicClient: () => ({ getLogs: vi.fn(async () => []) }),
+  getPublicClient: () => ({ getLogs: vi.fn(async () => []), ...mocks.publicClient }),
   readContract: mocks.readContract,
   simulateContract: mocks.simulateContract,
   switchChain: vi.fn(),
@@ -289,5 +290,88 @@ describe('transaction target-chain routing', () => {
 
     expect(mocks.closeWork).toHaveBeenCalledWith('unknown-approval');
     expect(mocks.requestWalletConnectTransaction).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('stale in-flight locks', () => {
+  const call = () =>
+    runContractTransaction({
+      address: TARGET,
+      abi: parseAbi(['function execute()']),
+      functionName: 'execute',
+      intentKey: 'createSwap:17',
+    });
+  const stale = (steps: unknown[]) => ({
+    id: 'old-work',
+    intentKey: 'createSwap:17',
+    createdAt: Date.now() - 10 * 60_000,
+    fromBlock: '5',
+    steps,
+  });
+
+  beforeEach(() => {
+    mocks.simulateContract.mockReset();
+    mocks.simulateContract.mockImplementation(async (_config, request) => ({ request }));
+    mocks.waitForTransactionReceipt.mockReset();
+    mocks.waitForTransactionReceipt.mockResolvedValue({ status: 'success' });
+    mocks.getBlockNumber.mockResolvedValue(10n);
+    mocks.getProvider.mockResolvedValue({});
+    mocks.requestWalletConnectTransaction.mockReset();
+    mocks.requestWalletConnectTransaction.mockResolvedValue(HASH_B);
+    mocks.closeWork.mockReset();
+    mocks.findPendingBroadcast.mockReset();
+  });
+
+  it('releases a hashless lock once nothing from the wallet is pending, and sends', async () => {
+    mocks.findPendingBroadcast.mockReturnValue(
+      stale([{ kind: 'call', label: 'Propose swap', status: 'broadcast' }]),
+    );
+    mocks.publicClient = { getTransactionCount: vi.fn(async () => 7) };
+
+    await expect(call()).resolves.toEqual({ hash: HASH_B, status: 'success' });
+    expect(mocks.closeWork).toHaveBeenCalledWith('old-work');
+    expect(mocks.requestWalletConnectTransaction).toHaveBeenCalled();
+  });
+
+  it('keeps the lock while the wallet still has a pending transaction', async () => {
+    mocks.findPendingBroadcast.mockReturnValue(
+      stale([{ kind: 'call', label: 'Propose swap', status: 'broadcast' }]),
+    );
+    mocks.publicClient = {
+      getTransactionCount: vi.fn(async ({ blockTag }: { blockTag: string }) =>
+        blockTag === 'pending' ? 8 : 7,
+      ),
+    };
+
+    await expect(call()).rejects.toBeInstanceOf(BroadcastOutcomeUnknownError);
+    expect(mocks.requestWalletConnectTransaction).not.toHaveBeenCalled();
+  });
+
+  it('treats an earlier successful receipt as the action already done', async () => {
+    mocks.findPendingBroadcast.mockReturnValue(
+      stale([{ kind: 'call', label: 'Propose swap', status: 'broadcast', hash: HASH_A }]),
+    );
+    mocks.publicClient = { getTransactionReceipt: vi.fn(async () => ({ status: 'success' })) };
+
+    await expect(call()).resolves.toEqual({ hash: HASH_A, status: 'success' });
+    expect(mocks.requestWalletConnectTransaction).not.toHaveBeenCalled();
+  });
+
+  it('releases a lock whose transaction the wallet dropped', async () => {
+    mocks.findPendingBroadcast.mockReturnValue(
+      stale([{ kind: 'call', label: 'Propose swap', status: 'broadcast', hash: HASH_A }]),
+    );
+    mocks.publicClient = {
+      getTransactionReceipt: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      getTransaction: vi.fn(async () => {
+        throw new Error('not found');
+      }),
+      getTransactionCount: vi.fn(async () => 7),
+    };
+
+    await expect(call()).resolves.toEqual({ hash: HASH_B, status: 'success' });
+    expect(mocks.closeWork).toHaveBeenCalledWith('old-work');
   });
 });

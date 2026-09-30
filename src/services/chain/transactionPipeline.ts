@@ -46,6 +46,7 @@ import {
   recordUnknownBroadcast,
   recordStepStatus,
   type PendingStep,
+  type PendingWork,
 } from './pendingWork';
 import { paymentApprovalAmounts } from './approvalPlan';
 import { getTransactionAuthSnapshot } from '@/providers/authSnapshot';
@@ -647,7 +648,22 @@ export async function runContractTransaction(input: ContractTransaction): Promis
       planned.push(...steps.map((step) => ({ kind: 'approval' as const, ...step })));
     }
 
-    const unresolved = findPendingBroadcast(intentKey, account, env.chainId);
+    let unresolved = findPendingBroadcast(intentKey, account, env.chainId);
+    if (unresolved) {
+      const settled = await settleStaleWork(unresolved, account, input.reconcileBroadcast);
+      if (settled.kind === 'landed') {
+        closeWork(unresolved.id);
+        window.dispatchEvent(
+          new CustomEvent('dc:transaction-confirmed', { detail: { hash: settled.hash } }),
+        );
+        return { hash: settled.hash, status: 'success' };
+      }
+      if (settled.kind === 'clear') {
+        // Proven not to be in flight: the earlier attempt never landed.
+        closeWork(unresolved.id);
+        unresolved = undefined;
+      }
+    }
     if (unresolved) {
       const unknownStep = unresolved.steps.find(
         (step) => step.status === 'broadcast' && !step.hash,
@@ -782,5 +798,71 @@ export async function runContractTransaction(input: ContractTransaction): Promis
     )
       closeWork(work.id);
     throw decodeTransactionError(error);
+  }
+}
+
+/** Below this age a send may simply not have reached the node yet. */
+const STALE_WORK_MIN_AGE_MS = 60_000;
+
+type SettledWork = { kind: 'landed'; hash: Hash } | { kind: 'clear' } | { kind: 'pending' };
+
+/**
+ * Decides whether an earlier attempt at the same action still blocks a new one.
+ *
+ * The lock exists so an unknown send is never paid twice, but nothing ever
+ * released it when the answer was "that send did not happen": a transaction the
+ * wallet dropped or replaced has no receipt, and a hashless send whose effect is
+ * not on chain was re-locked on every attempt. People were left with actions
+ * refusing forever. The outcome is now settled from chain facts:
+ *
+ * - a successful receipt means it landed, and the action is already done;
+ * - a reverted receipt, or a hash the node no longer knows, means it did not;
+ * - with no hash, the flow's own reconciliation looks for its effect, and if
+ *   that is absent while the wallet has no pending transaction at all
+ *   (pending nonce equals latest), nothing can still be in flight.
+ *
+ * Anything younger than a minute, or with a pending nonce outstanding, stays
+ * locked exactly as before.
+ */
+async function settleStaleWork(
+  work: PendingWork,
+  account: Address,
+  reconcile?: (
+    account: Address,
+    fromBlock: bigint | undefined,
+    operationKey: string | undefined,
+  ) => Promise<Hash | undefined>,
+): Promise<SettledWork> {
+  const client = getPublicClient(wagmiConfig, { chainId: env.chainId });
+  if (!client) return { kind: 'pending' };
+  try {
+    const calls = work.steps.filter((step) => step.status === 'broadcast');
+    for (const step of calls) {
+      if (!step.hash) continue;
+      const receipt = await client.getTransactionReceipt({ hash: step.hash }).catch(() => null);
+      if (receipt?.status === 'success' && step.kind === 'call') {
+        return { kind: 'landed', hash: step.hash };
+      }
+      if (receipt) continue; // an approval, or a revert: not this action's effect
+      const known = await client.getTransaction({ hash: step.hash }).catch(() => null);
+      if (known) return { kind: 'pending' };
+    }
+    if (Date.now() - work.createdAt < STALE_WORK_MIN_AGE_MS) return { kind: 'pending' };
+    const hashless = calls.some((step) => step.kind === 'call' && !step.hash);
+    if (hashless && reconcile) {
+      const observed = await reconcile(
+        account,
+        work.fromBlock ? BigInt(work.fromBlock) : undefined,
+        work.operationKey,
+      );
+      if (observed) return { kind: 'landed', hash: observed };
+    }
+    const [pendingNonce, latestNonce] = await Promise.all([
+      client.getTransactionCount({ address: account, blockTag: 'pending' }),
+      client.getTransactionCount({ address: account, blockTag: 'latest' }),
+    ]);
+    return pendingNonce > latestNonce ? { kind: 'pending' } : { kind: 'clear' };
+  } catch {
+    return { kind: 'pending' };
   }
 }

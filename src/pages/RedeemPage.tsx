@@ -1,4 +1,5 @@
 import { useProfile, useRedemptions } from '@/hooks/useData';
+import { redemptionReserveEligible } from '@/lib/gem';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { GemThumb } from '@/components/gem/GemThumb';
@@ -15,7 +16,7 @@ const STEPS = [
   {
     n: '01',
     title: 'Verify ownership',
-    body: 'Confirm you hold the token and the reserve is fully funded.',
+    body: 'Confirm you hold the token and at least 20% of its reserve is funded.',
   },
   {
     n: '02',
@@ -132,7 +133,7 @@ export default function RedeemPage() {
             {profile?.owned
               .filter((gem) => !gem.listingSeller)
               .map((gem) => {
-                const canRedeem = gem.funded && gem.redeem === 'Eligible';
+                const canRedeem = redemptionReserveEligible(gem) && gem.redeem === 'Eligible';
                 return (
                   <div
                     key={gem.gemId.toString()}

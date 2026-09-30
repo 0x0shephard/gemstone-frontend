@@ -26,6 +26,11 @@ export interface Gem {
    * wallet. Read only for tokens that wallet holds; see `inGiftEscrow`.
    */
   escrowDepositor?: Address;
+  /**
+   * Whether a token held by the gift escrow wallet belongs to an open gift card
+   * (from the database). Undefined when unknown; see `inGiftEscrow`.
+   */
+  giftEscrowed?: boolean;
   /** DGENFT transfer lock: set while a redemption request is open. */
   transferLocked?: boolean;
   /**

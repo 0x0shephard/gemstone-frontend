@@ -56,5 +56,30 @@ test('a gift card is escrowed, emailed to both parties and claimed by the recipi
   await connectWallet(bob.page);
   await bob.page.getByRole('button', { name: 'Claim the token' }).click();
   await expect.poll(() => nft.ownerOf(tokenId), { timeout: 60_000 }).toBe(bob.address);
+
+  // Both parties were alerted in the app, not only by email.
+  const kinds = async () => {
+    const response = await fetch(
+      `${stack.supabase.url}/rest/v1/notifications?select=kind,wallet_address&entity_type=eq.gift_card`,
+      {
+        headers: {
+          apikey: stack.supabase.serviceKey,
+          authorization: `Bearer ${stack.supabase.serviceKey}`,
+        },
+      },
+    );
+    return ((await response.json()) as Array<{ kind: string; wallet_address: string }>).map(
+      (row) => `${row.kind}:${row.wallet_address}`,
+    );
+  };
+  await expect
+    .poll(kinds)
+    .toEqual(
+      expect.arrayContaining([
+        `gift.sent:${alice.address.toLowerCase()}`,
+        `gift.received:${bob.address.toLowerCase()}`,
+        `gift.claimed:${alice.address.toLowerCase()}`,
+      ]),
+    );
   await bob.context.close();
 });

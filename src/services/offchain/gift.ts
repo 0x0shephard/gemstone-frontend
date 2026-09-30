@@ -242,3 +242,30 @@ export function giftCardState(card: GiftCardRow): GiftCardState {
 export function giftClaimUrl(code: string): string {
   return `${window.location.origin}/gift/${code}`;
 }
+
+let openGiftTokens: { at: number; ids: Promise<Set<string> | undefined> } | undefined;
+
+/**
+ * Token ids held for an open gift card (`open_gift_token_ids`), cached for 30 s.
+ * Undefined when the lookup is unavailable, so callers can fall back.
+ */
+export function openGiftTokenIds(): Promise<Set<string> | undefined> {
+  if (openGiftTokens && Date.now() - openGiftTokens.at < 30_000) return openGiftTokens.ids;
+  const ids = (async () => {
+    try {
+      const { data, error } = await requireClient().rpc('open_gift_token_ids');
+      if (error) return undefined;
+      return new Set(
+        ((data ?? []) as unknown[]).map((row) =>
+          typeof row === 'string'
+            ? row
+            : String((row as Record<string, unknown>).open_gift_token_ids),
+        ),
+      );
+    } catch {
+      return undefined;
+    }
+  })();
+  openGiftTokens = { at: Date.now(), ids };
+  return ids;
+}

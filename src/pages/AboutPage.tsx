@@ -14,7 +14,7 @@ const PILLARS: { title: string; body: string; color: string }[] = [
   },
   {
     title: 'On-chain reserves',
-    body: 'Each gem carries a reserve posted on-chain. Minting and redemption are blocked until that reserve is fully funded — no exceptions.',
+    body: 'Each gem carries a reserve posted on-chain. Minting requires that reserve to be fully funded, and redemption needs at least 20% of it.',
     color: 'var(--dc-sapphire)',
   },
   {

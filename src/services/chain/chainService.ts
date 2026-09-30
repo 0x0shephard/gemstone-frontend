@@ -27,6 +27,7 @@ import { activeChain } from '@/config/chains';
 import { ownershipPathSteps } from '@/content/ownershipPath';
 import { contracts } from '@/contracts';
 import { decorate, inGiftEscrow } from '@/lib/gem';
+import { openGiftTokenIds } from '@/services/offchain/gift';
 import type { IDataService, LandingData, ProfileData } from '../IDataService';
 import type {
   ApproveTransferRequest,
@@ -463,6 +464,7 @@ async function readGemUncached(
   let owner: Address | undefined;
   let escrowDepositor: Address | undefined;
   let transferLocked: boolean | undefined;
+  let giftEscrowed: boolean | undefined;
   let listingSeller: Address | undefined;
   let listedPriceUsd: bigint | undefined;
   let listingWinningOfferId: bigint | undefined;
@@ -487,6 +489,7 @@ async function readGemUncached(
       .catch(() => undefined)) as boolean | undefined;
     // Only the gift escrow wallet's tokens need it: see `inGiftEscrow`.
     if (giftOperatorAddress && isAddressEqual(owner, giftOperatorAddress)) {
+      giftEscrowed = (await openGiftTokenIds())?.has(registryGem.tokenId.toString());
       escrowDepositor = (await client
         .readContract({
           ...contract('DGENFT'),
@@ -534,6 +537,7 @@ async function readGemUncached(
     seller: registryGem.seller,
     owner,
     escrowDepositor,
+    giftEscrowed,
     transferLocked,
     /*
      * The ask, never the valuation. This block previously overwrote `valueUsd`
@@ -2129,10 +2133,12 @@ export const chainService: IDataService = {
      * The gift escrow wallet is also a real wallet, so a token it holds is only
      * a gift when DGENFT records someone else as its depositor (`inGiftEscrow`).
      */
+    const openGifts = await openGiftTokenIds();
     const heldForGift = async (tokenId: bigint, owner: Address) =>
       inGiftEscrow(
         {
           owner,
+          giftEscrowed: openGifts?.has(tokenId.toString()),
           escrowDepositor:
             giftOperatorAddress && isAddressEqual(owner, giftOperatorAddress)
               ? ((await client

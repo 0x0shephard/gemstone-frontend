@@ -13,6 +13,7 @@ import {
   reserveShortfallUsd,
   swapReserveEligible,
   swapUnavailableReason,
+  redemptionReserveEligible,
 } from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
@@ -603,7 +604,7 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
     postalCode: '',
     country: '',
   });
-  const canRedeem = gem.funded && gem.redeem === 'Eligible';
+  const canRedeem = redemptionReserveEligible(gem) && gem.redeem === 'Eligible';
   const fulfillmentValid =
     method === 'pickup'
       ? details.pickupLocation.length > 0
@@ -640,7 +641,7 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
       <ModalGemHeader gem={gem} />
       <ul className="space-y-2 text-[13px]">
         <CheckRow ok label="You own this token" />
-        <CheckRow ok={gem.funded} label="Reserve fully funded" />
+        <CheckRow ok={redemptionReserveEligible(gem)} label="Reserve at least 20% funded" />
         <CheckRow ok={gem.redeem === 'Eligible'} label="Address is not blocked from redemption" />
       </ul>
       <div>

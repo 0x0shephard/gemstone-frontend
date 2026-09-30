@@ -105,10 +105,14 @@ export function swapReserveEligible(g: Pick<Gem, 'reserve' | 'reserveBalanceUsd'
  * holder's own, or never deposited, is not a gift.
  */
 export function inGiftEscrow(
-  gem: Pick<Gem, 'owner' | 'escrowDepositor'>,
+  gem: Pick<Gem, 'owner' | 'escrowDepositor' | 'giftEscrowed'>,
   giftOperator: Address | undefined,
 ): boolean {
   if (!giftOperator || !gem.owner || !isAddressEqual(gem.owner, giftOperator)) return false;
+  // The database knows whether a gift card is still open; the deposit record
+  // does not change on a self-transfer (the escrow wallet claiming or
+  // cancelling a gift back to itself), so it is only the fallback.
+  if (gem.giftEscrowed !== undefined) return gem.giftEscrowed;
   return Boolean(
     gem.escrowDepositor &&
     !isAddressEqual(gem.escrowDepositor, zeroAddress) &&
@@ -117,7 +121,7 @@ export function inGiftEscrow(
 }
 
 export function directSwapOwner(
-  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller' | 'escrowDepositor'>,
+  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller' | 'escrowDepositor' | 'giftEscrowed'>,
   viewer: Address | undefined,
   /** Contract escrows (Marketplace, SwapEscrow): everything they hold is escrowed. */
   custody: readonly (Address | undefined)[] = [],
@@ -143,6 +147,7 @@ export function swapUnavailableReason(
     | 'reserve'
     | 'reserveBalanceUsd'
     | 'escrowDepositor'
+    | 'giftEscrowed'
     | 'transferLocked'
   >,
   viewer: Address | undefined,
@@ -181,6 +186,7 @@ export function gemLocation(
     | 'listingSeller'
     | 'listingWinningOfferId'
     | 'escrowDepositor'
+    | 'giftEscrowed'
     | 'transferLocked'
   >,
   viewer: Address | undefined,
@@ -203,6 +209,22 @@ export function gemLocation(
     return { label: 'In your wallet', tone: 'success' };
   }
   return { label: "In a collector's wallet", tone: 'neutral' };
+}
+
+/** RedemptionManager.MIN_REDEMPTION_RESERVE_BPS: 20% of the required reserve. */
+export const REDEMPTION_MIN_RESERVE_BPS = 2_000n;
+
+/**
+ * Whether the reserve is funded enough to open a redemption. Same arithmetic as
+ * the contract (balance × 10,000 ≥ required × 2,000), so the button never
+ * offers what the contract would refuse.
+ */
+export function redemptionReserveEligible(
+  g: Pick<Gem, 'reserveBalanceUsd' | 'reserveShortfallUsd'>,
+): boolean {
+  const required = g.reserveBalanceUsd + g.reserveShortfallUsd;
+  if (required === 0n) return true;
+  return g.reserveBalanceUsd * 10_000n >= required * REDEMPTION_MIN_RESERVE_BPS;
 }
 
 export interface PurchaseQuote {
