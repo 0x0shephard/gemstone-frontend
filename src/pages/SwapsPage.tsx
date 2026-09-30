@@ -16,7 +16,7 @@ import type { SwapRequest } from '@/services/types';
 import { useAccount } from 'wagmi';
 import type { Address } from 'viem';
 import { groupActionableSwaps } from '@/services/chain/marketPresentation';
-import { directSwapOwner, swapReserveEligible } from '@/lib/gem';
+import { swapUnavailableReason } from '@/lib/gem';
 import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
 
 /*
@@ -157,16 +157,16 @@ export default function SwapsPage() {
   const redemptionTokenIds = new Set(
     (profile?.redemptions ?? []).map((redemption) => redemption.tokenId.toString()),
   );
-  const ownedGems = (profile?.owned ?? []).filter(
-    (gem) =>
-      directSwapOwner(gem, address, [
-        contractAddresses.Marketplace,
-        contractAddresses.SwapEscrow,
-        giftOperatorAddress,
-      ]) === 'viewer' &&
-      Boolean(gem.tokenId && !redemptionTokenIds.has(gem.tokenId.toString())) &&
-      swapReserveEligible(gem),
-  );
+  const custody = {
+    marketplace: contractAddresses.Marketplace,
+    swapEscrow: contractAddresses.SwapEscrow,
+    giftOperator: giftOperatorAddress,
+  };
+  const heldGems = (profile?.owned ?? []).map((gem) => ({
+    gem,
+    unavailable: swapUnavailableReason(gem, address, custody, redemptionTokenIds),
+  }));
+  const ownedGems = heldGems.filter((entry) => !entry.unavailable).map((entry) => entry.gem);
   const modals = useGemModals();
   const [offeredId, setOfferedId] = useState('');
   const offered = ownedGems.find((g) => g.gemId.toString() === offeredId);
@@ -196,12 +196,27 @@ export default function SwapsPage() {
             onChange={(e) => setOfferedId(e.target.value)}
           >
             <option value="">Select an owned gem…</option>
-            {ownedGems.map((g) => (
-              <option key={g.gemId.toString()} value={g.gemId.toString()}>
+            {heldGems.map(({ gem: g, unavailable }) => (
+              <option
+                key={g.gemId.toString()}
+                value={g.gemId.toString()}
+                disabled={Boolean(unavailable)}
+              >
                 {g.name} · {g.displayId}
+                {unavailable ? ` — ${unavailable}` : ''}
               </option>
             ))}
           </select>
+          {heldGems.length > 0 && ownedGems.length === 0 && (
+            <p className="mt-1.5 text-[11.5px] text-amber">
+              None of your tokens can be swapped right now. Each one shows why in the list.
+            </p>
+          )}
+          {profile && heldGems.length === 0 && (
+            <p className="mt-1.5 text-[11.5px] text-ink-dim">
+              This wallet holds no tokens. Win one at auction or buy a listing first.
+            </p>
+          )}
         </div>
         <Button
           className="mt-4"

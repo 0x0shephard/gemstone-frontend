@@ -37,10 +37,16 @@ test('a gift card is escrowed, emailed to both parties and claimed by the recipi
     .poll(async () => (await emails()).some((mail) => mail.to.includes(stack.users.alice.email)))
     .toBe(true);
 
-  await alice.page.getByRole('button', { name: 'Email the recipient' }).click();
-  await expect(alice.page.getByText(`Card sent to ${bobEmail}.`)).toBeVisible();
+  // The recipient is emailed at activation, without pressing anything.
+  await expect(alice.page.getByText(`The claim link was emailed to ${bobEmail}.`)).toBeVisible();
+  await expect
+    .poll(async () => (await emails()).filter((mail) => mail.to.includes(bobEmail)).length)
+    .toBe(1);
   const invitation = (await emails()).find((mail) => mail.to.includes(bobEmail));
   expect(invitation?.subject).toMatch(/sent you a gemstone/);
+  // "Email again" still resends on request.
+  await alice.page.getByRole('button', { name: 'Email again' }).click();
+  await expect(alice.page.getByText(`Card sent to ${bobEmail}.`)).toBeVisible();
   const claimUrl = invitation!.text.match(/Claim it here: (\S+)/)![1];
   expect(await nft.ownerOf(tokenId)).toBe(stack.accounts.operator.address);
   await alice.context.close();

@@ -105,6 +105,30 @@ export function directSwapOwner(
   return viewer && isAddressEqual(gem.owner, viewer) ? 'viewer' : 'other';
 }
 
+/**
+ * Why a token the viewer holds cannot be offered in a swap, or undefined when it
+ * can. The swap page lists every held token and disables the rest with this
+ * reason: silently filtering them made a full portfolio look like no tokens.
+ */
+export function swapUnavailableReason(
+  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller' | 'reserve' | 'reserveBalanceUsd'>,
+  viewer: Address | undefined,
+  custody: { marketplace?: Address; swapEscrow?: Address; giftOperator?: Address },
+  redeemingTokenIds: ReadonlySet<string>,
+): string | undefined {
+  if (!gem.tokenId) return 'not minted yet';
+  if (gem.listingSeller) return 'listed for sale — cancel the listing to swap it';
+  const heldBy = (address?: Address) =>
+    Boolean(address && gem.owner && isAddressEqual(gem.owner, address));
+  if (heldBy(custody.swapEscrow)) return 'already offered in another swap';
+  if (heldBy(custody.marketplace)) return 'held by the marketplace';
+  if (heldBy(custody.giftOperator)) return 'held in gift-card escrow';
+  if (!viewer || !gem.owner || !isAddressEqual(gem.owner, viewer)) return 'not in your wallet';
+  if (redeemingTokenIds.has(gem.tokenId.toString())) return 'redemption in progress';
+  if (!swapReserveEligible(gem)) return 'reserve is empty — fund it to swap';
+  return undefined;
+}
+
 export interface PurchaseQuote {
   /** What the contract will charge for the stone itself. */
   priceUsd: number;

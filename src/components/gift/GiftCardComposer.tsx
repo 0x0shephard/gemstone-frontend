@@ -475,7 +475,10 @@ function IssuedCard({
   // countdown that shifts as the component re-renders is worse than one fixed
   // at the moment the card was issued.
   const [issuedAt] = useState(() => Date.now());
-  const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent'>('idle');
+  // Activation now emails the recipient itself; this reflects that result.
+  const [emailState, setEmailState] = useState<'idle' | 'sending' | 'sent'>(
+    card.recipientEmail?.status === 'sent' ? 'sent' : 'idle',
+  );
   const [senderCopy, setSenderCopy] = useState<SenderCopyOutcome | undefined>(card.senderCopy);
   const [resendingCopy, setResendingCopy] = useState(false);
   const [canvaState, setCanvaState] = useState<'idle' | 'working'>('idle');
@@ -663,6 +666,13 @@ function IssuedCard({
           Save or print this version now as well. The code is stored hashed and cannot be recovered
           later.
         </p>
+        <p className="mt-1.5 text-[11.5px] leading-relaxed text-ink-muted">
+          {card.recipientEmail?.status === 'sent'
+            ? `The claim link was emailed to ${recipientEmail}.`
+            : card.recipientEmail
+              ? `The recipient was not emailed: ${card.recipientEmail.reason} Use Email the recipient below.`
+              : `Use Email the recipient below to send ${recipientEmail} the claim link.`}
+        </p>
         {senderCopy?.status !== 'sent' && senderCopy?.status !== 'unavailable' && (
           <Button
             variant="ghost"
@@ -743,7 +753,7 @@ function IssuedCard({
           {emailState === 'sending'
             ? 'Sending…'
             : emailState === 'sent'
-              ? 'Email sent ✓'
+              ? 'Email again'
               : 'Email the recipient'}
         </Button>
         <a

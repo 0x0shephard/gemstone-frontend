@@ -55,6 +55,8 @@ export interface CreatedGiftCard {
   escrowed: boolean;
   /** Present on activation responses only. */
   senderCopy?: SenderCopyOutcome;
+  /** Whether the recipient's claim email went out at activation. */
+  recipientEmail?: SenderCopyOutcome;
   /** Present on resume responses: where the token is right now. */
   custody?: 'escrow' | 'sender';
 }

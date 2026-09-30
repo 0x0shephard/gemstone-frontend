@@ -45,8 +45,24 @@ describe('gift sender copy delivery', () => {
 
     expect(endpoint).not.toContain('queueSenderCopy');
     expect(endpoint).not.toContain('EdgeRuntime');
-    expect(confirm.match(/await deliverSenderCopy\(/g)).toHaveLength(2);
-    expect(confirm.match(/senderCopy \}\)/g)).toHaveLength(2);
+    expect(confirm.match(/deliverSenderCopy\(user/g)).toHaveLength(2);
+    expect(confirm.replace(/\s+/g, ' ').match(/senderCopy, recipientEmail,? \}\)/g)).toHaveLength(
+      2,
+    );
+  });
+
+  it('emails the recipient automatically when the card goes live, once', () => {
+    const confirm = endpoint.slice(
+      endpoint.indexOf("if (action === 'confirm')"),
+      endpoint.indexOf("if (action === 'resume')"),
+    );
+    expect(confirm.match(/deliverRecipientInvitation\(user/g)).toHaveLength(2);
+    const deliver = endpoint.slice(
+      endpoint.indexOf('async function deliverRecipientInvitation'),
+      endpoint.indexOf('async function escrowTransferProven'),
+    );
+    expect(deliver).toContain(".eq('action', 'gift.notified')");
+    expect(deliver).toContain("status: 'failed'");
   });
 
   it('keeps a mail failure from failing an activation that already happened', () => {

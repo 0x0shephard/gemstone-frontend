@@ -5,6 +5,7 @@ import {
   reserveShortfallUsd,
   shortfallLabel,
   swapReserveEligible,
+  swapUnavailableReason,
 } from './gem';
 import type { Gem } from '@/services/types';
 
@@ -150,5 +151,37 @@ describe('purchaseQuote', () => {
     const quote = purchaseQuote(gem({ value: 1_000, listedPrice: undefined }), 'buy');
     expect(quote.priced).toBe(false);
     expect(quote.priceUsd).not.toBe(1_000);
+  });
+});
+
+describe('swapUnavailableReason', () => {
+  const viewer = '0x00000000000000000000000000000000000000aa' as const;
+  const custody = {
+    marketplace: '0x00000000000000000000000000000000000000b1' as const,
+    swapEscrow: '0x00000000000000000000000000000000000000b2' as const,
+    giftOperator: '0x00000000000000000000000000000000000000b3' as const,
+  };
+  const gem = (over: Record<string, unknown> = {}) =>
+    ({ tokenId: 7n, owner: viewer, reserve: 40, reserveBalanceUsd: 1n, ...over }) as never;
+  const none = new Set<string>();
+
+  it('allows a directly held, unlocked token with any positive reserve', () => {
+    expect(swapUnavailableReason(gem(), viewer, custody, none)).toBeUndefined();
+  });
+
+  it('names every reason a held token cannot be offered', () => {
+    expect(swapUnavailableReason(gem({ listingSeller: viewer }), viewer, custody, none)).toMatch(
+      /listed/,
+    );
+    expect(
+      swapUnavailableReason(gem({ owner: custody.swapEscrow }), viewer, custody, none),
+    ).toMatch(/another swap/);
+    expect(
+      swapUnavailableReason(gem({ owner: custody.giftOperator }), viewer, custody, none),
+    ).toMatch(/gift-card escrow/);
+    expect(swapUnavailableReason(gem(), viewer, custody, new Set(['7']))).toMatch(/redemption/);
+    expect(
+      swapUnavailableReason(gem({ reserve: 0, reserveBalanceUsd: 0n }), viewer, custody, none),
+    ).toMatch(/reserve is empty/);
   });
 });

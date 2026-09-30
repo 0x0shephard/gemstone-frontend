@@ -6,6 +6,7 @@ import { json, preflight } from '../_shared/cors.ts';
 import { dgeNftAbi, dgeNftAddress, operatorChain } from '../_shared/chain.ts';
 import { canonicalSiteOrigin } from '../_shared/origins.ts';
 import { emailConfigured, escapeHtml, sendEmail } from '../_shared/email.ts';
+import { sendGiftInvitation } from '../_shared/giftInvitation.ts';
 import { formatGiftCode, hashGiftCode, normalizeGiftCode } from '../_shared/gift.ts';
 
 /**
@@ -151,6 +152,44 @@ async function deliverSenderCopy(
   }
 }
 
+/**
+ * Emails the recipient their claim link as soon as the card is live.
+ *
+ * It used to wait for the sender to press "Email the recipient", so senders
+ * who assumed the card was on its way found only their own printable copy
+ * had been sent. Once per card (the audit trail records each send); a mail
+ * failure is reported, never allowed to undo an activation.
+ */
+async function deliverRecipientInvitation(
+  user: { id: string },
+  admin: ReturnType<typeof adminClient>,
+  card: GiftRow,
+  code: string,
+): Promise<SenderCopyOutcome> {
+  if (!emailConfigured()) {
+    return { status: 'unavailable', reason: 'Email delivery is not configured yet.' };
+  }
+  const { data: existing } = await admin
+    .from('audit_records')
+    .select('id')
+    .eq('entity_type', 'gift_card')
+    .eq('entity_id', card.id)
+    .eq('action', 'gift.notified')
+    .limit(1)
+    .maybeSingle();
+  if (existing) return { status: 'sent' };
+  try {
+    await sendGiftInvitation(admin, user.id, card, code);
+    return { status: 'sent' };
+  } catch (error) {
+    console.error('Could not email the gift recipient', error);
+    return {
+      status: 'failed',
+      reason: safeErrorMessage(error, 'The invitation could not be emailed.'),
+    };
+  }
+}
+
 async function escrowTransferProven(
   chain: ReturnType<typeof operatorChain>,
   card: GiftRow,
@@ -239,8 +278,11 @@ Deno.serve(async (request) => {
         return json({ error: 'The configured gift escrow wallet has changed' }, 409);
       }
       if (card.status === 'active') {
-        const senderCopy = await deliverSenderCopy(user, admin, card, code);
-        return json({ ...giftResponse(card, code, true), senderCopy });
+        const [senderCopy, recipientEmail] = await Promise.all([
+          deliverSenderCopy(user, admin, card, code),
+          deliverRecipientInvitation(user, admin, card, code),
+        ]);
+        return json({ ...giftResponse(card, code, true), senderCopy, recipientEmail });
       }
       if (card.status !== 'pending_escrow') {
         return json({ error: 'That gift setup is no longer pending' }, 409);
@@ -281,8 +323,15 @@ Deno.serve(async (request) => {
         escrowWallet,
         transactionHash: TX_HASH.test(escrowTxHash) ? escrowTxHash : null,
       });
-      const senderCopy = await deliverSenderCopy(user, admin, activated as GiftRow, code);
-      return json({ ...giftResponse(activated as GiftRow, code, true), senderCopy });
+      const [senderCopy, recipientEmail] = await Promise.all([
+        deliverSenderCopy(user, admin, activated as GiftRow, code),
+        deliverRecipientInvitation(user, admin, activated as GiftRow, code),
+      ]);
+      return json({
+        ...giftResponse(activated as GiftRow, code, true),
+        senderCopy,
+        recipientEmail,
+      });
     }
 
     /*
