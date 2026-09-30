@@ -1,10 +1,11 @@
-import { createPublicClient, http, parseAbi, type Address } from 'viem';
+import { createPublicClient, encodeFunctionData, http, parseAbi, type Address } from 'viem';
 import { sepolia } from 'viem/chains';
 
 const nftAbi = parseAbi([
   'function ownerOf(uint256 tokenId) view returns (address)',
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenGem(uint256 tokenId) view returns (uint256)',
+  'function safeTransferFrom(address from, address to, uint256 tokenId)',
 ]);
 
 /** Reads straight from the local chain, so assertions never trust the UI's own view. */
@@ -25,6 +26,19 @@ export function chain(rpc: string, nft: string) {
         functionName: 'tokenGem',
         args: [tokenId],
       }),
+    /** Sends as `from` through anvil's unlocked dev account — "the wallet did it". */
+    async transferAs(from: string, to: string, tokenId: bigint) {
+      const data = encodeFunctionData({
+        abi: nftAbi,
+        functionName: 'safeTransferFrom',
+        args: [from as Address, to as Address, tokenId],
+      });
+      const hash = await client.request({
+        method: 'eth_sendTransaction' as never,
+        params: [{ from, to: nft, data }] as never,
+      });
+      await client.waitForTransactionReceipt({ hash: hash as `0x${string}` });
+    },
     balanceOf: (owner: string) =>
       client.readContract({
         address: nft as Address,
