@@ -72,10 +72,17 @@ async function startChain() {
     log('reset anvil on :8545');
     return;
   }
-  const child = spawn('anvil', ['--chain-id', '11155111', '--port', '8545', '--silent'], {
-    detached: true,
-    stdio: 'ignore',
-  });
+  // Docker on Linux reaches the host through host-gateway, not loopback, so CI
+  // listens on every interface. A developer machine keeps the chain on 127.0.0.1.
+  const host = process.env.CI ? '0.0.0.0' : '127.0.0.1';
+  const child = spawn(
+    'anvil',
+    ['--chain-id', '11155111', '--port', '8545', '--host', host, '--silent'],
+    {
+      detached: true,
+      stdio: 'ignore',
+    },
+  );
   child.unref();
   fs.writeFileSync(path.join(stackDir, 'anvil.pid'), String(child.pid));
   await waitFor(async () => (await rpc('eth_chainId')) === '0xaa36a7', 'anvil');

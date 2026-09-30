@@ -1,0 +1,46 @@
+name: Live canary
+
+# Read-only checks against https://digitalcarat.io and Sepolia after every
+# deploy and every six hours: pages render without app errors, upgraded proxies
+# match deployments/sepolia.json, and edge functions answer.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: 0x0shephard/gemstone-contracts
+          path: gemstone
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      # Netlify publishes a few minutes after the push that triggered this run.
+      - if: github.event_name == 'push'
+        run: sleep 240
+      - name: Canary
+        env:
+          CONTRACTS_DIR: gemstone
+          CANARY_FUNCTIONS_URL: https://ozqesbzewekolpeaxaux.supabase.co/functions/v1
+        run: npx playwright test -c playwright.canary.config.ts
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary
+          path: test-results/
+          retention-days: 7

@@ -1,0 +1,53 @@
+name: End-to-end
+
+# The full-stack suite: real UI, local anvil chain with a fresh protocol
+# deployment, local Supabase from the real migrations, locally served edge
+# functions and a mail catcher. Desktop Chrome on every pull request; all three
+# screen classes nightly.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        project: ${{ github.event_name == 'schedule' && fromJSON('["desktop-chrome","android-chrome","iphone-webkit"]') || fromJSON('["desktop-chrome"]') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: 0x0shephard/gemstone-contracts
+          path: gemstone
+          submodules: recursive
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Run journeys
+        env:
+          CI: 'true'
+          CONTRACTS_DIR: gemstone
+        run: npx playwright test -c playwright.e2e.config.ts --project=${{ matrix.project }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ matrix.project }}
+          path: test-results/
+          retention-days: 7
+      - if: always()
+        run: node e2e/stack/stack.mjs down
