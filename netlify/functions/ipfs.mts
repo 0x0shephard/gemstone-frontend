@@ -1,11 +1,12 @@
 /**
  * Same-origin IPFS with one cached copy for every edge location.
  *
- * A plain proxy rewrite was cached per edge node, so each node still fetched
- * every ~1 MB photo from the gateway once (6-7 s, and throttled under load).
- * Serving it here with `cache: 'manual'` lets the response opt into Netlify's
- * durable cache: the first request anywhere fetches the bytes, every later one
- * anywhere is a cache hit. CIDs are content hashes, so the bytes never change.
+ * A plain proxy rewrite (and an edge function) was cached per edge node, so
+ * each node still fetched every ~1 MB photo from the gateway once (6-7 s, and
+ * throttled under load). Netlify honours the `durable` CDN directive on
+ * serverless function responses, so the first request anywhere fetches the
+ * bytes and every later one anywhere is served from the shared durable cache.
+ * CIDs are content hashes, so the bytes never change.
  *
  * Failures (a gateway's 429, a timeout) are never cached, and the next gateway
  * is tried first, so one throttled reply cannot stick to a URL.
@@ -58,4 +59,4 @@ export default async function ipfs(request: Request): Promise<Response> {
   });
 }
 
-export const config = { path: '/ipfs/*', cache: 'manual' };
+export const config = { path: '/ipfs/*' };

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import ipfs from './edge-functions/ipfs';
+import ipfs from './functions/ipfs.mts';
 
 const cid = 'QmTpMKYBNoPgoWMSQu61j2zUPLY6MHhoFSP5iWxPiokggo';
 const request = (path: string) => new Request(`https://digitalcarat.io${path}`);
 
-describe('IPFS edge function', () => {
+describe('IPFS function', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('serves gateway bytes with a durable, immutable cache policy', async () => {

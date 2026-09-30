@@ -1,3 +1,3 @@
-# /ipfs/* is served by netlify/edge-functions/ipfs.ts (durable-cached,
-# same-origin); edge functions run before these rules.
+# /ipfs/* is served by netlify/functions/ipfs.mts (durable-cached, same-origin).
+# Its `config.path` takes precedence over this SPA fallback.
 /*    /index.html   200
