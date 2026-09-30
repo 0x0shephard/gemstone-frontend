@@ -56,12 +56,12 @@ export function gatewayUrl(gateway: string, uri: string): string {
  * Gem photos are ~1 MB originals. A page of them over a slow public gateway
  * outran the thumbnail's stall timeout, so each was abandoned and restarted
  * elsewhere and none finished. The CDN fetches the original once, server-side,
- * and caches a small AVIF/WebP at the edge (sources allowed by `[images]` in
- * netlify.toml). Off Netlify this path does not exist; the image errors at once
+ * and caches a small AVIF/WebP at the edge. Off Netlify this path does not exist; the image errors at once
  * and the next candidate loads.
  */
 export function resizedIpfsImageUrl(uri: string, width = 960): string | undefined {
   if (!isIpfsUri(uri)) return undefined;
-  const source = gatewayUrl('https://gateway.pinata.cloud/ipfs', uri);
+  // The site's own durable-cached /ipfs/ path, so a resize never waits on a gateway twice.
+  const source = gatewayUrl(FIRST_PARTY_IPFS_GATEWAY, uri);
   return `/.netlify/images?url=${encodeURIComponent(source)}&w=${width}`;
 }

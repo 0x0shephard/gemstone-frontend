@@ -25,9 +25,9 @@ describe('IPFS gateway ordering', () => {
 });
 
 describe('resized gem images', () => {
-  it('points Netlify Image CDN at the Pinata original', () => {
+  it('points Netlify Image CDN at the durable same-origin original', () => {
     expect(resizedIpfsImageUrl('ipfs://QmPhoto')).toBe(
-      `/.netlify/images?url=${encodeURIComponent('https://gateway.pinata.cloud/ipfs/QmPhoto')}&w=960`,
+      `/.netlify/images?url=${encodeURIComponent('/ipfs/QmPhoto')}&w=960`,
     );
   });
 
