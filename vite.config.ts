@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
+const ipfsProxy = { target: 'https://gateway.pinata.cloud', changeOrigin: true };
+
 function buildCommit(): string {
   if (process.env.COMMIT_REF) return process.env.COMMIT_REF.slice(0, 7);
   try {
@@ -57,6 +59,11 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      proxy: { '/ipfs': ipfsProxy },
+    },
+    // Same `/ipfs/*` proxy Netlify applies in production (public/_redirects).
+    preview: {
+      proxy: { '/ipfs': ipfsProxy },
     },
   };
 });

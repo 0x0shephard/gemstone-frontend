@@ -1,1 +1,8 @@
+# Same-origin IPFS. Browsers fired bursts of ~1 MB image requests at public
+# gateways, which answered many with 429 text/plain; Chrome (ORB) and Safari
+# (CORS) then refused to render them, so gem pictures stayed blank. Proxying
+# through this origin removes the cross-origin failure, and Netlify's CDN keeps
+# the immutable bytes (Pinata sends an 11-month max-age), so the gateway itself
+# is rarely asked twice. Must stay above the SPA fallback.
+/ipfs/*  https://gateway.pinata.cloud/ipfs/:splat  200
 /*    /index.html   200

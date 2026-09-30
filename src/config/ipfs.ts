@@ -26,11 +26,18 @@ const LEGACY_MOBILE_GATEWAYS = new Set(['https://ipfs.io/ipfs', 'https://dweb.li
  * Keep them as fallbacks for old deployments, but prefer a direct-byte gateway
  * before a phone has to wait for that failure.
  */
+/**
+ * This site's own `/ipfs/*` path, proxied to Pinata by Netlify (public/_redirects)
+ * and by the Vite dev/preview servers. Same-origin, so a gateway's rate-limit
+ * reply can no longer be blocked as a cross-origin response, and CDN-cached.
+ */
+export const FIRST_PARTY_IPFS_GATEWAY = '/ipfs';
+
 export function resolveIpfsGateways(configuredGateway: string): string[] {
   const configured = trimTrailingSlash(configuredGateway);
   const candidates = LEGACY_MOBILE_GATEWAYS.has(configured)
-    ? [...PUBLIC_IPFS_GATEWAYS, configured]
-    : [configured, ...PUBLIC_IPFS_GATEWAYS];
+    ? [FIRST_PARTY_IPFS_GATEWAY, ...PUBLIC_IPFS_GATEWAYS, configured]
+    : [FIRST_PARTY_IPFS_GATEWAY, configured, ...PUBLIC_IPFS_GATEWAYS];
   return [...new Set(candidates.filter(Boolean).map(trimTrailingSlash))];
 }
 
@@ -41,4 +48,20 @@ export function gatewayUrl(gateway: string, uri: string): string {
   if (!isIpfsUri(uri)) return uri;
   const path = uri.slice('ipfs://'.length).replace(/^ipfs\//, '');
   return `${trimTrailingSlash(gateway)}/${path}`;
+}
+
+/**
+ * A resized copy served by Netlify Image CDN.
+ *
+ * Gem photos are ~1 MB originals. A page of them over a slow public gateway
+ * outran the thumbnail's stall timeout, so each was abandoned and restarted
+ * elsewhere and none finished. The CDN fetches the original once, server-side,
+ * and caches a small AVIF/WebP at the edge (sources allowed by `[images]` in
+ * netlify.toml). Off Netlify this path does not exist; the image errors at once
+ * and the next candidate loads.
+ */
+export function resizedIpfsImageUrl(uri: string, width = 960): string | undefined {
+  if (!isIpfsUri(uri)) return undefined;
+  const source = gatewayUrl('https://gateway.pinata.cloud/ipfs', uri);
+  return `/.netlify/images?url=${encodeURIComponent(source)}&w=${width}`;
 }

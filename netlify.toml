@@ -11,6 +11,12 @@
   to = "/index.html"
   status = 200
 
+# Sources Netlify Image CDN may fetch and resize for gem photos
+# (resizedIpfsImageUrl in src/config/ipfs.ts). IPFS content is immutable, so
+# each resized variant is fetched from the gateway once and then edge-cached.
+[images]
+  remote_images = ["https://gateway\\.pinata\\.cloud/ipfs/.*"]
+
 [context.deploy-preview.environment]
   VITE_DATA_MODE = "mock"
 

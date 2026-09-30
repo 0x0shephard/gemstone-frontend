@@ -68,7 +68,7 @@ import type {
 } from '../types';
 import { syncProjection, type ProjectionSnapshot } from './projection';
 import { readMetadata, trait } from './metadata';
-import { gatewayUrl, resolveIpfsGateways } from '@/config/ipfs';
+import { gatewayUrl, resizedIpfsImageUrl, resolveIpfsGateways } from '@/config/ipfs';
 import {
   runContractTransaction,
   TransactionGuardError,
@@ -374,7 +374,11 @@ function gemIds(): Promise<bigint[]> {
 function imageUrls(image?: string): string[] {
   if (!image) return [];
   if (!image.startsWith('ipfs://')) return [image];
-  return resolveIpfsGateways(env.ipfsGateway).map((gateway) => gatewayUrl(gateway, image));
+  const resized = resizedIpfsImageUrl(image);
+  return [
+    ...(resized ? [resized] : []),
+    ...resolveIpfsGateways(env.ipfsGateway).map((gateway) => gatewayUrl(gateway, image)),
+  ];
 }
 
 async function readRegistryGem(gemId: bigint): Promise<RegistryGem> {
@@ -558,7 +562,9 @@ async function readGemUncached(
      */
     redeem: canRedeem ? 'Eligible' : 'Blocked',
     metadataUri: registryGem.metadataURI,
-    image: imageUrls(details.image)[0],
+    // Full-resolution, same-origin original: card art and exports need the real
+    // bytes, while on-screen thumbnails try the resized CDN copy first.
+    image: imageUrls(details.image).find((url) => !url.startsWith('/.netlify/images')),
     imageCandidates: imageUrls(details.image),
   };
   return decorate(gem);
