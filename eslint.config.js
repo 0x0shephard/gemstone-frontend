@@ -5,7 +5,21 @@ import tseslint from 'typescript-eslint';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['dist', 'coverage', 'UI', 'src/contracts/generated', 'supabase/functions'] },
+  // `.netlify` is Netlify's build cache (restored between builds; it held Deno
+  // output from a removed edge function and broke every later production lint).
+  {
+    ignores: [
+      'dist',
+      'coverage',
+      'UI',
+      'src/contracts/generated',
+      'supabase/functions',
+      '.netlify',
+      'e2e/.stack',
+      'test-results',
+      'playwright-report',
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

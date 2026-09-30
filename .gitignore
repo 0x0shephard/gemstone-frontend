@@ -32,3 +32,6 @@ supabase/.temp/
 
 # end-to-end local stack output
 e2e/.stack/
+
+# Netlify build cache and local CLI state
+.netlify/
