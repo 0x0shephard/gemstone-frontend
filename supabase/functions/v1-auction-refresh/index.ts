@@ -10,6 +10,7 @@ import {
   primarySaleAbi,
   writeAndConfirm,
 } from '../_shared/chain.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Re-opens the 24-hour auction for stones that drew no bid.
@@ -88,6 +89,7 @@ Deno.serve(async (request) => {
 
   try {
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin);
     const chain = operatorChain();
     await assertOperatorChain(chain);
 
@@ -232,6 +234,7 @@ Deno.serve(async (request) => {
         const { data: cycle } = await admin
           .from('auction_cycles')
           .select('rounds,exhausted_at')
+          .eq('deployment_id', deployment.id)
           .eq('gem_id', String(gemId))
           .maybeSingle();
         // A gem with no row has never been counted — a seeded stone, or one from
@@ -243,12 +246,15 @@ Deno.serve(async (request) => {
         const rounds = cycle?.rounds ?? 0;
 
         if (rounds >= MAX_ROUNDS) {
-          await admin
-            .from('auction_cycles')
-            .upsert(
-              { gem_id: String(gemId), rounds, exhausted_at: new Date().toISOString() },
-              { onConflict: 'gem_id' },
-            );
+          await admin.from('auction_cycles').upsert(
+            {
+              deployment_id: deployment.id,
+              gem_id: String(gemId),
+              rounds,
+              exhausted_at: new Date().toISOString(),
+            },
+            { onConflict: 'deployment_id,gem_id' },
+          );
           await audit(null, 'auction.exhausted', 'gem', String(gemId), { rounds });
           exhausted.push(String(gemId));
           continue;
@@ -274,12 +280,13 @@ Deno.serve(async (request) => {
 
         await admin.from('auction_cycles').upsert(
           {
+            deployment_id: deployment.id,
             gem_id: String(gemId),
             rounds: rounds + 1,
             last_opened_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
-          { onConflict: 'gem_id' },
+          { onConflict: 'deployment_id,gem_id' },
         );
         await audit(null, 'auction.reopened', 'gem', String(gemId), {
           round: rounds + 1,

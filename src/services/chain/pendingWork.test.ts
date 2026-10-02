@@ -3,9 +3,11 @@ import {
   closeWork,
   findPendingBroadcast,
   hasBroadcastStep,
+  LEGACY_DEPLOYMENT_RELEASE,
   listPendingWork,
   nextStepIndex,
   openWork,
+  pendingWorkStorageKey,
   recordBroadcast,
   recordUnknownBroadcast,
   recordStepStatus,
@@ -35,6 +37,51 @@ const work = () =>
 beforeEach(() => localStorage.clear());
 
 describe('pending work', () => {
+  it('scopes durable recovery state to the exact deployment manifest', () => {
+    expect(pendingWorkStorageKey()).toMatch(/^dc:pending-work:(?:0x[0-9a-f]{64}|unconfigured)$/);
+    expect(pendingWorkStorageKey()).not.toBe('dc:pending-work');
+    expect(pendingWorkStorageKey(`0x${'11'.repeat(32)}`)).not.toBe(
+      pendingWorkStorageKey(`0x${'22'.repeat(32)}`),
+    );
+  });
+
+  it('ignores unscoped legacy recovery state in a fresh deployment', () => {
+    const legacy = {
+      id: 'legacy-unknown',
+      flow: 'buy',
+      label: 'Purchase listing',
+      account: ACCOUNT,
+      chainId: 11155111,
+      steps: [{ kind: 'call', label: 'Confirm', status: 'broadcast' }],
+      createdAt: Date.now(),
+    };
+    localStorage.setItem('dc:pending-work', JSON.stringify([legacy]));
+
+    expect(listPendingWork('sepolia-fresh-11828947')).toEqual([]);
+    expect(localStorage.getItem(pendingWorkStorageKey())).toBeNull();
+  });
+
+  it('recovers old unscoped unknown sends only in the canonical legacy rollback', () => {
+    const legacy = {
+      id: 'legacy-unknown',
+      flow: 'buy',
+      label: 'Purchase listing',
+      account: ACCOUNT,
+      chainId: 11155111,
+      steps: [{ kind: 'call', label: 'Confirm', status: 'broadcast' }],
+      createdAt: Date.now(),
+    };
+    localStorage.setItem('dc:pending-work', JSON.stringify([legacy]));
+
+    expect(listPendingWork(LEGACY_DEPLOYMENT_RELEASE)).toMatchObject([
+      { id: 'legacy-unknown', steps: [{ status: 'broadcast' }] },
+    ]);
+    expect(JSON.parse(localStorage.getItem(pendingWorkStorageKey())!)).toMatchObject([
+      { id: 'legacy-unknown' },
+    ]);
+    expect(localStorage.getItem('dc:pending-work')).not.toBeNull();
+  });
+
   /**
    * The regression this file exists for. A phone suspended while the wallet app
    * is in front can come back to a reloaded tab, so a hash held only in memory
@@ -97,18 +144,22 @@ describe('pending work', () => {
 
   it('drops entries too old to still be in flight', () => {
     const opened = work();
-    const stale = JSON.parse(localStorage.getItem('dc:pending-work')!) as { createdAt: number }[];
+    const stale = JSON.parse(localStorage.getItem(pendingWorkStorageKey())!) as {
+      createdAt: number;
+    }[];
     stale[0].createdAt = Date.now() - 48 * 60 * 60 * 1_000;
-    localStorage.setItem('dc:pending-work', JSON.stringify(stale));
+    localStorage.setItem(pendingWorkStorageKey(), JSON.stringify(stale));
     expect(listPendingWork().find((item) => item.id === opened.id)).toBeUndefined();
   });
 
   it('does not age out a hashless ambiguous send and expose a duplicate retry', () => {
     const opened = work();
     recordUnknownBroadcast(opened.id, 1);
-    const stale = JSON.parse(localStorage.getItem('dc:pending-work')!) as { createdAt: number }[];
+    const stale = JSON.parse(localStorage.getItem(pendingWorkStorageKey())!) as {
+      createdAt: number;
+    }[];
     stale[0].createdAt = Date.now() - 48 * 60 * 60 * 1_000;
-    localStorage.setItem('dc:pending-work', JSON.stringify(stale));
+    localStorage.setItem(pendingWorkStorageKey(), JSON.stringify(stale));
 
     expect(listPendingWork().find((item) => item.id === opened.id)).toBeDefined();
   });
@@ -116,7 +167,7 @@ describe('pending work', () => {
   it('reads a corrupt store as empty rather than throwing', () => {
     // Every screen that renders a TxButton reads this. A bad entry must not be
     // able to take the page down.
-    localStorage.setItem('dc:pending-work', 'not json');
+    localStorage.setItem(pendingWorkStorageKey(), 'not json');
     expect(listPendingWork()).toEqual([]);
   });
 });

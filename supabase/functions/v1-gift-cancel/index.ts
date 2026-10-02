@@ -11,6 +11,7 @@ import {
 } from '../_shared/chain.ts';
 import { reconcileGiftTransfer } from '../_shared/giftMutation.ts';
 import { claimGiftTransferLease, releaseGiftTransferLease } from '../_shared/giftTransferLease.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /** Cancel a pending/live gift and return an escrowed NFT to its sender. */
 
@@ -37,6 +38,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const body = (await request.json()) as Record<string, unknown>;
     const giftId = String(body.giftId ?? '');
     if (!UUID.test(giftId)) return json({ error: 'Gift card ID must be a UUID' }, 400);
@@ -47,6 +49,7 @@ Deno.serve(async (request) => {
         'id,sender_wallet,token_id::text,status,custody_mode,escrow_wallet,return_tx_hash,cancel_from_status,operation_nonce,operation_started_at',
       )
       .eq('id', giftId)
+      .eq('deployment_id', deployment.id)
       .eq('sender_id', user.id)
       .in('status', ['pending_escrow', 'active', 'cancel_pending'])
       .maybeSingle();
@@ -113,6 +116,7 @@ Deno.serve(async (request) => {
               cancel_from_status: null,
             })
             .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
             .eq('status', 'cancel_pending');
           throw leaseError;
         }
@@ -137,6 +141,7 @@ Deno.serve(async (request) => {
               cancel_from_status: null,
             })
             .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
             .eq('status', 'cancel_pending');
           return json({ error: 'Gift transfers are busy. Try cancellation again shortly.' }, 409);
         }
@@ -159,6 +164,7 @@ Deno.serve(async (request) => {
                     operation_started_at: new Date().toISOString(),
                   })
                   .eq('id', card.id)
+                  .eq('deployment_id', deployment.id)
                   .eq('status', 'cancel_pending')
                   .select('id')
                   .maybeSingle();
@@ -172,6 +178,7 @@ Deno.serve(async (request) => {
                   .from('gift_cards')
                   .update({ return_tx_hash: hash })
                   .eq('id', card.id)
+                  .eq('deployment_id', deployment.id)
                   .eq('status', 'cancel_pending');
                 if (error) throw error;
               },
@@ -210,6 +217,7 @@ Deno.serve(async (request) => {
               cancel_from_status: null,
             })
             .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
             .eq('status', 'cancel_pending');
           throw returnError;
         } finally {
@@ -227,6 +235,7 @@ Deno.serve(async (request) => {
             cancel_from_status: null,
           })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'cancel_pending');
         await audit(user.id, 'gift.cancelled', 'gift_card', card.id, {
           tokenId: card.token_id,
@@ -300,6 +309,7 @@ Deno.serve(async (request) => {
               cancel_from_status: null,
             })
             .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
             .eq('status', 'cancel_pending');
           await audit(user.id, 'gift.cancelled', 'gift_card', card.id, {
             tokenId: card.token_id,
@@ -325,6 +335,7 @@ Deno.serve(async (request) => {
               cancel_from_status: null,
             })
             .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
             .eq('status', 'cancel_pending');
           return json({ error: 'The return transaction reverted. It is safe to try again.' }, 409);
         }
@@ -348,6 +359,7 @@ Deno.serve(async (request) => {
             .from('gift_cards')
             .update({ operation_started_at: retryStartedAt })
             .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
             .eq('status', 'cancel_pending');
           retryLease = card.operation_started_at
             ? retryLease.eq('operation_started_at', card.operation_started_at)
@@ -410,6 +422,7 @@ Deno.serve(async (request) => {
           returned_at: ownerAddress === escrowWallet ? null : new Date().toISOString(),
         })
         .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
         .eq('status', card.status)
         .select('id')
         .maybeSingle();
@@ -429,12 +442,14 @@ Deno.serve(async (request) => {
           operation_nonce: null,
           cancel_from_status: null,
         })
-        .eq('id', card.id);
+        .eq('id', card.id)
+        .eq('deployment_id', deployment.id);
     } else {
       const { data: cancelled } = await admin
         .from('gift_cards')
         .update({ status: 'cancelled' })
         .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
         .eq('status', card.status)
         .select('id')
         .maybeSingle();

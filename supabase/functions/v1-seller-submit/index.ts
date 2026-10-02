@@ -5,6 +5,7 @@ import { json, preflight } from '../_shared/cors.ts';
 import { canonicalDocument } from '../_shared/ipfs.ts';
 import { dataUri } from '../_shared/metadataDocument.ts';
 import { verificationMode } from '../_shared/settings.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 const walletPattern = /^0x[0-9a-f]{40}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -156,6 +157,7 @@ Deno.serve(async (request) => {
       return json({ error: 'Seller wallet is invalid' }, 400);
     }
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     try {
       await requireLinkedWallet(admin, user.id, sellerWallet);
     } catch (error) {
@@ -176,6 +178,7 @@ Deno.serve(async (request) => {
           'id,status,seller_wallet,sale_mode,custody_preference,metadata_uri,verification_provider',
         )
         .eq('id', submissionId)
+        .eq('deployment_id', deployment.id)
         .eq('seller_id', user.id)
         .maybeSingle();
       if (submissionError) throw submissionError;
@@ -243,6 +246,7 @@ Deno.serve(async (request) => {
             verification_provider: 'lab-pending',
           })
           .eq('id', submissionId)
+          .eq('deployment_id', deployment.id)
           .eq('seller_id', user.id)
           .eq('status', 'submitted')
           .select('id,status,metadata_uri,verification_provider')
@@ -267,6 +271,7 @@ Deno.serve(async (request) => {
           approved_at: new Date().toISOString(),
         })
         .eq('id', submissionId)
+        .eq('deployment_id', deployment.id)
         .eq('seller_id', user.id)
         .eq('status', 'submitted')
         .select('id,status,metadata_uri,verification_provider')
@@ -331,6 +336,7 @@ Deno.serve(async (request) => {
       .from('seller_submissions')
       .select('id,status,metadata_uri,verification_provider')
       .eq('client_submission_id', clientSubmissionId)
+      .eq('deployment_id', deployment.id)
       .eq('seller_id', user.id)
       .maybeSingle();
     if (existingError) throw existingError;
@@ -339,6 +345,7 @@ Deno.serve(async (request) => {
     const { data: submission, error: insertError } = await admin
       .from('seller_submissions')
       .insert({
+        deployment_id: deployment.id,
         client_submission_id: clientSubmissionId,
         seller_id: user.id,
         seller_wallet: sellerWallet,
@@ -362,6 +369,7 @@ Deno.serve(async (request) => {
           .from('seller_submissions')
           .select('id,status,metadata_uri,verification_provider')
           .eq('client_submission_id', clientSubmissionId)
+          .eq('deployment_id', deployment.id)
           .eq('seller_id', user.id)
           .maybeSingle();
         if (concurrent) return json(responseFor(concurrent));

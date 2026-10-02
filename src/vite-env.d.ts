@@ -2,8 +2,10 @@
 
 /** Short commit the bundle was built from (Netlify `COMMIT_REF`, else git, else "dev"). */
 declare const __BUILD_COMMIT__: string;
+declare const __DEPLOYMENT_CONFIG__: import('./config/deployment').EmbeddedDeploymentConfig | null;
 
 interface ImportMetaEnv {
+  readonly VITE_DEPLOYMENT_RELEASE?: string;
   readonly VITE_CHAIN_ID?: string;
   readonly VITE_RPC_URL?: string;
   readonly VITE_RPC_FALLBACK_URL?: string;

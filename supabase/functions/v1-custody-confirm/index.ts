@@ -7,6 +7,7 @@ import {
   NotAVerifierError,
   requireVerifier,
 } from '../_shared/verifier.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Records that a stone physically arrived, releasing it to the grading queue.
@@ -29,6 +30,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const membership = await requireVerifier(admin, user.id);
     if (!canConfirmCustody(membership)) throw new NotACustodianError();
 
@@ -85,6 +87,7 @@ Deno.serve(async (request) => {
         reserve_escrow_ends_at: escrowEndsAt.toISOString(),
       })
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       // Guarded so a second confirmation cannot overwrite the first intake
       // record, and so a stone already graded cannot be walked backwards.
       .eq('status', 'awaiting_custody')

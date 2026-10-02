@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { embeddedDeploymentConfig } from './deployment';
 
 /**
  * Absolute-URL check that works on browsers this app still supports.
@@ -39,6 +40,7 @@ const supabaseUrl = z
 
 const schema = z.object({
   VITE_DATA_MODE: z.enum(['mock', 'chain']).default('mock'),
+  VITE_DEPLOYMENT_RELEASE: z.string().trim().default(''),
   VITE_CHAIN_ID: z.coerce.number().int().positive().default(11155111),
   VITE_CHAIN_NAME: z.string().trim().default(''),
   VITE_NATIVE_CURRENCY_NAME: z.string().trim().default('Ether'),
@@ -68,12 +70,16 @@ const values = parsed.success ? parsed.data : schema.parse({});
 
 export const env = {
   dataMode: values.VITE_DATA_MODE,
-  chainId: values.VITE_CHAIN_ID,
+  deploymentRelease: embeddedDeploymentConfig?.release ?? values.VITE_DEPLOYMENT_RELEASE,
+  chainId: embeddedDeploymentConfig?.chainId ?? values.VITE_CHAIN_ID,
   chainName: values.VITE_CHAIN_NAME,
   nativeCurrencyName: values.VITE_NATIVE_CURRENCY_NAME,
   nativeCurrencySymbol: values.VITE_NATIVE_CURRENCY_SYMBOL,
   nativeCurrencyDecimals: values.VITE_NATIVE_CURRENCY_DECIMALS,
-  deploymentBlock: values.VITE_DEPLOYMENT_BLOCK,
+  deploymentBlock:
+    embeddedDeploymentConfig !== null
+      ? BigInt(embeddedDeploymentConfig.deploymentBlock)
+      : values.VITE_DEPLOYMENT_BLOCK,
   rpcUrl: values.VITE_RPC_URL,
   rpcFallbackUrl: values.VITE_RPC_FALLBACK_URL,
   explorerBaseUrl: values.VITE_EXPLORER_BASE_URL,

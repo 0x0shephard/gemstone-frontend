@@ -25,6 +25,7 @@ import {
   walletConnectSupportsChain,
   type WalletConnectProviderLike,
 } from '@/services/chain/walletConnectRouting';
+import { assertActiveDeploymentRelease } from '@/services/chain/deploymentReleaseGuard';
 
 interface SiweNonce {
   nonce: string;
@@ -322,6 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         expirationTime,
       });
       try {
+        await assertActiveDeploymentRelease();
         const signature = await (async () => {
           if (!isWalletConnectConnector(connector) || !connector?.getProvider) {
             return signMessageAsync({ message });

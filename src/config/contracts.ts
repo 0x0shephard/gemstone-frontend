@@ -1,4 +1,5 @@
 import { getAddress, isAddress, keccak256, toBytes, type Address } from 'viem';
+import { embeddedDeploymentConfig } from './deployment';
 import { env, environmentErrors } from './env';
 
 export const contractModules = [
@@ -31,7 +32,10 @@ const keys: Record<ContractModule, string> = {
 };
 
 function parseAddress(key: string): Address | undefined {
-  const value = import.meta.env[key];
+  const moduleName = contractModules.find((candidate) => keys[candidate] === key);
+  const value = moduleName
+    ? (embeddedDeploymentConfig?.addresses[moduleName] ?? import.meta.env[key])
+    : import.meta.env[key];
   return typeof value === 'string' && isAddress(value) ? getAddress(value) : undefined;
 }
 
@@ -39,8 +43,19 @@ export const contractAddresses = Object.fromEntries(
   contractModules.map((moduleName) => [moduleName, parseAddress(keys[moduleName])]),
 ) as Record<ContractModule, Address | undefined>;
 
-export const usdcAddress = parseAddress('VITE_USDC_ADDRESS');
-export const musdcFaucetAddress = parseAddress('VITE_MUSDC_FAUCET_ADDRESS');
+function parsePublicAsset(value: string | undefined, fallbackKey: string): Address | undefined {
+  const candidate = value ?? import.meta.env[fallbackKey];
+  return typeof candidate === 'string' && isAddress(candidate) ? getAddress(candidate) : undefined;
+}
+
+export const usdcAddress = parsePublicAsset(
+  embeddedDeploymentConfig?.paymentAssets?.mockUsdc,
+  'VITE_USDC_ADDRESS',
+);
+export const musdcFaucetAddress = parsePublicAsset(
+  embeddedDeploymentConfig?.paymentAssets?.mockUsdcFaucet,
+  'VITE_MUSDC_FAUCET_ADDRESS',
+);
 
 /**
  * The operator EOA that holds newly gifted tokens in custody until claim.
@@ -48,10 +63,14 @@ export const musdcFaucetAddress = parseAddress('VITE_MUSDC_FAUCET_ADDRESS');
  * Not part of {@link deploymentManifest}: it is an EOA rather than a deployed
  * contract. It also remains the spender for legacy approval-backed cards.
  */
-export const giftOperatorAddress = parseAddress('VITE_GIFT_OPERATOR_ADDRESS');
+export const giftOperatorAddress = parsePublicAsset(
+  embeddedDeploymentConfig?.giftOperator,
+  'VITE_GIFT_OPERATOR_ADDRESS',
+);
 
 export interface DeploymentManifest {
   schemaVersion: 1;
+  release?: string;
   chainId: number;
   deploymentBlock: bigint;
   addresses: Record<ContractModule, Address>;
@@ -77,6 +96,7 @@ export const deploymentManifest: DeploymentManifest | undefined =
   deploymentErrors.length === 0
     ? {
         schemaVersion: 1,
+        release: env.deploymentRelease || undefined,
         chainId: env.chainId,
         deploymentBlock: env.deploymentBlock!,
         addresses: contractAddresses as Record<ContractModule, Address>,

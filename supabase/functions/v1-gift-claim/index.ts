@@ -12,6 +12,7 @@ import {
 import { hashGiftCode, maskEmail, normalizeGiftCode } from '../_shared/gift.ts';
 import { reconcileGiftTransfer } from '../_shared/giftMutation.ts';
 import { claimGiftTransferLease, releaseGiftTransferLease } from '../_shared/giftTransferLease.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Inspects and claims an email-bound gift.
@@ -48,10 +49,11 @@ interface GiftRow {
 const SELECT =
   'id,sender_id,sender_wallet,token_id::text,gem_id::text,recipient_email,recipient_name,message,template,status,custody_mode,escrow_wallet,claimed_by,claimed_wallet,claimed_at,claim_tx_hash,return_tx_hash,operation_nonce,operation_started_at,expires_at,created_at';
 
-async function loadCard(admin: ReturnType<typeof adminClient>, code: string) {
+async function loadCard(admin: ReturnType<typeof adminClient>, code: string, deploymentId: string) {
   const { data } = await admin
     .from('gift_cards')
     .select(SELECT)
+    .eq('deployment_id', deploymentId)
     .eq('code_hash', await hashGiftCode(code))
     .maybeSingle();
   return (data as GiftRow | null) ?? null;
@@ -74,11 +76,12 @@ Deno.serve(async (request) => {
 
   try {
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const body = (await request.json()) as Record<string, unknown>;
     const code = normalizeGiftCode(body.code);
     if (!code) return json({ error: 'That gift code is not valid' }, 404);
 
-    const card = await loadCard(admin, code);
+    const card = await loadCard(admin, code, deployment.id);
     if (!card) return json({ error: 'That gift code is not valid' }, 404);
     const cardState = state(card);
 
@@ -205,6 +208,7 @@ Deno.serve(async (request) => {
             operation_nonce: null,
           })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'claim_pending');
         throw leaseError;
       }
@@ -222,6 +226,7 @@ Deno.serve(async (request) => {
             operation_nonce: null,
           })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'claim_pending');
         return json({ error: 'Gift transfers are busy. Try the claim again shortly.' }, 409);
       }
@@ -244,6 +249,7 @@ Deno.serve(async (request) => {
                   operation_started_at: new Date().toISOString(),
                 })
                 .eq('id', card.id)
+                .eq('deployment_id', deployment.id)
                 .eq('status', 'claim_pending')
                 .select('id')
                 .maybeSingle();
@@ -257,6 +263,7 @@ Deno.serve(async (request) => {
                 .from('gift_cards')
                 .update({ claim_tx_hash: hash })
                 .eq('id', card.id)
+                .eq('deployment_id', deployment.id)
                 .eq('status', 'claim_pending');
               if (error) throw error;
             },
@@ -291,6 +298,7 @@ Deno.serve(async (request) => {
             operation_nonce: null,
           })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'claim_pending');
         throw transferError;
       } finally {
@@ -307,6 +315,7 @@ Deno.serve(async (request) => {
           operation_nonce: null,
         })
         .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
         .eq('status', 'claim_pending');
       await audit(user.id, 'gift.claimed', 'gift_card', card.id, {
         tokenId: card.token_id,
@@ -381,6 +390,7 @@ Deno.serve(async (request) => {
             operation_nonce: null,
           })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'claim_pending');
         await audit(user.id, 'gift.claimed', 'gift_card', card.id, {
           tokenId: card.token_id,
@@ -408,6 +418,7 @@ Deno.serve(async (request) => {
             operation_nonce: null,
           })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'claim_pending');
         return json({ error: 'The claim transaction reverted. It is safe to try again.' }, 409);
       }
@@ -426,6 +437,7 @@ Deno.serve(async (request) => {
           .from('gift_cards')
           .update({ operation_started_at: retryStartedAt })
           .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
           .eq('status', 'claim_pending');
         retryLease = card.operation_started_at
           ? retryLease.eq('operation_started_at', card.operation_started_at)
@@ -475,6 +487,7 @@ Deno.serve(async (request) => {
         operation_started_at: operationStartedAt,
       })
       .eq('id', card.id)
+      .eq('deployment_id', deployment.id)
       .eq('status', 'active')
       .select('id')
       .maybeSingle();

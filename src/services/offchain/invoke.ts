@@ -1,5 +1,9 @@
 import { supabase } from '@/providers/supabase';
 import { recordDiagnostic } from '@/lib/diagnostics';
+import { env } from '@/config/env';
+import { protocolDeploymentHeaders } from '@/config/deployment';
+
+export { protocolDeploymentHeaders } from '@/config/deployment';
 
 /**
  * Calls an Edge Function and surfaces the error the function actually returned.
@@ -19,6 +23,14 @@ export function requireClient() {
 
 export const EDGE_FUNCTION_DEADLINE_MS = 45_000;
 
+/**
+ * Identifies the immutable browser release to deployment-scoped Edge Functions.
+ *
+ * Legacy/local builds omit the header and remain compatible with the legacy
+ * database row. A manifest-selected build always sends its release, allowing a
+ * newly activated backend to reject stale browser tabs before they can mutate
+ * the replacement contract suite.
+ */
 /**
  * The request may have reached the function even though the browser stopped
  * waiting. Mutation callers must reconcile by idempotency key/hash before they
@@ -61,12 +73,14 @@ export async function invokeEdgeFunction<T>(
   body: Record<string, unknown> = {},
   deadlineMs = EDGE_FUNCTION_DEADLINE_MS,
 ): Promise<T> {
+  const headers = protocolDeploymentHeaders(env.deploymentRelease);
   const { data, error } = await requireClient().functions.invoke(name, {
     body,
     // Supabase forwards this to an AbortController around the complete fetch,
     // including response-body parsing. A Promise.race would merely stop the UI
     // waiting while leaving the network operation alive.
     timeout: deadlineMs,
+    ...(headers ? { headers } : {}),
   });
   const inlineError = (data as { error?: unknown } | null)?.error;
 

@@ -62,6 +62,7 @@ import {
   walletConnectSupportsChain,
   type WalletConnectProviderLike,
 } from './walletConnectRouting';
+import { assertActiveDeploymentRelease } from './deploymentReleaseGuard';
 
 /**
  * Ceiling on waiting for a receipt.
@@ -229,6 +230,7 @@ async function ensureChain(gestureGate: StepGateLease | null): Promise<void> {
    * response to a request the wallet never displayed. Give it its own fresh tap
    * exactly like approvals and contract calls.
    */
+  await assertActiveDeploymentRelease();
   await awaitGesture(
     {
       index: 0,
@@ -471,6 +473,9 @@ async function runStep(
     'The transaction safety check did not respond. Check your connection and try again; no transaction was sent.',
     CHAIN_PREFLIGHT_TIMEOUT_MS,
   );
+  // An old tab may survive a same-origin deployment cutover. Check after all
+  // preparation but before offering the final wallet-opening gesture.
+  await assertActiveDeploymentRelease();
   await awaitGesture({ index, total, label: step.label, kind: step.kind }, gestureGate);
 
   announceStep(step.kind === 'approval' ? 'approving' : 'awaiting-signature');

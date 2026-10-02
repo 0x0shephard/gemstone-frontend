@@ -39,6 +39,7 @@ export async function audit(
   const { error } = await adminClient()
     .from('audit_records')
     .insert({
+      deployment_id: Deno.env.get('PROTOCOL_DEPLOYMENT_ID')?.trim() || null,
       profile_id: profileId,
       actor: profileId ? 'user' : 'system',
       action,

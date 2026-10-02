@@ -4,6 +4,7 @@ import { json, preflight } from '../_shared/cors.ts';
 import { NotACustodianError, canConfirmCustody, requireVerifier } from '../_shared/verifier.ts';
 import { getAddress, isAddress } from 'npm:viem@2';
 import { gemRegistryAbi, operatorChain } from '../_shared/chain.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Delivery details for an open redemption, for the custodian who must fulfil it.
@@ -28,6 +29,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const membership = await requireVerifier(admin, user.id);
     // The same gate as recording an intake. Receiving a stone and releasing one
     // are the two ends of custody, and neither is a grader's business.
@@ -42,6 +44,7 @@ Deno.serve(async (request) => {
       .select(
         'id,gem_id::text,token_id::text,fulfillment_method,fulfillment_details,status,request_hash,created_at',
       )
+      .eq('deployment_id', deployment.id)
       .eq('token_id', tokenId)
       /*
        * Only a live request. A cancelled or fulfilled one is finished business,

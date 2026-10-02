@@ -1,6 +1,7 @@
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { createCommitment } from '../_shared/commitment.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 Deno.serve(async (request) => {
   const early = preflight(request);
@@ -9,12 +10,14 @@ Deno.serve(async (request) => {
     const user = await requireUser(request);
     const { submissionId } = await request.json();
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const { data: submission, error } = await admin
       .from('seller_submissions')
       .select(
         'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,status,approved_at,certificate_hash,canonical_payload',
       )
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       .eq('seller_id', user.id)
       .single();
     if (error || !submission || submission.status !== 'approved') {
@@ -55,6 +58,7 @@ Deno.serve(async (request) => {
         commitment_nonce: commitment.nonce,
       })
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       .is('certificate_hash', null)
       .select('certificate_hash,canonical_payload')
       .maybeSingle();
@@ -64,6 +68,7 @@ Deno.serve(async (request) => {
         .from('seller_submissions')
         .select('certificate_hash,canonical_payload')
         .eq('id', submissionId)
+        .eq('deployment_id', deployment.id)
         .single();
       if (existingError || !existing?.certificate_hash || !existing.canonical_payload) {
         throw existingError ?? new Error('Commitment persistence failed');

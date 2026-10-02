@@ -3,7 +3,8 @@ export const corsHeaders = {
   // here allows the browser to receive sanitized error bodies from each explicit
   // development origin without using cookies or credentialed CORS.
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-protocol-deployment',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 

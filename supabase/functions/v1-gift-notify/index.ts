@@ -4,6 +4,7 @@ import { json, preflight } from '../_shared/cors.ts';
 import { EmailNotConfiguredError, emailConfigured } from '../_shared/email.ts';
 import { hashGiftCode, normalizeGiftCode } from '../_shared/gift.ts';
 import { sendGiftInvitation } from '../_shared/giftInvitation.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Emails a gift card's claim link to its recipient.
@@ -32,6 +33,7 @@ Deno.serve(async (request) => {
 
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const body = (await request.json()) as Record<string, unknown>;
 
     const code = normalizeGiftCode(body.code);
@@ -47,6 +49,7 @@ Deno.serve(async (request) => {
       .select(
         'id,sender_id,token_id::text,gem_id::text,recipient_email,recipient_name,message,status,expires_at',
       )
+      .eq('deployment_id', deployment.id)
       .eq('code_hash', await hashGiftCode(code))
       .maybeSingle();
 
@@ -67,6 +70,7 @@ Deno.serve(async (request) => {
     const { count } = await admin
       .from('audit_records')
       .select('id', { count: 'exact', head: true })
+      .eq('deployment_id', deployment.id)
       .eq('entity_type', 'gift_card')
       .eq('entity_id', card.id)
       .eq('action', 'gift.notified')

@@ -1,6 +1,7 @@
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 import { currentDemand } from '../_shared/demand.ts';
 import { activateSellerSubmission } from '../_shared/sellerAutomation.ts';
 import { createGradedValuation } from '../_shared/valuation.ts';
@@ -61,6 +62,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const membership = await requireVerifier(admin, user.id);
 
     const body = (await request.json()) as Record<string, unknown>;
@@ -75,6 +77,7 @@ Deno.serve(async (request) => {
       .from('seller_submissions')
       .select('id,status,graded_at,onchain_gem_id')
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       .maybeSingle();
     if (submissionError) throw submissionError;
     if (!submission) return json({ error: 'Submission not found' }, 404);
@@ -106,6 +109,7 @@ Deno.serve(async (request) => {
           rejected_at: new Date().toISOString(),
         })
         .eq('id', submissionId)
+        .eq('deployment_id', deployment.id)
         .in('status', GRADABLE_STATUSES)
         .select('id,status')
         .maybeSingle();
@@ -206,6 +210,7 @@ Deno.serve(async (request) => {
         valuation_nonce: valuation.nonce,
       })
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       .in('status', GRADABLE_STATUSES)
       .is('graded_at', null)
       .select('id')
@@ -289,6 +294,7 @@ Deno.serve(async (request) => {
       .from('seller_submissions')
       .select('valuation_tx_hash')
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       .maybeSingle();
 
     await admin

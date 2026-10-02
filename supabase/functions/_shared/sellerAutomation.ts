@@ -19,11 +19,13 @@ import {
   type PublishedMetadata,
 } from './ipfs.ts';
 import { isDataUri, type PublicAttributes } from './metadataDocument.ts';
+import { protocolDeploymentId } from './deployment.ts';
 
 type AdminClient = SupabaseClient;
 
 interface SellerSubmission {
   id: string;
+  deployment_id: string;
   seller_id: string;
   seller_wallet: string;
   attributes: Record<string, unknown> & { caratWeight: number };
@@ -53,13 +55,14 @@ interface SellerSubmission {
 }
 
 const sellerColumns =
-  'id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at,registration_tx_hash,registration_scan_from_block';
+  'id,deployment_id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at,registration_tx_hash,registration_scan_from_block';
 
 async function loadSubmission(admin: AdminClient, submissionId: string): Promise<SellerSubmission> {
   const { data, error } = await admin
     .from('seller_submissions')
     .select(sellerColumns)
     .eq('id', submissionId)
+    .eq('deployment_id', protocolDeploymentId())
     .single();
   if (error || !data) throw error ?? new Error('Seller submission not found');
   return data as SellerSubmission;
@@ -287,7 +290,8 @@ export async function prepareSellerSubmission(
         activation_state: 'prepared',
         activation_error: null,
       })
-      .eq('id', submissionId);
+      .eq('id', submissionId)
+      .eq('deployment_id', protocolDeploymentId());
     if (error) throw error;
     submission = await loadSubmission(admin, submissionId);
     await audit(
@@ -408,7 +412,11 @@ async function persistStep(
   submissionId: string,
   values: Record<string, unknown>,
 ) {
-  const { error } = await admin.from('seller_submissions').update(values).eq('id', submissionId);
+  const { error } = await admin
+    .from('seller_submissions')
+    .update(values)
+    .eq('id', submissionId)
+    .eq('deployment_id', protocolDeploymentId());
   if (error) throw error;
   /*
    * Progress renews the lease. Recording a completed step is the one moment we
@@ -533,7 +541,8 @@ export async function activateSellerSubmission(
       activation_error: null,
       activation_attempts: submission.activation_attempts + 1,
     })
-    .eq('id', submissionId);
+    .eq('id', submissionId)
+    .eq('deployment_id', protocolDeploymentId());
   if (
     submission.activation_started_at &&
     new Date(submission.activation_started_at).getTime() < staleBefore

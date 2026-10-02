@@ -5,6 +5,7 @@ import { aggregateDemand, type BidObservation } from './demandMath.ts';
 import { scanLogs } from './logScan.ts';
 import type { PhaseLog } from './deadline.ts';
 import type { DemandInput } from './valuationMath.ts';
+import { protocolDeploymentId } from './deployment.ts';
 
 type AdminClient = SupabaseClient;
 
@@ -73,6 +74,7 @@ async function scannedThroughBlock(admin: AdminClient, chain: OperatorChain): Pr
   const { data, error } = await admin
     .from('demand_scan_state')
     .select('scanned_through_block')
+    .eq('deployment_id', protocolDeploymentId())
     .maybeSingle();
   if (error) throw error;
   return data ? BigInt(data.scanned_through_block) : chain.deploymentBlock;
@@ -168,11 +170,15 @@ export async function ingestBidEvents(
         inserted += await writeBids(admin, chain, pending);
         pending = [];
       }
-      const { error } = await admin.from('demand_scan_state').upsert({
-        id: true,
-        scanned_through_block: Number(through),
-        updated_at: new Date().toISOString(),
-      });
+      const { error } = await admin.from('demand_scan_state').upsert(
+        {
+          deployment_id: protocolDeploymentId(),
+          id: true,
+          scanned_through_block: Number(through),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'deployment_id,id' },
+      );
       if (error) throw error;
     },
   });
@@ -215,6 +221,7 @@ async function pruneReorgedBids(
   const { data: recorded, error } = await admin
     .from('demand_bids')
     .select('id,tx_hash,log_index')
+    .eq('deployment_id', protocolDeploymentId())
     .gte('block_number', Number(fromBlock))
     .lte('block_number', Number(toBlock));
   if (error) throw error;
@@ -224,7 +231,11 @@ async function pruneReorgedBids(
     .map((row) => row.id as string);
   if (orphaned.length === 0) return 0;
 
-  const { error: deleteError } = await admin.from('demand_bids').delete().in('id', orphaned);
+  const { error: deleteError } = await admin
+    .from('demand_bids')
+    .delete()
+    .eq('deployment_id', protocolDeploymentId())
+    .in('id', orphaned);
   if (deleteError) throw deleteError;
   return orphaned.length;
 }
@@ -245,6 +256,7 @@ async function writeBids(
   const { data: submissions, error: submissionError } = await admin
     .from('seller_submissions')
     .select('onchain_gem_id,attributes,graded_attributes')
+    .eq('deployment_id', protocolDeploymentId())
     .in('onchain_gem_id', gemIds);
   if (submissionError) throw submissionError;
   const attributesByGem = new Map(
@@ -262,6 +274,7 @@ async function writeBids(
   const rows = logs.map((log) => {
     const attributes = attributesByGem.get(log.gemId.toString());
     return {
+      deployment_id: protocolDeploymentId(),
       gem_id: log.gemId.toString(),
       bidder: log.bidder.toLowerCase(),
       tx_hash: log.txHash,
@@ -276,7 +289,7 @@ async function writeBids(
 
   const { data: written, error: insertError } = await admin
     .from('demand_bids')
-    .upsert(rows, { onConflict: 'tx_hash,log_index', ignoreDuplicates: true })
+    .upsert(rows, { onConflict: 'deployment_id,tx_hash,log_index', ignoreDuplicates: true })
     .select('id');
   if (insertError) throw insertError;
   return written?.length ?? 0;
@@ -299,6 +312,7 @@ export async function currentDemand(
   const { data, error } = await admin
     .from('demand_bids')
     .select('gem_id,bidder,observed_at,shape,color,color_grade')
+    .eq('deployment_id', protocolDeploymentId())
     .gte('observed_at', since.toISOString());
   if (error) throw error;
 

@@ -1,6 +1,7 @@
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { createCommitment } from '../_shared/commitment.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 Deno.serve(async (request) => {
   const early = preflight(request);
@@ -25,6 +26,7 @@ Deno.serve(async (request) => {
       return json({ error: 'Complete insured-delivery details are required' }, 400);
 
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const normalizedWallet = String(wallet).toLowerCase();
     const { data: link } = await admin
       .from('wallet_links')
@@ -39,6 +41,7 @@ Deno.serve(async (request) => {
     const { data: record, error } = await admin
       .from('redemption_requests')
       .insert({
+        deployment_id: deployment.id,
         requester_id: user.id,
         requester_wallet: normalizedWallet,
         gem_id: String(gemId),
@@ -66,6 +69,7 @@ Deno.serve(async (request) => {
         canonical_payload: commitment.canonicalPayload,
         commitment_nonce: commitment.nonce,
       })
+      .eq('deployment_id', deployment.id)
       .eq('id', record.id);
     await audit(user.id, 'redemption.commitment_created', 'redemption_request', record.id, {
       hash: commitment.hash,

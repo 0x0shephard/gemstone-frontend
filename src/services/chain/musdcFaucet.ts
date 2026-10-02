@@ -11,6 +11,7 @@ import { musdcFaucetAddress } from '@/config/contracts';
 import { wagmiConfig } from '@/providers/wagmi';
 import type { TxResult } from '@/services/types';
 import { decodeTransactionError, TransactionGuardError } from './transactionPipeline';
+import { assertActiveDeploymentRelease } from './deploymentReleaseGuard';
 
 export const MUSDC_CLAIM_AMOUNT = 10_000_000_000n;
 
@@ -36,6 +37,7 @@ export async function claimMockUsdc(): Promise<TxResult> {
     }
 
     if (account.chainId !== env.chainId) {
+      await assertActiveDeploymentRelease();
       await switchChain(wagmiConfig, { chainId: env.chainId });
     }
 
@@ -45,6 +47,7 @@ export async function claimMockUsdc(): Promise<TxResult> {
       abi: musdcFaucetAbi,
       functionName: 'claim',
     });
+    await assertActiveDeploymentRelease();
     const hash = (await writeContract(wagmiConfig, simulation.request)) as Hash;
     const receipt = await waitForTransactionReceipt(wagmiConfig, { hash });
     if (receipt.status !== 'success') {

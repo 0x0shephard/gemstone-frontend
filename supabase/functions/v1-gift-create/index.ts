@@ -8,6 +8,7 @@ import { canonicalSiteOrigin } from '../_shared/origins.ts';
 import { emailConfigured, escapeHtml, sendEmail } from '../_shared/email.ts';
 import { sendGiftInvitation } from '../_shared/giftInvitation.ts';
 import { formatGiftCode, hashGiftCode, normalizeGiftCode } from '../_shared/gift.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Prepares and activates an email-bound escrow gift.
@@ -243,6 +244,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? 'prepare');
     const chain = operatorChain();
@@ -267,6 +269,7 @@ Deno.serve(async (request) => {
         .from('gift_cards')
         .select(SELECT)
         .eq('id', giftId)
+        .eq('deployment_id', deployment.id)
         .eq('sender_id', user.id)
         .eq('code_hash', await hashGiftCode(code))
         .maybeSingle();
@@ -313,6 +316,7 @@ Deno.serve(async (request) => {
           escrow_tx_hash: TX_HASH.test(escrowTxHash) ? escrowTxHash.toLowerCase() : null,
         })
         .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
         .eq('status', 'pending_escrow')
         .select(SELECT)
         .maybeSingle();
@@ -354,6 +358,7 @@ Deno.serve(async (request) => {
         .from('gift_cards')
         .select(SELECT)
         .eq('id', giftId)
+        .eq('deployment_id', deployment.id)
         .eq('sender_id', user.id)
         .maybeSingle();
       const card = data as GiftRow | null;
@@ -393,6 +398,7 @@ Deno.serve(async (request) => {
         .from('gift_cards')
         .update({ code_hash: await hashGiftCode(code) })
         .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
         .eq('status', 'pending_escrow')
         .select(SELECT)
         .maybeSingle();
@@ -412,6 +418,7 @@ Deno.serve(async (request) => {
         .from('gift_cards')
         .select(SELECT)
         .eq('id', giftId)
+        .eq('deployment_id', deployment.id)
         .eq('sender_id', user.id)
         .eq('code_hash', await hashGiftCode(code))
         .maybeSingle();
@@ -424,6 +431,7 @@ Deno.serve(async (request) => {
       const { count } = await admin
         .from('audit_records')
         .select('id', { count: 'exact', head: true })
+        .eq('deployment_id', deployment.id)
         .eq('entity_type', 'gift_card')
         .eq('entity_id', card.id)
         .eq('action', 'gift.sender_copy_sent')
@@ -449,6 +457,7 @@ Deno.serve(async (request) => {
     const { data: prior } = await admin
       .from('gift_cards')
       .select(SELECT)
+      .eq('deployment_id', deployment.id)
       .eq('sender_id', user.id)
       .eq('client_request_id', clientRequestId)
       .maybeSingle();
@@ -529,6 +538,7 @@ Deno.serve(async (request) => {
     const { data: custody, error: custodyError } = await admin
       .from('seller_submissions')
       .select('reserve_escrow_ends_at')
+      .eq('deployment_id', deployment.id)
       .eq('onchain_gem_id', gemId.toString())
       .not('reserve_escrow_ends_at', 'is', null)
       .order('reserve_escrow_ends_at', { ascending: false })
@@ -563,6 +573,7 @@ Deno.serve(async (request) => {
     const { data: superseded, error: supersedeError } = await admin
       .from('gift_cards')
       .update({ status: 'cancelled', returned_at: new Date().toISOString() })
+      .eq('deployment_id', deployment.id)
       .eq('token_id', tokenId.toString())
       .eq('status', 'pending_escrow')
       .select('id');
@@ -578,6 +589,7 @@ Deno.serve(async (request) => {
     const { data: inserted, error } = await admin
       .from('gift_cards')
       .insert({
+        deployment_id: deployment.id,
         sender_id: user.id,
         sender_wallet: senderWallet.toLowerCase(),
         token_id: tokenId.toString(),
@@ -600,6 +612,7 @@ Deno.serve(async (request) => {
         const { data: raced } = await admin
           .from('gift_cards')
           .select(SELECT)
+          .eq('deployment_id', deployment.id)
           .eq('sender_id', user.id)
           .eq('client_request_id', clientRequestId)
           .maybeSingle();

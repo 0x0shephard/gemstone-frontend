@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   closeWork: vi.fn(),
   findPendingBroadcast: vi.fn(),
   publicClient: {} as Record<string, unknown>,
+  assertActiveDeploymentRelease: vi.fn(),
 }));
 
 vi.mock('@wagmi/core', () => ({
@@ -62,6 +63,9 @@ vi.mock('./walletConnectRouting', () => ({
   walletConnectSupportsChain: () => true,
   requestWalletConnectTransaction: mocks.requestWalletConnectTransaction,
 }));
+vi.mock('./deploymentReleaseGuard', () => ({
+  assertActiveDeploymentRelease: mocks.assertActiveDeploymentRelease,
+}));
 
 import {
   BroadcastOutcomeUnknownError,
@@ -92,6 +96,25 @@ describe('transaction target-chain routing', () => {
     mocks.closeWork.mockReset();
     mocks.findPendingBroadcast.mockReset();
     mocks.findPendingBroadcast.mockReturnValue(undefined);
+    mocks.assertActiveDeploymentRelease.mockReset();
+    mocks.assertActiveDeploymentRelease.mockResolvedValue(undefined);
+  });
+
+  it('blocks a stale release before opening WalletConnect or broadcasting', async () => {
+    mocks.readContract.mockReset();
+    mocks.assertActiveDeploymentRelease.mockRejectedValueOnce(
+      new Error('Digital Carat was updated while this tab was open.'),
+    );
+
+    await expect(
+      runContractTransaction({
+        address: TARGET,
+        abi: parseAbi(['function buy() payable']),
+        functionName: 'buy',
+        value: 1n,
+      }),
+    ).rejects.toThrow(/updated while this tab was open/i);
+    expect(mocks.requestWalletConnectTransaction).not.toHaveBeenCalled();
   });
 
   it('pins reads, simulations, writes, and receipts when WalletConnect stays on another chain', async () => {

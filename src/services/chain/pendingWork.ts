@@ -1,4 +1,6 @@
 import type { Address, Hash } from 'viem';
+import { deploymentManifestHash } from '@/config/contracts';
+import { env } from '@/config/env';
 import { recordDiagnostic } from '@/lib/diagnostics';
 
 /**
@@ -19,7 +21,21 @@ import { recordDiagnostic } from '@/lib/diagnostics';
  * "recorded" is exactly the window that loses the transaction.
  */
 
-const STORAGE_KEY = 'dc:pending-work';
+/**
+ * Keep recovery records attached to the exact deployed suite that created them.
+ *
+ * A network cutover can keep the same chain ID while replacing every gemstone
+ * contract. Replaying an old suite's unresolved write against the new suite is
+ * unsafe, and a hashless ambiguity could otherwise lock the equivalent action
+ * forever. The old key is intentionally left intact so rolling the frontend
+ * back to that manifest also restores its recovery state.
+ */
+export function pendingWorkStorageKey(manifestHash = deploymentManifestHash): string {
+  return `dc:pending-work:${manifestHash ?? 'unconfigured'}`;
+}
+
+export const LEGACY_DEPLOYMENT_RELEASE = 'sepolia-11155111-40fe3f22';
+const LEGACY_UNSCOPED_STORAGE_KEY = 'dc:pending-work';
 
 /** Hash-backed or never-sent work older than this stops being offered. */
 const MAX_AGE_MS = 24 * 60 * 60 * 1_000;
@@ -51,12 +67,30 @@ export interface PendingWork {
   createdAt: number;
 }
 
-function read(): PendingWork[] {
+function parse(raw: string | null): PendingWork[] {
+  if (!raw) return [];
+  const parsed = JSON.parse(raw) as PendingWork[];
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function read(release = env.deploymentRelease): PendingWork[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as PendingWork[];
-    return Array.isArray(parsed) ? parsed : [];
+    const scopedKey = pendingWorkStorageKey();
+    const scoped = localStorage.getItem(scopedKey);
+    if (scoped !== null) return parse(scoped);
+
+    /*
+     * Production before deployment-scoped storage wrote to `dc:pending-work`.
+     * Only the canonical legacy rollback release may recover that state. A
+     * fresh suite must never inherit an unresolved old-proxy send. Copy rather
+     * than remove so restoring an older browser build remains recoverable.
+     */
+    if (release !== LEGACY_DEPLOYMENT_RELEASE) return [];
+    const legacy = localStorage.getItem(LEGACY_UNSCOPED_STORAGE_KEY);
+    if (legacy === null) return [];
+    const recovered = parse(legacy);
+    localStorage.setItem(scopedKey, JSON.stringify(recovered));
+    return recovered;
   } catch {
     // A corrupt entry must not take down every screen that reads it.
     return [];
@@ -65,7 +99,7 @@ function read(): PendingWork[] {
 
 function write(items: PendingWork[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    localStorage.setItem(pendingWorkStorageKey(), JSON.stringify(items));
   } catch {
     // Private mode, or a full quota. Losing durability is bad; throwing here
     // would abort a transaction that is otherwise fine, which is worse.
@@ -73,9 +107,9 @@ function write(items: PendingWork[]): void {
 }
 
 /** Everything still in flight, newest first, with stale entries dropped. */
-export function listPendingWork(): PendingWork[] {
+export function listPendingWork(release = env.deploymentRelease): PendingWork[] {
   const cutoff = Date.now() - MAX_AGE_MS;
-  const live = read().filter(
+  const live = read(release).filter(
     (work) =>
       work.createdAt > cutoff ||
       // No age proves that a hashless ambiguous send did not land. Keep this

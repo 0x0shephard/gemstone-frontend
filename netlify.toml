@@ -23,6 +23,13 @@
 [context.production]
   command = "npm run check"
 
+# Production is selected by one immutable release file. A rollback must first
+# reactivate the matching legacy database deployment and Edge contract secrets,
+# then change this value to `sepolia-11155111-40fe3f22` and publish the legacy
+# frontend bundle.
+[context.production.environment]
+  VITE_DEPLOYMENT_RELEASE = "sepolia-fresh-11828947"
+
 # Content-hashed filenames: the name changes whenever the bytes do, so these can
 # be cached indefinitely. Without this every asset costs a revalidation
 # round-trip on each load, which is felt most on a phone over cellular.
@@ -39,10 +46,14 @@
     Cache-Control = "public, max-age=0, must-revalidate"
 
 [[headers]]
+  for = "/deployment-manifest.json"
+  [headers.values]
+    Cache-Control = "no-store, max-age=0"
+
+[[headers]]
   for = "/*"
   [headers.values]
     Referrer-Policy = "strict-origin-when-cross-origin"
     X-Content-Type-Options = "nosniff"
     X-Frame-Options = "DENY"
     Permissions-Policy = "camera=(self), microphone=(self), geolocation=()"
-

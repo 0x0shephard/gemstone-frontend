@@ -4,6 +4,7 @@ import { json, preflight } from '../_shared/cors.ts';
 import { currentDemand, ingestBidEvents, DEFAULT_WINDOW_DAYS } from '../_shared/demand.ts';
 import { totalFor } from '../_shared/demandMath.ts';
 import { TIMED_OUT, phaseLog, withDeadline } from '../_shared/deadline.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /** Below the platform's own worker timeout, so this answers rather than dies. */
 const HARD_TIMEOUT_MS = 60_000;
@@ -32,6 +33,7 @@ Deno.serve(async (request) => {
   const phases = phaseLog();
   try {
     const admin = adminClient();
+    await requireProtocolDeployment(admin);
 
     /*
      * A full chain scan against an RPC that stops answering will otherwise sit

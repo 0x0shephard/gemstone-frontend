@@ -4,7 +4,10 @@ import path from 'node:path';
 
 export default defineConfig({
   plugins: [react()],
-  define: { __BUILD_COMMIT__: JSON.stringify('test') },
+  define: {
+    __BUILD_COMMIT__: JSON.stringify('test'),
+    __DEPLOYMENT_CONFIG__: JSON.stringify(null),
+  },
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
   test: {
     environment: 'jsdom',

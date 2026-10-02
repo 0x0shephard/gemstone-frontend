@@ -20,6 +20,7 @@ import {
 import { scanLogs } from '../_shared/logScan.ts';
 import { notifyWallet, reconcileNotificationProfileLinks } from '../_shared/notify.ts';
 import { TIMED_OUT, phaseLog, withDeadline, type PhaseLog } from '../_shared/deadline.ts';
+import { protocolDeploymentId, requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Tells people about protocol state that is waiting on them.
@@ -111,6 +112,7 @@ async function cursorFor(admin: Admin, contract: string, head: bigint): Promise<
   const { data } = await admin
     .from('notification_scan_state')
     .select('scanned_through_block')
+    .eq('deployment_id', protocolDeploymentId())
     .eq('contract', contract)
     .maybeSingle();
   if (!data) {
@@ -124,11 +126,12 @@ async function cursorFor(admin: Admin, contract: string, head: bigint): Promise<
 async function commitCursor(admin: Admin, contract: string, through: bigint): Promise<void> {
   const { error } = await admin.from('notification_scan_state').upsert(
     {
+      deployment_id: protocolDeploymentId(),
       contract,
       scanned_through_block: Number(through),
       updated_at: new Date().toISOString(),
     },
-    { onConflict: 'contract' },
+    { onConflict: 'deployment_id,contract' },
   );
   if (error) throw error;
 }
@@ -145,12 +148,16 @@ async function watch(
   // change, and a replayed log must not reopen a watch already resolved.
   await admin.from('notification_watch').upsert(
     {
+      deployment_id: protocolDeploymentId(),
       kind,
       entity_id: entityId,
       beneficiary_wallet: beneficiary.toLowerCase(),
       expires_at: expiresAt.toISOString(),
     },
-    { onConflict: 'kind,entity_id,beneficiary_wallet', ignoreDuplicates: true },
+    {
+      onConflict: 'deployment_id,kind,entity_id,beneficiary_wallet',
+      ignoreDuplicates: true,
+    },
   );
 }
 
@@ -159,6 +166,7 @@ async function resolveWatch(admin: Admin, kind: string, entityId: string): Promi
   await admin
     .from('notification_watch')
     .update({ resolved_at: new Date().toISOString() })
+    .eq('deployment_id', protocolDeploymentId())
     .eq('kind', kind)
     .eq('entity_id', entityId)
     .is('resolved_at', null);
@@ -175,6 +183,7 @@ async function resolveAuctionWatches(admin: Admin, gemId: bigint): Promise<void>
   await admin
     .from('notification_watch')
     .update({ resolved_at: new Date().toISOString() })
+    .eq('deployment_id', protocolDeploymentId())
     .eq('kind', 'auction')
     .like('entity_id', `${gemId}:%`)
     .is('resolved_at', null);
@@ -185,6 +194,7 @@ async function priorBidders(admin: Admin, round: string, except: string): Promis
   const { data } = await admin
     .from('notification_watch')
     .select('beneficiary_wallet')
+    .eq('deployment_id', protocolDeploymentId())
     .eq('kind', 'auction')
     .eq('entity_id', round)
     .is('resolved_at', null);
@@ -265,6 +275,7 @@ async function reconcileRedemptionRows(
   const { data: rows, error } = await admin
     .from('redemption_requests')
     .select('id,gem_id::text,status')
+    .eq('deployment_id', protocolDeploymentId())
     .in('status', ['committed', 'onchain_requested'])
     .order('created_at', { ascending: true })
     .limit(REDEMPTION_RECONCILE_BATCH);
@@ -304,6 +315,7 @@ async function reconcileRedemptionRows(
       const { error: updateError } = await admin
         .from('redemption_requests')
         .update({ status: nextStatus })
+        .eq('deployment_id', protocolDeploymentId())
         .eq('id', row.id)
         // Do not overwrite a newer transition written while the chain read was
         // in flight.
@@ -352,6 +364,7 @@ Deno.serve(async (request) => {
 async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
   {
     const admin = adminClient();
+    await requireProtocolDeployment(admin);
     const chain = operatorChain();
 
     const counters: Counters = { created: 0, emailed: 0, pushed: 0 };
@@ -680,6 +693,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
                 status: 'onchain_requested',
                 transaction_hash: event.transactionHash,
               })
+              .eq('deployment_id', protocolDeploymentId())
               .eq('token_id', String(tokenId))
               .eq('request_hash', requestHash.toLowerCase())
               .in('status', ['committed', 'onchain_requested']);
@@ -740,6 +754,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
                 status: confirmed ? 'fulfilled' : 'cancelled',
                 transaction_hash: event.transactionHash,
               })
+              .eq('deployment_id', protocolDeploymentId())
               .eq('token_id', String(tokenId))
               .in('status', ['committed', 'onchain_requested']);
             if (requestUpdateError) throw requestUpdateError;
@@ -757,6 +772,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
             const { data: opened } = await admin
               .from('notifications')
               .select('wallet_address')
+              .eq('deployment_id', protocolDeploymentId())
               .eq('kind', 'redemption.requested')
               .eq('entity_type', 'redemption')
               .eq('entity_id', String(tokenId))
@@ -836,6 +852,7 @@ async function sweepDeadlines(
   const { data: due } = await admin
     .from('notification_watch')
     .select('id,kind,entity_id,beneficiary_wallet,expires_at')
+    .eq('deployment_id', protocolDeploymentId())
     .is('resolved_at', null)
     .lt('expires_at', new Date().toISOString())
     .order('expires_at', { ascending: true })
@@ -934,6 +951,7 @@ async function sweepDeadlines(
     await admin
       .from('notification_watch')
       .update({ resolved_at: new Date().toISOString() })
+      .eq('deployment_id', protocolDeploymentId())
       .eq('id', row.id);
   }
 

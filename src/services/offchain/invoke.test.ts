@@ -5,7 +5,8 @@ vi.mock('@/providers/supabase', () => ({
   supabase: { functions: { invoke: (...args: unknown[]) => invokeMock(...args) } },
 }));
 
-const { invokeEdgeFunction } = await import('./invoke');
+const { invokeEdgeFunction, protocolDeploymentHeaders } = await import('./invoke');
+const { env } = await import('@/config/env');
 
 /**
  * `functions.invoke` reports every non-2xx as this fixed message, nulls `data`,
@@ -32,10 +33,22 @@ describe('invokeEdgeFunction', () => {
   it('sets a deadline covering the complete edge invocation', async () => {
     invokeMock.mockResolvedValue({ data: { ok: true }, error: null });
     await invokeEdgeFunction('v1-gift-create', {}, 4321);
+    const headers = protocolDeploymentHeaders(env.deploymentRelease);
     expect(invokeMock).toHaveBeenCalledWith('v1-gift-create', {
       body: {},
       timeout: 4321,
+      ...(headers ? { headers } : {}),
     });
+    if (env.deploymentRelease) {
+      expect(headers).toEqual({ 'x-protocol-deployment': env.deploymentRelease });
+    }
+  });
+
+  it('sends the immutable release expected by a deployment-scoped backend', () => {
+    expect(protocolDeploymentHeaders('sepolia-fresh-11828947')).toEqual({
+      'x-protocol-deployment': 'sepolia-fresh-11828947',
+    });
+    expect(protocolDeploymentHeaders('')).toBeUndefined();
   });
 
   it('surfaces the message the function actually returned', async () => {

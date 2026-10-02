@@ -2,6 +2,7 @@ import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { canonicalSiteOrigin } from './origins.ts';
 import { EmailNotConfiguredError, emailConfigured, escapeHtml, sendEmail } from './email.ts';
 import { PushGoneError, pushConfigured, sendPush } from './webpush.ts';
+import { protocolDeploymentId } from './deployment.ts';
 
 /**
  * Delivering a notification to whoever holds a wallet.
@@ -88,6 +89,7 @@ export async function notifyWallet(
   const { data: row, error } = await admin
     .from('notifications')
     .insert({
+      deployment_id: protocolDeploymentId(),
       wallet_address: wallet,
       profile_id: profileId,
       kind: input.kind,
@@ -152,6 +154,7 @@ export async function notifyWallet(
   await admin
     .from('notifications')
     .update({ emailed_at: new Date().toISOString() })
+    .eq('deployment_id', protocolDeploymentId())
     .eq('id', row.id);
 
   return { created: true, emailed: true, pushed };
@@ -178,6 +181,7 @@ async function retryUndeliveredEmail(
   const { data: existing } = await admin
     .from('notifications')
     .select('id,emailed_at,expires_at')
+    .eq('deployment_id', protocolDeploymentId())
     .eq('wallet_address', wallet)
     .eq('kind', input.kind)
     .eq('entity_type', input.entityType)
@@ -213,6 +217,7 @@ async function retryUndeliveredEmail(
   await admin
     .from('notifications')
     .update({ emailed_at: new Date().toISOString() })
+    .eq('deployment_id', protocolDeploymentId())
     .eq('id', existing.id);
 
   return { created: false, emailed: true, pushed: 0 };
@@ -284,6 +289,7 @@ async function pushToDevices(
     await admin
       .from('notifications')
       .update({ pushed_at: new Date().toISOString() })
+      .eq('deployment_id', protocolDeploymentId())
       .eq('id', notificationId);
   }
   return delivered;
@@ -347,6 +353,7 @@ export async function backfillProfileLinks(
   const { data } = await admin
     .from('notifications')
     .update({ profile_id: profileId })
+    .eq('deployment_id', protocolDeploymentId())
     .eq('wallet_address', normalized)
     .is('profile_id', null)
     .select('id');
@@ -379,6 +386,7 @@ export async function reconcileNotificationProfileLinks(
   const { data: pending, error: pendingError } = await admin
     .from('notifications')
     .select('wallet_address')
+    .eq('deployment_id', protocolDeploymentId())
     .is('profile_id', null)
     .order('created_at', { ascending: true })
     .limit(limit);
@@ -408,6 +416,7 @@ export async function reconcileNotificationProfileLinks(
       const { data, error } = await admin
         .from('notifications')
         .update({ profile_id: profileId })
+        .eq('deployment_id', protocolDeploymentId())
         .eq('wallet_address', wallet)
         .is('profile_id', null)
         .select('id');

@@ -9,6 +9,7 @@ import {
   QUEUE_COLUMNS,
   requireVerifier,
 } from '../_shared/verifier.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 /**
  * Submissions awaiting grading, plus the evidence for one of them.
@@ -52,6 +53,7 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const membership = await requireVerifier(admin, user.id);
     const { submissionId } = (await request.json().catch(() => ({}))) as {
       submissionId?: string;
@@ -62,6 +64,7 @@ Deno.serve(async (request) => {
         .from('seller_submissions')
         .select(QUEUE_COLUMNS)
         .eq('id', submissionId)
+        .eq('deployment_id', deployment.id)
         .maybeSingle();
       if (error) throw error;
       if (!submission) return json({ error: 'Submission not found' }, 404);
@@ -113,6 +116,7 @@ Deno.serve(async (request) => {
     const { data, error } = await admin
       .from('seller_submissions')
       .select(QUEUE_COLUMNS)
+      .eq('deployment_id', deployment.id)
       .in('status', GRADABLE)
       .is('graded_at', null)
       .order('created_at', { ascending: true })
@@ -130,6 +134,7 @@ Deno.serve(async (request) => {
       const { data: awaiting, error: custodyError } = await admin
         .from('seller_submissions')
         .select(QUEUE_COLUMNS)
+        .eq('deployment_id', deployment.id)
         .eq('status', 'awaiting_custody')
         .order('created_at', { ascending: true })
         .limit(100);

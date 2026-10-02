@@ -2,6 +2,7 @@ import { adminClient, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { activateSellerSubmission } from '../_shared/sellerAutomation.ts';
 import { json, preflight } from '../_shared/cors.ts';
+import { requireProtocolDeployment } from '../_shared/deployment.ts';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -16,10 +17,12 @@ Deno.serve(async (request) => {
       return json({ error: 'Submission ID must be a UUID' }, 400);
     }
     const admin = adminClient();
+    const deployment = await requireProtocolDeployment(admin, request);
     const { data: submission, error: submissionError } = await admin
       .from('seller_submissions')
       .select('id,seller_wallet')
       .eq('id', submissionId)
+      .eq('deployment_id', deployment.id)
       .eq('seller_id', user.id)
       .maybeSingle();
     if (submissionError) throw submissionError;
