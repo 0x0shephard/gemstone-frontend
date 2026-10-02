@@ -5,6 +5,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
+import { displayVaultCount } from './vaultStats';
 
 const PILLARS: { title: string; body: string; color: string }[] = [
   {
@@ -51,7 +52,7 @@ export default function AboutPage() {
         className="dc-facet-border dc-dot-grid overflow-hidden rounded-[4px] border border-line/[0.09] bg-card px-6 py-8 sm:px-9 sm:py-10"
       >
         <StatusBadge tone="danger" dot className="mb-5">
-          Protocol live · {data?.gemsInVault ?? 148} gemstones in vault
+          Protocol live · {displayVaultCount(data?.gemsInVault)} gemstones in vault
         </StatusBadge>
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-dim">
           The Digital Carat protocol
@@ -70,7 +71,7 @@ export default function AboutPage() {
 
       {/* Stats */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile label="Gemstones in vault" value={data?.gemsInVault ?? 148} />
+        <StatTile label="Gemstones in vault" value={displayVaultCount(data?.gemsInVault)} />
         <StatTile label="Reserve backing" value="On-chain" valueColor="var(--dc-sapphire)" />
         <StatTile label="Custody" value={<span className="text-[18px]">Insured vaults</span>} />
         <StatTile label="Settlement" value="Automated" valueColor="var(--dc-emerald)" />

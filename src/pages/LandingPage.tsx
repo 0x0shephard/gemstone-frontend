@@ -9,6 +9,7 @@ import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { ownershipPathSteps } from '@/content/ownershipPath';
 import { useFeeTiers, useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
+import { displayVaultCount } from './vaultStats';
 
 import { SceneBoundary } from '@/components/three/SceneBoundary';
 
@@ -73,7 +74,7 @@ export default function LandingPage() {
           <div className="mb-7 inline-flex items-center gap-2 border-l-2 border-ink-muted pl-3 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-muted">
             Vault open
             <span className="h-1 w-1 rounded-full bg-emerald" />
-            {data?.gemsInVault ?? 148} stones under custody
+            {displayVaultCount(data?.gemsInVault)} stones under custody
           </div>
           <h1 className="max-w-[14ch] font-display text-[43px] font-medium leading-[0.98] tracking-[-0.055em] text-ink sm:text-[54px] md:text-[66px]">
             Trade gemstones. Own them securely.
