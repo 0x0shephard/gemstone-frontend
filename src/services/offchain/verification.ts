@@ -194,6 +194,24 @@ export async function confirmCustody(
   });
 }
 
+/**
+ * Records the real custody-agreement end date for a tokenised gem that has no
+ * seller intake row (for example, inventory imported before the workflow
+ * existed). The server permits only custody-authorised members, verifies the
+ * gem/token on the active deployment, and never permits the date to be edited.
+ */
+export async function recordCustodyTerm(input: {
+  gemId: string;
+  reserveEscrowEndsAt: string;
+  attestationNote: string;
+}): Promise<{ gemId: string; tokenId: string; reserveEscrowEndsAt: string }> {
+  return invoke('v1-custody-confirm', {
+    action: 'record_term',
+    ...input,
+    attestAccurate: true,
+  });
+}
+
 /** Refuses a stone. Writes nothing on-chain and pins nothing. */
 export async function rejectSubmission(
   submissionId: string,

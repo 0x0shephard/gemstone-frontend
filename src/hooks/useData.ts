@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { dataService } from '@/services';
+import { listRedemptionWorkflows } from '@/services/offchain/redemptions';
 
 /** Query keys — centralized so mutations can invalidate precisely. */
 export const qk = {
@@ -11,6 +12,8 @@ export const qk = {
   offers: ['offers'] as const,
   swaps: ['swaps'] as const,
   redemptions: ['redemptions'] as const,
+  redemptionWorkflows: (profileId?: string) =>
+    ['redemptionWorkflows', profileId ?? 'signed-out'] as const,
   profile: (address?: string) => ['profile', address ?? 'me'] as const,
   landing: ['landing'] as const,
   feeTiers: ['feeTiers'] as const,
@@ -46,6 +49,12 @@ export const useSwaps = () =>
   useQuery({ queryKey: qk.swaps, queryFn: () => dataService.getSwapRequests() });
 export const useRedemptions = () =>
   useQuery({ queryKey: qk.redemptions, queryFn: () => dataService.getRedemptions() });
+export const useRedemptionWorkflows = (profileId?: string) =>
+  useQuery({
+    queryKey: qk.redemptionWorkflows(profileId),
+    queryFn: listRedemptionWorkflows,
+    enabled: Boolean(profileId),
+  });
 export const useProfile = (address?: string) =>
   useQuery({ queryKey: qk.profile(address), queryFn: () => dataService.getProfile(address) });
 export const useLanding = () =>

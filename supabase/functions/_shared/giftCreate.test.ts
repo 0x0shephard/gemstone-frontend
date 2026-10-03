@@ -24,15 +24,22 @@ describe('gift preparation conflicts', () => {
     expect(retirement).toContain("'gift.superseded'");
   });
 
-  it('reads the latest reserve escrow term and does not swallow lookup errors', () => {
+  it('reads the latest intake term, falls back to an append-only custodian attestation, and does not swallow errors', () => {
     const lookup = prepare.slice(
-      prepare.indexOf(".from('seller_submissions')"),
-      prepare.indexOf('if (!custody?.reserve_escrow_ends_at)'),
+      prepare.indexOf('const [submissionTerm, attestedTerm]'),
+      prepare.indexOf('if (!reserveEscrowEndsAt)'),
     );
 
+    expect(lookup).toContain(".from('seller_submissions')");
     expect(lookup).toContain(".order('reserve_escrow_ends_at', { ascending: false })");
     expect(lookup).toContain('.limit(1)');
-    expect(lookup).toContain('if (custodyError) throw custodyError');
+    expect(lookup).toContain(".from('gem_custody_terms')");
+    expect(lookup).toContain(".eq('deployment_id', deployment.id)");
+    expect(lookup).toContain('submissionTerm.data?.reserve_escrow_ends_at ??');
+    expect(lookup).toContain('attestedTerm.data?.reserve_escrow_ends_at');
+    expect(lookup).toContain('if (submissionTerm.error) throw submissionTerm.error');
+    expect(lookup).toContain('if (attestedTerm.error) throw attestedTerm.error');
+    expect(prepare).toContain('Digital Carat will not guess this date');
   });
 });
 

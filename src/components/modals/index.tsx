@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { DecoratedGem, PaymentAsset } from '@/services/types';
 import { Modal } from '@/components/ui/Modal';
 import { Field, inputClass } from '@/components/ui/Field';
@@ -23,6 +23,13 @@ import { zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
 import { env } from '@/config/env';
 import { createRedemptionCommitment } from '@/services/offchain/workflows';
+import {
+  getRedemptionWorkflow,
+  redemptionFulfillmentDetails,
+  redemptionFulfillmentIsValid,
+  type RedemptionWorkflow,
+} from '@/services/offchain/redemptions';
+import { RedemptionReceipt } from '@/components/redemption/RedemptionReceipt';
 
 interface BaseModalProps {
   gem: DecoratedGem;
@@ -594,6 +601,11 @@ export function SwapModal({
 export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
   const { address } = useAccount();
   const [method, setMethod] = useState<'pickup' | 'insured_delivery'>('pickup');
+  const commitmentRef = useRef<{ workflowId: string; requestHash: `0x${string}` } | null>(null);
+  const [receipt, setReceipt] = useState<{
+    workflow: RedemptionWorkflow;
+    transactionHash: `0x${string}`;
+  } | null>(null);
   const [details, setDetails] = useState({
     pickupLocation: '',
     recipientName: '',
@@ -605,30 +617,22 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
     country: '',
   });
   const canRedeem = redemptionReserveEligible(gem) && gem.redeem === 'Eligible';
-  const fulfillmentValid =
-    method === 'pickup'
-      ? details.pickupLocation.length > 0
-      : Boolean(
-          details.recipientName &&
-          details.addressLine1 &&
-          details.city &&
-          details.postalCode &&
-          details.country,
-        );
+  const fulfillmentValid = redemptionFulfillmentIsValid(method, details);
   const request = async () => {
     if (!gem.tokenId || !address) throw new Error('A connected verified wallet is required');
-    const requestHash =
+    setReceipt(null);
+    const commitment =
       env.dataMode === 'chain'
-        ? (
-            await createRedemptionCommitment({
-              wallet: address,
-              gemId: gem.gemId,
-              tokenId: gem.tokenId,
-              fulfillmentMethod: method,
-              fulfillmentDetails: details,
-            })
-          ).requestHash
-        : zeroHash;
+        ? await createRedemptionCommitment({
+            wallet: address,
+            gemId: gem.gemId,
+            tokenId: gem.tokenId,
+            fulfillmentMethod: method,
+            fulfillmentDetails: redemptionFulfillmentDetails(method, details),
+          })
+        : { workflowId: `mock-redemption-${gem.tokenId}`, requestHash: zeroHash };
+    commitmentRef.current = commitment;
+    const requestHash = commitment.requestHash;
     return dataService.requestRedemption({ tokenId: gem.tokenId, requestHash });
   };
   return (
@@ -645,10 +649,14 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
         <CheckRow ok={gem.redeem === 'Eligible'} label="Address is not blocked from redemption" />
       </ul>
       <div>
-        <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
+        <label
+          htmlFor="redemption-fulfillment-method"
+          className="mb-1.5 block text-[12px] font-medium text-ink-muted"
+        >
           Fulfillment method
-        </span>
+        </label>
         <select
+          id="redemption-fulfillment-method"
           className={inputClass}
           value={method}
           onChange={(event) => setMethod(event.target.value as typeof method)}
@@ -734,7 +742,35 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
         disabled={!canRedeem || !gem.tokenId || !address || !fulfillmentValid}
         action={request}
         pendingLabel="Requesting redemption…"
-        onDone={onClose}
+        telemetryFlow="redemption_request"
+        onConfirmed={async (result) => {
+          const commitment = commitmentRef.current;
+          if (!commitment) throw new Error('The redemption commitment could not be recovered.');
+          const workflow =
+            env.dataMode === 'chain'
+              ? await getRedemptionWorkflow(commitment.workflowId)
+              : {
+                  workflowId: commitment.workflowId,
+                  tokenId: String(gem.tokenId),
+                  method,
+                  status: 'onchain_requested' as const,
+                  requestHash: commitment.requestHash,
+                  transactionHash: result.hash,
+                  createdAt: new Date().toISOString(),
+                };
+          if (
+            !workflow ||
+            workflow.status === 'draft' ||
+            workflow.requestHash?.toLowerCase() !== commitment.requestHash.toLowerCase()
+          ) {
+            throw new Error(
+              'The chain transaction confirmed, but the fulfillment record is not confirmed yet. Your request can be recovered from this transaction hash.',
+            );
+          }
+          setReceipt({ workflow, transactionHash: result.hash });
+        }}
+        onDone={receipt ? onClose : undefined}
+        doneLabel="Close"
       >
         {canRedeem
           ? 'Request redemption'
@@ -742,6 +778,14 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
             ? 'This address cannot redeem'
             : 'Reserve top-up required'}
       </TxButton>
+      {receipt && (
+        <RedemptionReceipt
+          workflow={receipt.workflow}
+          chainConfirmed
+          transactionHash={receipt.transactionHash}
+          live
+        />
+      )}
     </Modal>
   );
 }

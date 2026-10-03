@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Labeled, inputClass } from '@/components/ui/Field';
+import { Field, Labeled, inputClass } from '@/components/ui/Field';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Skeleton } from '@/components/ui/States';
 import { useAuth } from '@/providers/AuthProvider';
@@ -11,6 +11,7 @@ import {
   loadQueue,
   loadSubmission,
   previewPrice,
+  recordCustodyTerm,
   rejectSubmission,
   setVerificationMode,
   submitGrading,
@@ -71,6 +72,11 @@ export default function VerifyPage() {
   const [intakeMatches, setIntakeMatches] = useState(true);
   const [intakeEscrowEnds, setIntakeEscrowEnds] = useState('');
   const [intakeBusy, setIntakeBusy] = useState(false);
+  const [termGemId, setTermGemId] = useState('');
+  const [termEscrowEnds, setTermEscrowEnds] = useState('');
+  const [termNote, setTermNote] = useState('');
+  const [termAttested, setTermAttested] = useState(false);
+  const [termBusy, setTermBusy] = useState(false);
   const [selected, setSelected] = useState<QueueItem>();
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
@@ -292,6 +298,33 @@ export default function VerifyPage() {
     setResult(undefined);
   }
 
+  async function recordMissingTerm() {
+    setTermBusy(true);
+    setResult(undefined);
+    try {
+      const recorded = await recordCustodyTerm({
+        gemId: termGemId.trim(),
+        reserveEscrowEndsAt: new Date(`${termEscrowEnds}T23:59:59`).toISOString(),
+        attestationNote: termNote.trim(),
+      });
+      setResult({
+        tone: 'ok',
+        message: `Reserve escrow term recorded for Gem #${recorded.gemId}. New gift cards may be claimed through ${new Date(recorded.reserveEscrowEndsAt).toLocaleDateString()}.`,
+      });
+      setTermGemId('');
+      setTermEscrowEnds('');
+      setTermNote('');
+      setTermAttested(false);
+    } catch (error) {
+      setResult({
+        tone: 'error',
+        message: error instanceof Error ? error.message : 'The custody term could not be recorded',
+      });
+    } finally {
+      setTermBusy(false);
+    }
+  }
+
   async function changeMode(next: VerificationMode) {
     if (next === mode || modePending) return;
     setResult(undefined);
@@ -394,6 +427,21 @@ export default function VerifyPage() {
           onMatches={setIntakeMatches}
           onEscrowEnds={setIntakeEscrowEnds}
           onConfirm={recordIntake}
+        />
+      )}
+
+      {canCustody && (
+        <MissingCustodyTerm
+          gemId={termGemId}
+          escrowEnds={termEscrowEnds}
+          note={termNote}
+          attested={termAttested}
+          busy={termBusy}
+          onGemId={setTermGemId}
+          onEscrowEnds={setTermEscrowEnds}
+          onNote={setTermNote}
+          onAttested={setTermAttested}
+          onRecord={recordMissingTerm}
         />
       )}
 
@@ -659,6 +707,90 @@ export default function VerifyPage() {
         )}
       </div>
     </div>
+  );
+}
+
+function MissingCustodyTerm({
+  gemId,
+  escrowEnds,
+  note,
+  attested,
+  busy,
+  onGemId,
+  onEscrowEnds,
+  onNote,
+  onAttested,
+  onRecord,
+}: {
+  gemId: string;
+  escrowEnds: string;
+  note: string;
+  attested: boolean;
+  busy: boolean;
+  onGemId: (value: string) => void;
+  onEscrowEnds: (value: string) => void;
+  onNote: (value: string) => void;
+  onAttested: (value: boolean) => void;
+  onRecord: () => void | Promise<void>;
+}) {
+  const [earliestEscrowEnd] = useState(() =>
+    new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+  );
+  const ready = /^\d+$/.test(gemId.trim()) && escrowEnds && note.trim().length >= 10 && attested;
+
+  return (
+    <Card className="space-y-3">
+      <div>
+        <h2 className="text-[13px] font-semibold text-ink">Missing custody terms</h2>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+          Use this only for an already-tokenised gemstone whose original intake record is missing.
+          Record the actual custody agreement date shown in your source document. It cannot be
+          changed later, and Digital Carat will never calculate or guess it.
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field
+          label="On-chain gemstone ID"
+          placeholder="For example, 3"
+          inputMode="numeric"
+          value={gemId}
+          onChange={(event) => onGemId(event.target.value.replace(/\D/g, ''))}
+        />
+        <Labeled label="Reserve escrow ends">
+          <input
+            type="date"
+            className={inputClass}
+            min={earliestEscrowEnd}
+            value={escrowEnds}
+            onChange={(event) => onEscrowEnds(event.target.value)}
+          />
+        </Labeled>
+      </div>
+      <Labeled
+        label="Agreement reference"
+        hint="Required audit note. Do not include a home address or other delivery details."
+      >
+        <textarea
+          className={`${inputClass} min-h-[68px]`}
+          maxLength={2_000}
+          value={note}
+          onChange={(event) => onNote(event.target.value)}
+          placeholder="Document or agreement reference used to verify the term"
+        />
+      </Labeled>
+      <label className="flex items-start gap-2.5 text-[12.5px] text-ink-soft">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={attested}
+          onChange={(event) => onAttested(event.target.checked)}
+        />
+        <span>I confirm this is the actual custody agreement end date, not an estimate.</span>
+      </label>
+      <Button type="button" size="sm" disabled={busy || !ready} onClick={() => void onRecord()}>
+        {busy ? 'Recording…' : 'Record one-time term'}
+      </Button>
+    </Card>
   );
 }
 

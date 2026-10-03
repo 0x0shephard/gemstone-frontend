@@ -1,4 +1,4 @@
-import { useProfile, useRedemptions } from '@/hooks/useData';
+import { useProfile, useRedemptions, useRedemptionWorkflows } from '@/hooks/useData';
 import { redemptionReserveEligible } from '@/lib/gem';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -11,6 +11,8 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
 import { cn } from '@/lib/cn';
+import { useAuth } from '@/providers/AuthProvider';
+import { RedemptionReceipts } from '@/components/redemption/RedemptionReceipt';
 
 const STEPS = [
   {
@@ -37,8 +39,15 @@ const STEPS = [
 ];
 
 export default function RedeemPage() {
+  const { user } = useAuth();
   const { data: profile, isLoading } = useProfile();
   const { data: redemptions } = useRedemptions();
+  const {
+    data: redemptionWorkflows = [],
+    isLoading: workflowsLoading,
+    isError: workflowsError,
+    refetch: refetchWorkflows,
+  } = useRedemptionWorkflows(user?.id);
   const modals = useGemModals();
 
   return (
@@ -121,6 +130,22 @@ export default function RedeemPage() {
             </Card>
           ))}
         </div>
+      )}
+
+      {user && workflowsLoading && <Skeleton className="h-32" />}
+      {user && workflowsError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-[4px] border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[12px] text-amber"
+        >
+          <span>Your saved redemption receipts could not be loaded.</span>
+          <Button size="sm" variant="ghost" onClick={() => void refetchWorkflows()}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {user && (
+        <RedemptionReceipts workflows={redemptionWorkflows} redemptions={redemptions ?? []} />
       )}
 
       {/* Redeemable holdings */}

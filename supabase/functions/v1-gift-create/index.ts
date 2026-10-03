@@ -535,26 +535,38 @@ Deno.serve(async (request) => {
      * dated submission row made PostgREST return an error, the error was
      * dropped, and the sender was told no date existed at all.
      */
-    const { data: custody, error: custodyError } = await admin
-      .from('seller_submissions')
-      .select('reserve_escrow_ends_at')
-      .eq('deployment_id', deployment.id)
-      .eq('onchain_gem_id', gemId.toString())
-      .not('reserve_escrow_ends_at', 'is', null)
-      .order('reserve_escrow_ends_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (custodyError) throw custodyError;
-    if (!custody?.reserve_escrow_ends_at) {
+    const [submissionTerm, attestedTerm] = await Promise.all([
+      admin
+        .from('seller_submissions')
+        .select('reserve_escrow_ends_at')
+        .eq('deployment_id', deployment.id)
+        .eq('onchain_gem_id', gemId.toString())
+        .not('reserve_escrow_ends_at', 'is', null)
+        .order('reserve_escrow_ends_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      admin
+        .from('gem_custody_terms')
+        .select('reserve_escrow_ends_at')
+        .eq('deployment_id', deployment.id)
+        .eq('gem_id', gemId.toString())
+        .maybeSingle(),
+    ]);
+    if (submissionTerm.error) throw submissionTerm.error;
+    if (attestedTerm.error) throw attestedTerm.error;
+    const reserveEscrowEndsAt =
+      submissionTerm.data?.reserve_escrow_ends_at ?? attestedTerm.data?.reserve_escrow_ends_at;
+    if (!reserveEscrowEndsAt) {
       return json(
         {
           error:
-            'This gemstone has no recorded reserve escrow end date, so a gift card cannot be dated. Ask the custodian to record it.',
+            `Gemstone #${gemId} has no recorded reserve escrow end date. ` +
+            'An authorized custodian must record the actual agreement date in Verification → Missing custody terms before a gift can be issued. Digital Carat will not guess this date.',
         },
         409,
       );
     }
-    const expiresAt = new Date(custody.reserve_escrow_ends_at as string);
+    const expiresAt = new Date(reserveEscrowEndsAt as string);
     if (expiresAt.getTime() <= Date.now()) {
       return json({ error: 'This gemstone’s reserve escrow has already ended' }, 409);
     }

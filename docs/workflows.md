@@ -410,6 +410,16 @@ actually known. A gem with no recorded term cannot carry a gift card:
 `v1-gift-create` returns 409 rather than inventing an expiry, since a wrong date
 on a printed voucher is the one thing that cannot be corrected afterwards.
 
+Inventory tokenised before the seller intake workflow may have no
+`seller_submissions` row at all. An authorised custodian can repair that omission
+from Verification → **Missing custody terms**, but must enter the actual date
+from the custody agreement and an audit reference. The endpoint proves the gem
+and live token on the active deployment, verifies the platform vault or the
+gem's linked custodian wallet, and writes one private, append-only
+`gem_custody_terms` row. It cannot overwrite either an intake term or a prior
+attestation. Gift issuance consults this row only when no intake term exists;
+neither the UI nor the server supplies a default duration.
+
 A lapsed card is not claimable. The sender cancels it from Portfolio → **Gift
 Cards**, which returns the escrowed stone to the verified sender wallet.
 

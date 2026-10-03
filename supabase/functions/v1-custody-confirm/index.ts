@@ -8,6 +8,9 @@ import {
   requireVerifier,
 } from '../_shared/verifier.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { dgeNftAbi, dgeNftAddress, gemRegistryAbi, operatorChain } from '../_shared/chain.ts';
+import { CustodyTermInputError, parseCustodyTermInput } from '../_shared/custodyTerm.ts';
+import { getAddress, isAddress, zeroAddress } from 'npm:viem@2';
 
 /**
  * Records that a stone physically arrived, releasing it to the grading queue.
@@ -35,6 +38,118 @@ Deno.serve(async (request) => {
     if (!canConfirmCustody(membership)) throw new NotACustodianError();
 
     const body = (await request.json()) as Record<string, unknown>;
+    if (body.action === 'record_term') {
+      const term = parseCustodyTermInput(body);
+      const chain = operatorChain();
+      const gem = (await chain.publicClient.readContract({
+        address: chain.addresses.registry,
+        abi: gemRegistryAbi,
+        functionName: 'getGem',
+        args: [BigInt(term.gemId)],
+      })) as { seller: string; custodian: string; tokenId: bigint };
+      if (gem.seller.toLowerCase() === zeroAddress || gem.tokenId <= 0n) {
+        return json({ error: 'That gemstone is not a tokenised gem in this deployment' }, 404);
+      }
+      try {
+        await chain.publicClient.readContract({
+          address: dgeNftAddress(),
+          abi: dgeNftAbi,
+          functionName: 'ownerOf',
+          args: [gem.tokenId],
+        });
+      } catch {
+        return json({ error: 'That gemstone no longer has a live token' }, 409);
+      }
+
+      // An admin organisation represents the platform operator's vault. A
+      // third-party custodian must instead prove the primary wallet recorded
+      // on the gem. Merely belonging to some custody organisation must never
+      // grant authority to set terms for every stone in the protocol.
+      let custodyMatches =
+        membership.kind === 'admin' &&
+        getAddress(gem.custodian) === getAddress(chain.account.address);
+      if (!custodyMatches) {
+        const { data: walletLink, error: walletError } = await admin
+          .from('wallet_links')
+          .select('wallet_address')
+          .eq('profile_id', user.id)
+          .eq('is_primary', true)
+          .not('verified_at', 'is', null)
+          .maybeSingle();
+        if (walletError) throw walletError;
+        const walletAddress = walletLink?.wallet_address;
+        custodyMatches =
+          typeof walletAddress === 'string' &&
+          isAddress(walletAddress) &&
+          getAddress(walletAddress) === getAddress(gem.custodian);
+      }
+      if (!custodyMatches) {
+        return json(
+          { error: 'Only this gemstone’s verified custodian may record its escrow term' },
+          403,
+        );
+      }
+
+      const [submissionLookup, attestationLookup] = await Promise.all([
+        admin
+          .from('seller_submissions')
+          .select('reserve_escrow_ends_at')
+          .eq('deployment_id', deployment.id)
+          .eq('onchain_gem_id', term.gemId)
+          .not('reserve_escrow_ends_at', 'is', null)
+          .limit(1)
+          .maybeSingle(),
+        admin
+          .from('gem_custody_terms')
+          .select('reserve_escrow_ends_at')
+          .eq('deployment_id', deployment.id)
+          .eq('gem_id', term.gemId)
+          .maybeSingle(),
+      ]);
+      if (submissionLookup.error) throw submissionLookup.error;
+      if (attestationLookup.error) throw attestationLookup.error;
+      if (submissionLookup.data?.reserve_escrow_ends_at || attestationLookup.data) {
+        return json(
+          {
+            error:
+              'A reserve escrow end date is already recorded for this gemstone and cannot be overwritten',
+          },
+          409,
+        );
+      }
+
+      const { error: insertError } = await admin.from('gem_custody_terms').insert({
+        deployment_id: deployment.id,
+        gem_id: term.gemId,
+        reserve_escrow_ends_at: term.reserveEscrowEndsAt,
+        recorded_by: membership.profileId,
+        organization_id: membership.organizationId,
+        attestation_note: term.attestationNote,
+      });
+      if (insertError?.code === '23505') {
+        return json(
+          {
+            error:
+              'A reserve escrow end date is already recorded for this gemstone and cannot be overwritten',
+          },
+          409,
+        );
+      }
+      if (insertError) throw insertError;
+
+      await audit(membership.profileId, 'custody.term_recorded', 'gem', term.gemId, {
+        deploymentId: deployment.id,
+        organization: membership.organizationName,
+        reserveEscrowEndsAt: term.reserveEscrowEndsAt,
+        tokenId: gem.tokenId.toString(),
+      });
+      return json({
+        gemId: term.gemId,
+        tokenId: gem.tokenId.toString(),
+        reserveEscrowEndsAt: term.reserveEscrowEndsAt,
+      });
+    }
+
     const submissionId = String(body.submissionId ?? '');
     if (!uuidPattern.test(submissionId)) {
       return json({ error: 'Submission ID must be a UUID' }, 400);
@@ -115,6 +230,7 @@ Deno.serve(async (request) => {
   } catch (error) {
     if (error instanceof NotAVerifierError) return json({ error: 'Not found' }, 404);
     if (error instanceof NotACustodianError) return json({ error: error.message }, 403);
+    if (error instanceof CustodyTermInputError) return json({ error: error.message }, 400);
     const message = safeErrorMessage(error, 'Custody confirmation failed');
     const authorizationError = message === 'Missing authorization' || message === 'Invalid session';
     return json({ error: message }, authorizationError ? 401 : 400);

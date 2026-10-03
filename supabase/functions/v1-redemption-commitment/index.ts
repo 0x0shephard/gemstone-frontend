@@ -61,7 +61,7 @@ Deno.serve(async (request) => {
       workflowRecordId: record.id,
       timestamp,
     });
-    await admin
+    const { data: committed, error: commitmentError } = await admin
       .from('redemption_requests')
       .update({
         status: 'committed',
@@ -70,7 +70,14 @@ Deno.serve(async (request) => {
         commitment_nonce: commitment.nonce,
       })
       .eq('deployment_id', deployment.id)
-      .eq('id', record.id);
+      .eq('id', record.id)
+      .eq('status', 'draft')
+      .select('id')
+      .maybeSingle();
+    if (commitmentError) throw commitmentError;
+    if (!committed) {
+      throw new Error('The redemption workflow could not be persisted; no chain request was made');
+    }
     await audit(user.id, 'redemption.commitment_created', 'redemption_request', record.id, {
       hash: commitment.hash,
     });

@@ -145,6 +145,10 @@ export interface SwapRequest {
 export interface Redemption {
   workflowId: string;
   tokenId: bigint;
+  /** Commitment used to join the chain request to its private workflow record. */
+  requestHash?: Hash;
+  /** Transaction that opened the active request. */
+  transactionHash?: Hash;
   gem: DecoratedGem;
   owner: Address;
   /**

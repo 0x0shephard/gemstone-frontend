@@ -1106,7 +1106,10 @@ async function getSwaps(): Promise<SwapRequest[]> {
 
 async function getRedemptions(): Promise<Redemption[]> {
   const snapshot = await projection();
-  const active = new Map<bigint, { gemId: bigint; requestHash: Hash; owner: Address }>();
+  const active = new Map<
+    bigint,
+    { gemId: bigint; requestHash: Hash; transactionHash: Hash; owner: Address }
+  >();
   for (const event of snapshot.events) {
     if (event.module !== 'RedemptionManager') continue;
     const tokenId = event.args.tokenId;
@@ -1120,6 +1123,7 @@ async function getRedemptions(): Promise<Redemption[]> {
       active.set(tokenId, {
         gemId,
         requestHash: event.args.requestHash as Hash,
+        transactionHash: event.transactionHash,
         owner: event.args.owner as Address,
       });
     }
@@ -1137,6 +1141,8 @@ async function getRedemptions(): Promise<Redemption[]> {
       return {
         workflowId: `onchain-${opened.requestHash}`,
         tokenId,
+        requestHash: opened.requestHash,
+        transactionHash: opened.transactionHash,
         gem,
         owner: opened.owner,
         custodian: registryGem.custodian,
