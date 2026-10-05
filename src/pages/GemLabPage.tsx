@@ -91,9 +91,9 @@ function GemLabWorkspace() {
     typeof value === 'number' ? value > 0 : value.trim().length > 0,
   );
   const previewQuery = useQuery({
-    queryKey: ['operations', 'gemlab', 'preview', selected?.submissionId, grades],
-    queryFn: () => previewGemAppraisal(selected!.submissionId, grades),
-    enabled: Boolean(selected && gradeComplete),
+    queryKey: ['operations', 'gemlab', 'preview', selected?.submissionId, grades, primaryImageId],
+    queryFn: () => previewGemAppraisal(selected!.submissionId, grades, primaryImageId!),
+    enabled: Boolean(selected && gradeComplete && primaryImageId),
     staleTime: 0,
   });
 
@@ -463,7 +463,7 @@ function AppraisalForm({
             ? 'Calculating with the active matrix…'
             : preview
               ? `Server preview: ${preview} base units`
-              : 'Complete every grade to request a server preview.'}
+              : 'Choose a primary image and complete every grade to request a server preview.'}
         </p>
         <Button type="submit" disabled={disabled || !preview}>
           Record appraisal

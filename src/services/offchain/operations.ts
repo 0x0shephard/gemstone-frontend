@@ -255,11 +255,17 @@ export async function loadGemLabDetail(submissionId: string): Promise<GemLabDeta
   });
 }
 
-export async function previewGemAppraisal(submissionId: string, graded: GemGradeInput) {
+export async function previewGemAppraisal(
+  submissionId: string,
+  graded: GemGradeInput,
+  primaryImageId: string,
+) {
+  // The server validates the primary image for preview as well as appraise.
   return invokeEdgeFunction<GemAppraisalView>('v1-gemlab-workflow', {
     action: 'preview',
     submissionId,
     graded,
+    primaryImageId,
   });
 }
 
