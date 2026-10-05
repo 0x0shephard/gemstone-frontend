@@ -372,15 +372,22 @@ export async function loadAdminOverview(): Promise<OperationsOverview> {
   return invokeEdgeFunction<OperationsOverview>('v1-admin-operations', { action: 'overview' });
 }
 
+/**
+ * Activation confirms up to six Sepolia transactions in sequence, which routinely
+ * outlasts the default deadline. Match the Edge Function wall-clock limit instead.
+ */
+export const SELLER_ACTIVATION_DEADLINE_MS = 150_000;
+
 export async function startSellerActivation(input: {
   submissionId: string;
   expectedVersion: number;
   idempotencyKey: string;
 }): Promise<{ workflow: SellerWorkflowView }> {
-  return invokeEdgeFunction('v1-admin-operations', {
-    action: 'start_seller_activation',
-    ...input,
-  });
+  return invokeEdgeFunction(
+    'v1-admin-operations',
+    { action: 'start_seller_activation', ...input },
+    SELLER_ACTIVATION_DEADLINE_MS,
+  );
 }
 
 export async function assignRedemption(input: {
