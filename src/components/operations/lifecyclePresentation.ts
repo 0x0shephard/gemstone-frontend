@@ -93,24 +93,47 @@ export function redemptionLifecycleStages(workflow: RedemptionTracker): Lifecycl
 
 export function sellerLifecycleStages(workflow: SellerWorkflowView): LifecycleStage[] {
   const stages = stageList(sellerStages, workflow.state, workflow.events, workflow.legacyBaseline);
-  const bankReceipt = [...workflow.events]
-    .reverse()
-    .find((event) => event.type === 'bank_receipt_recorded' || event.toState === 'bank_received');
-  if (!bankReceipt) return stages;
+  const latest = (match: (event: WorkflowEventView) => boolean) =>
+    [...workflow.events].reverse().find(match);
+  const appraisal = latest((event) => event.toState === 'appraised');
+  const bankReceipt = latest(
+    (event) => event.type === 'bank_receipt_recorded' || event.toState === 'bank_received',
+  );
+  // Appended only after activation has registered, verified and listed the gem on-chain.
+  const activation = latest(
+    (event) => event.type === 'seller_activated' || event.toState === 'activated',
+  );
   const receiptBacked = new Set([
     'safe_wagon_islamabad',
     'turkish_airlines',
     'turkish_house',
     'safe_wagon_turkey',
   ]);
-  return stages.map((stage) =>
-    receiptBacked.has(stage.key)
-      ? {
-          ...stage,
-          state: 'complete' as const,
-          occurredAt: bankReceipt.occurredAt,
-          detail: 'Confirmed retroactively by the authoritative final storage-bank receipt.',
-        }
-      : stage,
-  );
+  const activationBacked = new Set(['activation_started', 'registered', 'listed']);
+  return stages.map((stage) => {
+    if (stage.key === 'submitted' && appraisal && stage.state === 'pending') {
+      return {
+        ...stage,
+        state: 'complete' as const,
+        detail: 'Implied by the gem lab appraisal of this submission.',
+      };
+    }
+    if (bankReceipt && receiptBacked.has(stage.key)) {
+      return {
+        ...stage,
+        state: 'complete' as const,
+        occurredAt: bankReceipt.occurredAt,
+        detail: 'Confirmed retroactively by the authoritative final storage-bank receipt.',
+      };
+    }
+    if (activation && activationBacked.has(stage.key) && stage.state !== 'complete') {
+      return {
+        ...stage,
+        state: 'complete' as const,
+        occurredAt: stage.occurredAt ?? activation.occurredAt,
+        detail: 'Confirmed by the completed protocol activation.',
+      };
+    }
+    return stage;
+  });
 }

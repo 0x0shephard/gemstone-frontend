@@ -96,4 +96,37 @@ describe('seller lifecycle presentation', () => {
         .every((stage) => stage.state === 'pending'),
     ).toBe(true);
   });
+
+  it('completes submission and activation stages once activation is recorded', () => {
+    const event = (sequence: number, type: string, fromState: string, toState: string) => ({
+      id: type,
+      sequence,
+      type,
+      fromState,
+      toState,
+      occurredAt: `2026-10-06T00:0${sequence}:00.000Z`,
+      payload: {},
+    });
+    const stages = sellerLifecycleStages({
+      workflowId: 'workflow',
+      submissionId: 'submission',
+      state: 'activated',
+      version: 3,
+      legacyBaseline: true,
+      updatedAt: '2026-10-06T00:03:00.000Z',
+      events: [
+        event(1, 'gem_appraised', 'awaiting_grading', 'appraised'),
+        event(2, 'bank_receipt_recorded', 'appraised', 'bank_received'),
+        event(3, 'seller_activated', 'bank_received', 'activated'),
+      ],
+      nextActions: [],
+    });
+
+    expect(stages.every((stage) => stage.state === 'complete')).toBe(true);
+    for (const key of ['activation_started', 'registered', 'listed']) {
+      expect(stages.find((stage) => stage.key === key)?.occurredAt).toBe(
+        '2026-10-06T00:03:00.000Z',
+      );
+    }
+  });
 });
