@@ -18,6 +18,24 @@ verify_jwt = false
 [functions.v1-redemption-commitment]
 verify_jwt = false
 
+[functions.v1-operations-capabilities]
+verify_jwt = false
+
+[functions.v1-appraisal-matrix]
+verify_jwt = false
+
+[functions.v1-gemlab-workflow]
+verify_jwt = false
+
+[functions.v1-bank-workflow]
+verify_jwt = false
+
+[functions.v1-admin-operations]
+verify_jwt = false
+
+[functions.v1-redemption-lifecycle]
+verify_jwt = false
+
 [functions.v1-private-file-url]
 verify_jwt = false
 

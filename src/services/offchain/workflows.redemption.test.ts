@@ -31,6 +31,7 @@ describe('createRedemptionCommitment', () => {
       tokenId: 42n,
       fulfillmentMethod: method,
       fulfillmentDetails: details,
+      clientRequestId: '11111111-1111-4111-8111-111111111111',
     });
     expect(invoke).toHaveBeenCalledWith('v1-redemption-commitment', {
       wallet: '0x1111111111111111111111111111111111111111',
@@ -38,6 +39,7 @@ describe('createRedemptionCommitment', () => {
       tokenId: '42',
       fulfillmentMethod: method,
       fulfillmentDetails: details,
+      clientRequestId: '11111111-1111-4111-8111-111111111111',
     });
   });
 
@@ -52,6 +54,7 @@ describe('createRedemptionCommitment', () => {
         tokenId: 42n,
         fulfillmentMethod: 'insured_delivery',
         fulfillmentDetails: { recipientName: 'Ada Owner' },
+        clientRequestId: '11111111-1111-4111-8111-111111111111',
       }),
     ).rejects.toThrow('Complete insured-delivery details are required');
   });

@@ -268,14 +268,19 @@ export interface RedemptionCommitmentInput {
   tokenId: bigint;
   fulfillmentMethod: 'pickup' | 'insured_delivery';
   fulfillmentDetails: Record<string, string>;
+  /** Stable across retries so a committed private workflow is resumed, never duplicated. */
+  clientRequestId: string;
 }
 
 export async function createRedemptionCommitment(
   input: RedemptionCommitmentInput,
-): Promise<{ workflowId: string; requestHash: Hash }> {
-  return invokeEdgeFunction<{ workflowId: string; requestHash: Hash }>('v1-redemption-commitment', {
-    ...input,
-    gemId: input.gemId.toString(),
-    tokenId: input.tokenId.toString(),
-  });
+): Promise<{ workflowId: string; requestHash: Hash; workflowIdHash: Hash }> {
+  return invokeEdgeFunction<{ workflowId: string; requestHash: Hash; workflowIdHash: Hash }>(
+    'v1-redemption-commitment',
+    {
+      ...input,
+      gemId: input.gemId.toString(),
+      tokenId: input.tokenId.toString(),
+    },
+  );
 }

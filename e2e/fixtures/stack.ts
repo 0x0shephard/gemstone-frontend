@@ -3,7 +3,7 @@ import path from 'node:path';
 import { test as base, expect, type Page } from '@playwright/test';
 import { installTestWallet } from './testWallet';
 
-type Role = 'seller' | 'alice' | 'bob' | 'custodian';
+type Role = 'admin' | 'bank' | 'gemlab' | 'seller' | 'alice' | 'bob' | 'custodian';
 
 export interface StackState {
   rpc: string;

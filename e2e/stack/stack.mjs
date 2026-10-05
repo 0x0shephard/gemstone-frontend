@@ -28,7 +28,17 @@ const SITE = 'http://127.0.0.1:4174';
 const MNEMONIC = 'test test test test test test test test test test test junk';
 
 /** Anvil's public development accounts. Local chain only. */
-const roles = ['admin', 'operator', 'custodian', 'seller', 'alice', 'bob'];
+const roles = [
+  'admin',
+  'operator',
+  'custodian',
+  'bank',
+  'gemlab',
+  'seller',
+  'alice',
+  'bob',
+  'authorizer',
+];
 export const accounts = Object.fromEntries(
   roles.map((role, index) => {
     const account = mnemonicToAccount(MNEMONIC, { addressIndex: index });
@@ -115,6 +125,8 @@ function deployProtocol() {
         E2E_SELLER: accounts.seller.address,
         E2E_ALICE_KEY: accounts.alice.key,
         E2E_BOB_KEY: accounts.bob.key,
+        E2E_AUTHORIZER_KEY: accounts.authorizer.key,
+        E2E_AUTHORIZER_ADDRESS: accounts.authorizer.address,
         EXPECTED_CHAIN_ID: '11155111',
       },
       maxBuffer: 64 * 1024 * 1024,
@@ -131,7 +143,14 @@ function deployProtocol() {
     recursive: true,
     force: true,
   });
-  return JSON.parse(line.slice(line.indexOf('{')));
+  const deployment = JSON.parse(line.slice(line.indexOf('{')));
+  if (
+    String(deployment.RedemptionAuthorizer).toLowerCase() !==
+    accounts.authorizer.address.toLowerCase()
+  ) {
+    throw new Error('Local redemption authorizer does not match the isolated backend signer');
+  }
+  return deployment;
 }
 
 function supabase(args, options = {}) {
@@ -212,10 +231,44 @@ async function rest(db, pathname, init = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-async function seedDatabase(db) {
+async function seedDatabase(db, deployment) {
   log('seeding users, wallets and submissions');
+  const [localDeployment] = await rest(
+    db,
+    '/rest/v1/protocol_deployments?id=eq.sepolia-11155111-40fe3f22&status=eq.active',
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        chain_id: 11155111,
+        deployment_block: 0,
+        dge_nft_address: deployment.DGENFT.toLowerCase(),
+        gem_registry_address: deployment.GemRegistry.toLowerCase(),
+        marketplace_address: deployment.Marketplace.toLowerCase(),
+        primary_sale_auction_address: deployment.PrimarySaleAuction.toLowerCase(),
+        redemption_manager_address: deployment.RedemptionManager.toLowerCase(),
+        swap_escrow_address: deployment.SwapEscrow.toLowerCase(),
+        requires_client_release: false,
+      }),
+    },
+  );
+  const expectedAddresses = {
+    dge_nft_address: deployment.DGENFT,
+    gem_registry_address: deployment.GemRegistry,
+    marketplace_address: deployment.Marketplace,
+    primary_sale_auction_address: deployment.PrimarySaleAuction,
+    redemption_manager_address: deployment.RedemptionManager,
+    swap_escrow_address: deployment.SwapEscrow,
+  };
+  if (
+    !localDeployment ||
+    Object.entries(expectedAddresses).some(
+      ([field, address]) => String(localDeployment[field]).toLowerCase() !== address.toLowerCase(),
+    )
+  ) {
+    throw new Error('Local protocol deployment row does not match the disposable chain');
+  }
   const users = {};
-  for (const role of ['seller', 'alice', 'bob', 'custodian']) {
+  for (const role of ['admin', 'custodian', 'bank', 'gemlab', 'seller', 'alice', 'bob']) {
     const email = `${role}@e2e.digitalcarat.test`;
     const existing = await rest(db, `/auth/v1/admin/users?email=${encodeURIComponent(email)}`);
     const found = existing?.users?.find((user) => user.email === email);
@@ -262,22 +315,42 @@ async function seedDatabase(db) {
       }),
     });
   }
-  // The custodian confirms hand-overs from the verify portal, which requires an
-  // administrator membership of an admin verifier organisation.
-  const [organization] = await rest(db, '/rest/v1/verifier_organizations?on_conflict=name', {
-    method: 'POST',
-    headers: { prefer: 'resolution=merge-duplicates,return=representation' },
-    body: JSON.stringify({ name: 'E2E Operations', kind: 'admin' }),
-  });
-  await rest(db, '/rest/v1/verifier_members?on_conflict=profile_id,organization_id', {
-    method: 'POST',
-    headers: { prefer: 'resolution=merge-duplicates,return=representation' },
-    body: JSON.stringify({
-      profile_id: users.custodian.id,
-      organization_id: organization.id,
-      role: 'org_admin',
-    }),
-  });
+  // The two local recovery approvers must also be two distinct authenticated
+  // profiles. P (admin) intentionally overlaps R1; R2 is the custodian wallet.
+  // These are deterministic Anvil-only accounts, never production signers.
+  const organizations = {};
+  for (const [kind, name] of [
+    ['admin', 'E2E Operations'],
+    ['custodian', 'E2E Custodian'],
+    ['bank', 'E2E Bank'],
+    ['gemlab', 'E2E Gemlab'],
+  ]) {
+    const [organization] = await rest(db, '/rest/v1/verifier_organizations?on_conflict=name', {
+      method: 'POST',
+      headers: { prefer: 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify({ name, kind }),
+    });
+    organizations[kind] = organization;
+  }
+  for (const [role, organization, membershipRole] of [
+    ['admin', organizations.admin, 'org_admin'],
+    // R2 needs an admin membership for recovery and an independently scoped
+    // custodian membership for physical fulfillment.
+    ['custodian', organizations.admin, 'org_admin'],
+    ['custodian', organizations.custodian, 'custody_operator'],
+    ['bank', organizations.bank, 'bank_operator'],
+    ['gemlab', organizations.gemlab, 'gemologist'],
+  ]) {
+    await rest(db, '/rest/v1/verifier_members?on_conflict=profile_id,organization_id', {
+      method: 'POST',
+      headers: { prefer: 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify({
+        profile_id: users[role].id,
+        organization_id: organization.id,
+        role: membershipRole,
+      }),
+    });
+  }
   return users;
 }
 
@@ -327,6 +400,7 @@ function writeOutputs(deployment, db, users) {
     LOGS_RPC_URL: DOCKER_RPC,
     SIWE_RPC_URL: DOCKER_RPC,
     OPERATOR_PRIVATE_KEY: accounts.operator.key,
+    PROTOCOL_DEPLOYMENT_ID: 'sepolia-11155111-40fe3f22',
     DEPLOYMENT_BLOCK: '0',
     DGE_NFT_ADDRESS: deployment.DGENFT,
     GEM_REGISTRY_ADDRESS: deployment.GemRegistry,
@@ -334,6 +408,10 @@ function writeOutputs(deployment, db, users) {
     MARKETPLACE_ADDRESS: deployment.Marketplace,
     SWAP_ESCROW_ADDRESS: deployment.SwapEscrow,
     REDEMPTION_MANAGER_ADDRESS: deployment.RedemptionManager,
+    REDEMPTION_AUTHORIZER_PRIVATE_KEY: accounts.authorizer.key,
+    REDEMPTION_AUTHORIZER_ADDRESS: accounts.authorizer.address,
+    // Disposable local HMAC input only. Production must provision an unrelated secret.
+    REDEMPTION_CODE_SECRET: 'digital-carat-local-e2e-code-secret-not-for-production',
     SITE_ORIGINS: SITE,
     SITE_ORIGIN: SITE,
     RESEND_API_KEY: 're_e2e_capture',
@@ -362,7 +440,7 @@ export async function up() {
   await installMulticall3();
   const deployment = deployProtocol();
   const db = startSupabase();
-  const users = await seedDatabase(db);
+  const users = await seedDatabase(db, deployment);
   writeOutputs(deployment, db, users);
   log(`ready: chain ${RPC}, Supabase ${db.url}, site will be served on ${SITE}`);
 }

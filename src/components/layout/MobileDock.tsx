@@ -3,11 +3,13 @@ import { createPortal } from 'react-dom';
 import { NavLink, useLocation } from 'react-router-dom';
 import { BrandMark } from '@/components/ui/BrandMark';
 import { ChainSyncStatus } from '@/components/chain/ChainSyncStatus';
-import { navigationGroups, primaryMobileItems } from './navigation';
+import { navigationGroups, primaryMobileItems, staffNavigation } from './navigation';
 import { cn } from '@/lib/cn';
+import { useOperationsAccess } from '@/hooks/useOperationsAccess';
 
 export function MobileDock() {
   const { pathname, search } = useLocation();
+  const { data: operationsAccess } = useOperationsAccess();
   const [open, setOpen] = useState(false);
 
   /*
@@ -34,7 +36,8 @@ export function MobileDock() {
 
   const secondaryItems = navigationGroups
     .flatMap((group) => group.items.map((item) => ({ ...item, group: group.label })))
-    .filter((item) => !primaryMobileItems.some((primary) => primary.to === item.to));
+    .filter((item) => !primaryMobileItems.some((primary) => primary.to === item.to))
+    .concat(staffNavigation(operationsAccess).map((item) => ({ ...item, group: 'Operations' })));
   const moreActive = secondaryItems.some((item) => pathname === item.to);
 
   return createPortal(

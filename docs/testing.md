@@ -7,6 +7,7 @@
 | Full stack  | `npm run test:e2e:full`                                    | Real UI on a local chain + local Supabase (below)                                             |
 | Live canary | `npx playwright test -c playwright.canary.config.ts`       | The deployed site and Sepolia are wired together                                              |
 | Upgrades    | `SEPOLIA_RPC_URL=… npm run rehearse:upgrade -- UpgradeX …` | An upgrade keeps every token, escrow record and transfer working, on a fork, before broadcast |
+| Lifecycle SQL | `scripts/verify-operational-lifecycle-migration.sh`       | Replays all migrations on disposable PG16 and checks RLS, RPC grants, immutability and retry atomics |
 | Phones      | [phone-testing-runbook.md](phone-testing-runbook.md)       | The MetaMask handoff on real devices                                                          |
 
 ## Full-stack suite
@@ -14,10 +15,12 @@
 Needs Docker, Foundry and `../gemstone`. Each run resets everything:
 
 1. anvil on :8545 with Sepolia's chain id, Multicall3 installed;
-2. `DeployLocalE2E` deploys the protocol and seeds gems and holders
-   (Alice, Bob, a seller, a custodian — anvil's public dev accounts);
+2. `DeployLocalE2E` deploys the protocol and seeds gems, holders and separated
+   redemption roles (a backend-only authorizer, Admin as proof/recovery 1, and
+   Custodian as recovery 2 — all Anvil-only development accounts);
 3. local Supabase is built from `e2e/stack/baseline.sql` plus every real
-   migration, then seeded with users, verified wallets and submissions;
+   migration, then seeded with users, verified wallets, submissions and scoped
+   Admin/Gemlab/Bank/Custodian memberships;
 4. Playwright serves the edge functions, a mail catcher (:4010, standing in
    for Resend) and an e2e build of the site (:4174).
 

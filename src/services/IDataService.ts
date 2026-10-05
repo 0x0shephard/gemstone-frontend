@@ -8,6 +8,7 @@ import type {
   BuyNowRequest,
   CancelListingRequest,
   CancelRedemptionRequest,
+  FinalizeRedemptionRequest,
   ConfirmRedemptionRequest,
   ClaimRefundRequest,
   ClaimReserveCreditRequest,
@@ -27,6 +28,13 @@ import type {
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
+  SetCollectorCommitmentRequest,
+  StartRedemptionFulfillmentRequest,
+  SubmitFulfillmentProofRequest,
+  ApproveFulfillmentProofRequest,
+  RejectFulfillmentProofRequest,
+  ProposeRedemptionRecoveryRequest,
+  RedemptionRecoveryActionRequest,
   RevokeApprovalRequest,
   SettleAuctionRequest,
   SettleListingAuctionRequest,
@@ -119,5 +127,14 @@ export interface IDataService {
   requestRedemption(request: RedemptionRequest): Promise<TxResult>;
   cancelRedemption(request: CancelRedemptionRequest): Promise<TxResult>;
   confirmRedemption(request: ConfirmRedemptionRequest): Promise<TxResult>;
+  setCollectorCommitment(request: SetCollectorCommitmentRequest): Promise<TxResult>;
+  startRedemptionFulfillment(request: StartRedemptionFulfillmentRequest): Promise<TxResult>;
+  submitFulfillmentProof(request: SubmitFulfillmentProofRequest): Promise<TxResult>;
+  approveFulfillmentProof(request: ApproveFulfillmentProofRequest): Promise<TxResult>;
+  rejectFulfillmentProof(request: RejectFulfillmentProofRequest): Promise<TxResult>;
+  finalizeRedemption(request: FinalizeRedemptionRequest): Promise<TxResult>;
+  proposeRedemptionRecovery(request: ProposeRedemptionRecoveryRequest): Promise<TxResult>;
+  approveRedemptionRecovery(request: RedemptionRecoveryActionRequest): Promise<TxResult>;
+  executeRedemptionRecovery(request: RedemptionRecoveryActionRequest): Promise<TxResult>;
   fundReserve(request: FundReserveRequest): Promise<TxResult>;
 }

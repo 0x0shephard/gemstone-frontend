@@ -39,6 +39,7 @@ import type {
   CancelListingRequest,
   CancelRedemptionRequest,
   ConfirmRedemptionRequest,
+  FinalizeRedemptionRequest,
   ClaimRefundRequest,
   ClaimReserveCreditRequest,
   ClaimTreasuryPayoutRequest,
@@ -56,6 +57,13 @@ import type {
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
+  SetCollectorCommitmentRequest,
+  StartRedemptionFulfillmentRequest,
+  SubmitFulfillmentProofRequest,
+  ApproveFulfillmentProofRequest,
+  ProposeRedemptionRecoveryRequest,
+  RedemptionRecoveryActionRequest,
+  RejectFulfillmentProofRequest,
   RevokeApprovalRequest,
   SettleAuctionRequest,
   SettleListingAuctionRequest,
@@ -185,6 +193,33 @@ const redemptionConfirmedEvent = parseAbiItem(
 );
 const redemptionCancelledEvent = parseAbiItem(
   'event RedemptionCancelled(uint256 indexed tokenId,uint256 indexed gemId)',
+);
+const redemptionWorkflowBoundEvent = parseAbiItem(
+  'event RedemptionWorkflowBound(uint256 indexed tokenId,bytes32 indexed workflowIdHash)',
+);
+const collectorCommitmentSetEvent = parseAbiItem(
+  'event CollectorCommitmentSet(uint256 indexed tokenId,bytes32 indexed collectorCommitment)',
+);
+const fulfillmentStartedEvent = parseAbiItem(
+  'event FulfillmentStarted(uint256 indexed tokenId,uint256 indexed gemId,address indexed custodian)',
+);
+const fulfillmentProofSubmittedEvent = parseAbiItem(
+  'event FulfillmentProofSubmitted(uint256 indexed tokenId,bytes32 indexed proofDigest,uint64 indexed proofVersion)',
+);
+const fulfillmentProofApprovedEvent = parseAbiItem(
+  'event FulfillmentProofApproved(uint256 indexed tokenId,bytes32 indexed proofDigest,bytes32 indexed approvalId,uint64 approvalVersion,address approver)',
+);
+const fulfillmentProofRejectedEvent = parseAbiItem(
+  'event FulfillmentProofRejected(uint256 indexed tokenId,bytes32 indexed proofDigest,uint64 indexed proofVersion,bytes32 reasonHash)',
+);
+const redemptionFinalizedEvent = parseAbiItem(
+  'event RedemptionFinalized(uint256 indexed tokenId,uint256 indexed gemId,address indexed owner,bytes32 proofDigest,bytes32 approvalId,bytes32 authorizationNonce,bool recovered)',
+);
+const recoveryProposedEvent = parseAbiItem(
+  'event RecoveryProposed(uint256 indexed tokenId,bytes32 indexed proposalHash,bytes32 indexed evidenceDigest,uint64 executeAfter,uint8 requiredApprovals,address proposer)',
+);
+const recoveryApprovedEvent = parseAbiItem(
+  'event RecoveryApproved(uint256 indexed tokenId,bytes32 indexed proposalHash,address indexed approver,uint8 approvals)',
 );
 const primaryPurchaseEvent = parseAbiItem(
   'event BuyNow(uint256 indexed gemId,uint256 indexed tokenId,address indexed buyer,address paymentAsset,uint256 amount,uint256 usdValue)',
@@ -2342,15 +2377,39 @@ export const chainService: IDataService = {
       functionName: 'cancelOffer',
       args: [request.offerId],
     }),
-  requestRedemption: (request: RedemptionRequest) => {
-    if (request.requestHash === zeroHash) {
-      throw new Error('A server-generated redemption commitment is required');
+  requestRedemption: async (request: RedemptionRequest) => {
+    if (request.requestHash === zeroHash || request.workflowIdHash === zeroHash) {
+      throw new Error('A server-generated redemption commitment and workflow binding are required');
     }
-    return runContractTransaction({
+    const fromBlock = await client.getBlockNumber();
+    const call = {
       ...contract('RedemptionManager'),
       functionName: 'requestRedemption',
-      args: [request.tokenId, request.requestHash],
-    });
+      intentKey: `requestRedemption:${request.tokenId}`,
+      args: [request.tokenId, request.requestHash, request.workflowIdHash],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: redemptionWorkflowBoundEvent,
+          args: { tokenId: request.tokenId, workflowIdHash: request.workflowIdHash },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
   },
   cancelRedemption: async (request: CancelRedemptionRequest) => {
     const fromBlock = await client.getBlockNumber();
@@ -2397,6 +2456,293 @@ export const chainService: IDataService = {
     });
     refresh();
     return result;
+  },
+  setCollectorCommitment: async (request: SetCollectorCommitmentRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'setCollectorCommitment',
+      intentKey: `setCollectorCommitment:${request.tokenId}`,
+      args: [request.tokenId, request.collectorCommitment],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: collectorCommitmentSetEvent,
+          args: {
+            tokenId: request.tokenId,
+            collectorCommitment: request.collectorCommitment,
+          },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
+  },
+  startRedemptionFulfillment: async (request: StartRedemptionFulfillmentRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'startFulfillment',
+      intentKey: `startRedemptionFulfillment:${request.tokenId}`,
+      args: [request.tokenId],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: fulfillmentStartedEvent,
+          args: { tokenId: request.tokenId },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
+  },
+  submitFulfillmentProof: async (request: SubmitFulfillmentProofRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'submitFulfillmentProof',
+      intentKey: `submitFulfillmentProof:${request.tokenId}`,
+      args: [request.tokenId, request.proofDigest],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: fulfillmentProofSubmittedEvent,
+          args: { tokenId: request.tokenId, proofDigest: request.proofDigest },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
+  },
+  approveFulfillmentProof: async (request: ApproveFulfillmentProofRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'approveFulfillmentProof',
+      intentKey: `approveFulfillmentProof:${request.tokenId}`,
+      args: [request.tokenId, request.approvalId, request.approvalVersion],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: fulfillmentProofApprovedEvent,
+          args: { tokenId: request.tokenId, approvalId: request.approvalId },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
+  },
+  rejectFulfillmentProof: async (request: RejectFulfillmentProofRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'rejectFulfillmentProof',
+      intentKey: `rejectFulfillmentProof:${request.tokenId}`,
+      args: [request.tokenId, request.reasonHash],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: fulfillmentProofRejectedEvent,
+          args: { tokenId: request.tokenId },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
+  },
+  finalizeRedemption: async (request: FinalizeRedemptionRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'finalizeRedemption',
+      intentKey: `finalizeRedemption:${request.tokenId}`,
+      args: [
+        request.tokenId,
+        request.nonce,
+        request.issuedAt,
+        request.deadline,
+        request.authorizer,
+        request.signature,
+      ],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: redemptionFinalizedEvent,
+          args: { tokenId: request.tokenId },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
+  },
+  proposeRedemptionRecovery: async (request: ProposeRedemptionRecoveryRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'proposeRecovery',
+      intentKey: `proposeRedemptionRecovery:${request.tokenId}`,
+      args: [request.tokenId, request.evidenceDigest],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: recoveryProposedEvent,
+          args: { tokenId: request.tokenId, evidenceDigest: request.evidenceDigest },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
+  },
+  approveRedemptionRecovery: async (request: RedemptionRecoveryActionRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'approveRecovery',
+      intentKey: `approveRedemptionRecovery:${request.tokenId}:${request.proposalHash}`,
+      args: [request.tokenId, request.proposalHash],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: recoveryApprovedEvent,
+          args: {
+            tokenId: request.tokenId,
+            proposalHash: request.proposalHash,
+            approver: account,
+          },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
+  },
+  executeRedemptionRecovery: async (request: RedemptionRecoveryActionRequest) => {
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('RedemptionManager'),
+      functionName: 'executeRecovery',
+      intentKey: `executeRedemptionRecovery:${request.tokenId}:${request.proposalHash}`,
+      args: [request.tokenId, request.proposalHash],
+      reconcileBroadcast: async (
+        account: Address,
+        recoveryFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.RedemptionManager,
+          event: redemptionFinalizedEvent,
+          // Recovery is executed by an independently controlled admin wallet, while the event's
+          // owner remains the NFT holder. Filter by token and verify the exact prepared call below.
+          args: { tokenId: request.tokenId },
+          fromBlock: recoveryFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    return runContractTransaction(call);
   },
   fundReserve: async (request: FundReserveRequest) => {
     const amount = await usdToAsset(request.paymentAsset, request.amountUsd);

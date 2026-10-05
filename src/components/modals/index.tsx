@@ -30,6 +30,11 @@ import {
   type RedemptionWorkflow,
 } from '@/services/offchain/redemptions';
 import { RedemptionReceipt } from '@/components/redemption/RedemptionReceipt';
+import {
+  clearOperationIdempotencyKey,
+  markRedemptionOnchainRequested,
+  operationIdempotencyKey,
+} from '@/services/offchain/operations';
 
 interface BaseModalProps {
   gem: DecoratedGem;
@@ -601,7 +606,11 @@ export function SwapModal({
 export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
   const { address } = useAccount();
   const [method, setMethod] = useState<'pickup' | 'insured_delivery'>('pickup');
-  const commitmentRef = useRef<{ workflowId: string; requestHash: `0x${string}` } | null>(null);
+  const commitmentRef = useRef<{
+    workflowId: string;
+    requestHash: `0x${string}`;
+    workflowIdHash: `0x${string}`;
+  } | null>(null);
   const [receipt, setReceipt] = useState<{
     workflow: RedemptionWorkflow;
     transactionHash: `0x${string}`;
@@ -629,11 +638,20 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
             tokenId: gem.tokenId,
             fulfillmentMethod: method,
             fulfillmentDetails: redemptionFulfillmentDetails(method, details),
+            clientRequestId: operationIdempotencyKey(`redemption:${gem.tokenId}:commitment`),
           })
-        : { workflowId: `mock-redemption-${gem.tokenId}`, requestHash: zeroHash };
+        : {
+            workflowId: `mock-redemption-${gem.tokenId}`,
+            requestHash: zeroHash,
+            workflowIdHash: zeroHash,
+          };
     commitmentRef.current = commitment;
     const requestHash = commitment.requestHash;
-    return dataService.requestRedemption({ tokenId: gem.tokenId, requestHash });
+    return dataService.requestRedemption({
+      tokenId: gem.tokenId,
+      requestHash,
+      workflowIdHash: commitment.workflowIdHash,
+    });
   };
   return (
     <Modal
@@ -733,8 +751,8 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
         tied to this workflow record.
       </p>
       <div className="rounded-[4px] border border-ruby/30 bg-ruby/[0.07] px-3 py-2 text-[12px] text-ruby">
-        Redemption is irreversible. On custodian confirmation, the NFT is burned and the physical
-        gemstone is released from the vault.
+        Opening the request locks the NFT. It is burned only later, when the current owner reviews
+        approved handover proof, enters the request-bound code and confirms the final wallet action.
       </div>
       <TxButton
         block
@@ -746,6 +764,17 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
         onConfirmed={async (result) => {
           const commitment = commitmentRef.current;
           if (!commitment) throw new Error('The redemption commitment could not be recovered.');
+          if (env.dataMode === 'chain') {
+            const intent = `redemption:${commitment.workflowId}:onchain-requested`;
+            await markRedemptionOnchainRequested({
+              requestId: commitment.workflowId,
+              expectedVersion: 0,
+              idempotencyKey: operationIdempotencyKey(intent),
+              transactionHash: result.hash,
+            });
+            clearOperationIdempotencyKey(intent);
+            clearOperationIdempotencyKey(`redemption:${gem.tokenId}:commitment`);
+          }
           const workflow =
             env.dataMode === 'chain'
               ? await getRedemptionWorkflow(commitment.workflowId)

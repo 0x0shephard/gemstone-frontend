@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { MobileDock } from './MobileDock';
+
+vi.mock('@/hooks/useOperationsAccess', () => ({
+  useOperationsAccess: () => ({ data: null }),
+}));
 
 /**
  * "Token Bids" and "Portfolio" are both `/profile`, separated only by `?tab`.

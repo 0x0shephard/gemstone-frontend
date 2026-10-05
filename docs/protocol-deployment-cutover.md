@@ -21,6 +21,73 @@ active; activation is a separate compare-and-swap transaction.
 - A frontend must not be published until its no-store pre-signature release
   check is proven against the production deployment manifest.
 
+## Redemption V2 release gate
+
+The operational-lifecycle release and the in-place RedemptionManager V2 upgrade
+have an additional, fail-closed gate. Do not apply the migration, deploy the new
+functions, publish the UI, or broadcast the upgrade until every production input
+below has been recorded and independently checked:
+
+- `A`: a dedicated backend authorizer address and private key held only in the
+  Edge secret store. It must not be the protocol operator, proof approver, or a
+  recovery approver. Never put the key in a `VITE_` variable, a manifest, a log,
+  a database row, or a repository file.
+- `P`: the proof-approver wallet. `P` may intentionally also be recovery
+  approver `R1`.
+- `R1` and `R2`: two different, independently controlled wallets with
+  `RECOVERY_APPROVER_ROLE`, each linked to a different verified application
+  profile. Two profiles routed through one key, or one profile switching between
+  keys, does not satisfy the recovery policy.
+- One explicitly authorized test inbox. A production email check must prove two
+  separate facts: provider acceptance (`2xx` plus message id/audit row) and final
+  delivery (provider delivery event or receipt in that inbox).
+
+Before any public-network broadcast, run:
+
+```sh
+scripts/verify-operational-lifecycle-migration.sh
+npm run check
+(cd ../gemstone && forge test --offline)
+```
+
+Then exercise the complete flow on the disposable local stack. The stack uses a
+backend-only deterministic authorizer, Admin as `P`/`R1`, Custodian as `R2`, two
+distinct authenticated recovery profiles, scoped Gemlab/Bank/Custodian
+organizations, and the local mail catcher. Test both pickup and courier paths,
+proof rejection/resubmission, pre-fulfillment cancellation, response-loss
+reconciliation, owner finalization, and two-approver recovery after the seven-day
+clock. Test keys are Anvil-only and must never be copied into hosted secrets.
+
+The production order for Redemption V2 is:
+
+1. Take account, legacy-workflow, and deployment-scoped row-count snapshots.
+2. Apply `202610030001_operational_lifecycles.sql`; verify all 13 new tables have
+   RLS, browser roles have no table/RPC grants, the exact matrix-v3 seed is
+   active, and existing account/workflow counts are unchanged.
+3. Deploy the new operations and lifecycle Edge Functions while the new UI is
+   still unpublished. Set `REDEMPTION_AUTHORIZER_PRIVATE_KEY` and
+   `REDEMPTION_AUTHORIZER_ADDRESS`, then prove the derived address matches `A`.
+   Calls requiring V2 must fail closed while the old contract implementation is
+   still live.
+4. Simulate `UpgradeRedemptionManager` against a current Sepolia fork with the
+   exact production inputs. Verify `A` has only `AUTHORIZER_ROLE`, `P` has
+   `PROOF_APPROVER_ROLE`, `R1`/`R2` have `RECOVERY_APPROVER_ROLE`, threshold is
+   two, delay is at least seven days, and the legacy two-argument request leaves
+   the NFT unlocked and reverts.
+5. Enter the announced redemption maintenance window. Publish the already-built
+   V2-compatible frontend and confirm its immutable asset/manifest, then execute
+   the verified proxy upgrade promptly. The new UI is expected to fail closed
+   during this short interval.
+6. Run authenticated read-only checks, then a controlled test-account pickup
+   flow through code delivery and owner burn. Do not use customer records or
+   third-party email addresses for this smoke test.
+
+The V2 proxy upgrade is forward-only operationally. It disables unverifiable
+legacy two-argument requests and introduces new storage-backed phases. If the
+post-upgrade smoke test fails, put redemption into maintenance and fix forward;
+do not downgrade the proxy or publish a legacy redemption client. Database and
+workflow rows remain preserved for reconciliation.
+
 ## Forward cutover
 
 1. Verify the versioned contract manifest checksum, chain id, deployment block,

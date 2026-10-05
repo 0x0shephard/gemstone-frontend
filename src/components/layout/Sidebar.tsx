@@ -4,7 +4,8 @@ import { BrandMark } from '@/components/ui/BrandMark';
 import { useAuth } from '@/providers/AuthProvider';
 import { useKyc } from '@/hooks/useKyc';
 import { cn } from '@/lib/cn';
-import { navigationGroups } from './navigation';
+import { navigationGroups, staffNavigation } from './navigation';
+import { useOperationsAccess } from '@/hooks/useOperationsAccess';
 
 interface SidebarProps {
   open: boolean;
@@ -13,6 +14,7 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose }: SidebarProps) {
   const { user } = useAuth();
+  const { data: operationsAccess } = useOperationsAccess();
   const { isApproved } = useKyc();
   const name = (user?.user_metadata?.full_name as string) || user?.email?.split('@')[0] || 'Guest';
   const drawerRef = useRef<HTMLElement>(null);
@@ -89,7 +91,12 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 pb-4">
-          {navigationGroups.map((group) => (
+          {[
+            ...navigationGroups,
+            ...(staffNavigation(operationsAccess).length > 0
+              ? [{ label: 'Operations', items: staffNavigation(operationsAccess) }]
+              : []),
+          ].map((group) => (
             <div key={group.label}>
               <div className="mb-1.5 px-3 text-[9.5px] font-semibold uppercase tracking-[0.17em] text-ink-dim">
                 {group.label}

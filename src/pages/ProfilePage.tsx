@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import {
   usePendingReserveCredits,
@@ -313,9 +313,6 @@ export default function ProfilePage() {
             (profile.redemptions.length ? (
               <div className="space-y-3">
                 {profile.redemptions.map((r, i) => {
-                  const connected = address?.toLowerCase();
-                  const isCustodian = connected === r.custodian.toLowerCase();
-                  const isOwner = connected === r.owner.toLowerCase();
                   return (
                     <Card key={i} className="p-4">
                       <div className="flex items-center gap-3">
@@ -336,41 +333,17 @@ export default function ProfilePage() {
                         </StatusBadge>
                       </div>
 
-                      {/*
-                        Nothing advances a redemption on its own. `confirmRedemption`
-                        is callable only by the custodian recorded on the gem, so
-                        without this the request sits open for good while the portal
-                        reports it in progress.
-                      */}
                       <div className="mt-3 flex flex-col gap-2.5 border-t border-line/[0.06] pt-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-[11.5px] leading-relaxed text-ink-dim">
-                          {isCustodian
-                            ? 'You are the custodian for this stone. Confirming burns the token and credits its remaining reserve to the token holder for a separate claim; it cannot be undone. Confirm only after physical handover.'
-                            : 'Waiting on the custodian to confirm the physical handover. Cancelling returns the token to normal and unlocks transfers.'}
+                          Physical custody, delivery proof, owner authorization and final burn are
+                          tracked together on the canonical redemption page.
                         </p>
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          {isOwner && (
-                            <TxButton
-                              size="sm"
-                              variant="ghost"
-                              action={() => dataService.cancelRedemption({ tokenId: r.tokenId })}
-                              pendingLabel="Cancelling…"
-                              telemetryFlow="redemption_cancel"
-                            >
-                              Cancel
-                            </TxButton>
-                          )}
-                          {isCustodian && (
-                            <TxButton
-                              size="sm"
-                              action={() => dataService.confirmRedemption({ tokenId: r.tokenId })}
-                              pendingLabel="Confirming…"
-                              telemetryFlow="redemption_confirm"
-                            >
-                              Confirm handover
-                            </TxButton>
-                          )}
-                        </div>
+                        <Link
+                          to="/redeem"
+                          className="shrink-0 text-[12px] font-semibold text-atelier underline underline-offset-2"
+                        >
+                          Open redemption tracker
+                        </Link>
                       </div>
                     </Card>
                   );

@@ -796,12 +796,13 @@ describe('chain transaction construction', () => {
 
   it('constructs redemption, cancellation, and reserve-funding calls', async () => {
     const requestHash = `0x${'2'.repeat(64)}` as const;
-    await chainService.requestRedemption({ tokenId: 3n, requestHash });
+    const workflowIdHash = `0x${'3'.repeat(64)}` as const;
+    await chainService.requestRedemption({ tokenId: 3n, requestHash, workflowIdHash });
     expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
       expect.objectContaining({
         address: manifest.addresses.RedemptionManager,
         functionName: 'requestRedemption',
-        args: [3n, requestHash],
+        args: [3n, requestHash, workflowIdHash],
       }),
     );
 
@@ -850,6 +851,92 @@ describe('chain transaction construction', () => {
             amountOrTokenId: musdc(50),
           },
         ],
+      }),
+    );
+  });
+
+  it('constructs the role-separated redemption V2 calls', async () => {
+    const collectorCommitment = `0x${'4'.repeat(64)}` as const;
+    const proofDigest = `0x${'5'.repeat(64)}` as const;
+    const approvalId = `0x${'6'.repeat(64)}` as const;
+    const nonce = `0x${'7'.repeat(64)}` as const;
+    const authorizer = manifest.addresses.Treasury;
+    const signature = `0x${'8'.repeat(130)}` as const;
+
+    await chainService.setCollectorCommitment({ tokenId: 3n, collectorCommitment });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'setCollectorCommitment',
+        args: [3n, collectorCommitment],
+      }),
+    );
+
+    await chainService.startRedemptionFulfillment({ tokenId: 3n });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ functionName: 'startFulfillment', args: [3n] }),
+    );
+
+    await chainService.submitFulfillmentProof({ tokenId: 3n, proofDigest });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ functionName: 'submitFulfillmentProof', args: [3n, proofDigest] }),
+    );
+
+    await chainService.approveFulfillmentProof({
+      tokenId: 3n,
+      approvalId,
+      approvalVersion: 4n,
+    });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'approveFulfillmentProof',
+        args: [3n, approvalId, 4n],
+      }),
+    );
+
+    await chainService.finalizeRedemption({
+      tokenId: 3n,
+      nonce,
+      issuedAt: 100n,
+      deadline: 200n,
+      authorizer,
+      signature,
+    });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'finalizeRedemption',
+        args: [3n, nonce, 100n, 200n, authorizer, signature],
+      }),
+    );
+  });
+
+  it('constructs recovery calls from an event-derived proposal hash', async () => {
+    const evidenceDigest = `0x${'9'.repeat(64)}` as const;
+    const proposalHash = `0x${'a'.repeat(64)}` as const;
+
+    await chainService.proposeRedemptionRecovery({ tokenId: 3n, evidenceDigest });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'proposeRecovery',
+        args: [3n, evidenceDigest],
+        reconcileBroadcast: expect.any(Function),
+      }),
+    );
+
+    await chainService.approveRedemptionRecovery({ tokenId: 3n, proposalHash });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'approveRecovery',
+        args: [3n, proposalHash],
+        reconcileBroadcast: expect.any(Function),
+      }),
+    );
+
+    await chainService.executeRedemptionRecovery({ tokenId: 3n, proposalHash });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'executeRecovery',
+        args: [3n, proposalHash],
+        reconcileBroadcast: expect.any(Function),
       }),
     );
   });

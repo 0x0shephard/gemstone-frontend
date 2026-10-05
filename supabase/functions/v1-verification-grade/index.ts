@@ -63,6 +63,12 @@ Deno.serve(async (request) => {
     const user = await requireUser(request);
     const admin = adminClient();
     const deployment = await requireProtocolDeployment(admin, request);
+    if (deployment.requires_client_release) {
+      return json(
+        { error: 'This grading endpoint was retired; use the versioned Gemlab workflow' },
+        410,
+      );
+    }
     const membership = await requireVerifier(admin, user.id);
 
     const body = (await request.json()) as Record<string, unknown>;

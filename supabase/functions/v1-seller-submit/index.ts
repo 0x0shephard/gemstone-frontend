@@ -238,12 +238,12 @@ Deno.serve(async (request) => {
        * logs it — a lab assessing the seller's photographs would defeat the point
        * of separating claimed attributes from graded ones.
        */
-      if (mode === 'lab') {
+      if (mode === 'lab' || deployment.requires_client_release) {
         const { data: queued, error: queueError } = await admin
           .from('seller_submissions')
           .update({
             status: 'awaiting_custody',
-            verification_provider: 'lab-pending',
+            verification_provider: 'gemlab-pending',
           })
           .eq('id', submissionId)
           .eq('deployment_id', deployment.id)

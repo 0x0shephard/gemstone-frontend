@@ -17,6 +17,8 @@ export interface OutboundEmail {
   replyTo?: string;
   /** Base64-encoded files, using Resend's in-memory attachment format. */
   attachments?: Array<{ filename: string; content: string }>;
+  /** Stable provider key for retrying an uncertain delivery without duplicate mail. */
+  idempotencyKey?: string;
 }
 
 export class EmailNotConfiguredError extends Error {
@@ -65,6 +67,7 @@ export async function sendEmail(message: OutboundEmail): Promise<string> {
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
+      ...(message.idempotencyKey ? { 'idempotency-key': message.idempotencyKey } : {}),
     },
     body: JSON.stringify({
       from,

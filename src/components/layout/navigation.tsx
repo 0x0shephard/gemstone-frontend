@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { OperationsAccess } from '@/services/offchain/operations';
 
 export type NavItem = {
   label: string;
@@ -118,6 +119,40 @@ export const navigationGroups: Array<{ label: string; items: NavItem[] }> = [
   },
 ];
 
+const staffRoute = (label: string, shortLabel: string, to: string, initials: string): NavItem => ({
+  label,
+  shortLabel,
+  to,
+  icon: (
+    <span
+      aria-hidden
+      className="inline-flex h-[18px] min-w-[18px] items-center justify-center font-mono text-[8px] font-semibold tracking-[-0.04em]"
+    >
+      {initials}
+    </span>
+  ),
+});
+
+/** Staff destinations are disclosed only after the server grants a capability. */
+export function staffNavigation(access?: OperationsAccess | null): NavItem[] {
+  if (!access) return [];
+  const capabilities = new Set(access.capabilities);
+  const items: NavItem[] = [];
+  if (capabilities.has('gemlab.read')) {
+    items.push(staffRoute('Gem lab', 'Lab', '/gemlab', 'GL'));
+  }
+  if (capabilities.has('bank.receive')) {
+    items.push(staffRoute('Storage bank', 'Bank', '/bank', 'BK'));
+  }
+  if (capabilities.has('custodian.fulfill')) {
+    items.push(staffRoute('Custodian', 'Custody', '/custodian', 'CU'));
+  }
+  if (capabilities.has('admin.read')) {
+    items.push(staffRoute('Operations admin', 'Admin', '/verify', 'OP'));
+  }
+  return items;
+}
+
 /**
  * Bids placed on an already-minted token — the Portfolio's "Token Bids" tab.
  *
@@ -146,6 +181,7 @@ export const primaryMobileItems = [
 
 export function groupForPath(pathname: string): string {
   if (pathname.startsWith('/gem/')) return 'Discover';
+  if (['/gemlab', '/bank', '/custodian', '/verify'].includes(pathname)) return 'Operations';
   return (
     navigationGroups.find((group) => group.items.some((item) => pathname === item.to))?.label ??
     'Private vault'

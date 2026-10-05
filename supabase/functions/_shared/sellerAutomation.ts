@@ -52,10 +52,12 @@ interface SellerSubmission {
   registration_tx_hash: string | null;
   /** Chain height before the first broadcast; the floor for a recovery scan. */
   registration_scan_from_block: number | null;
+  current_appraisal_id: string | null;
+  bank_received_at: string | null;
 }
 
 const sellerColumns =
-  'id,deployment_id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at,registration_tx_hash,registration_scan_from_block';
+  'id,deployment_id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at,registration_tx_hash,registration_scan_from_block,current_appraisal_id,bank_received_at';
 
 async function loadSubmission(admin: AdminClient, submissionId: string): Promise<SellerSubmission> {
   const { data, error } = await admin
@@ -172,6 +174,9 @@ export async function prepareSellerSubmission(
   let submission = await loadSubmission(admin, submissionId);
   if (!['approved', 'registered'].includes(submission.status)) {
     throw new Error('Only approved submissions can be prepared for activation');
+  }
+  if (!submission.current_appraisal_id || !submission.bank_received_at) {
+    throw new Error('An immutable appraisal and recorded bank receipt are required for activation');
   }
 
   let evidence: { hash: Hash; canonicalPayload: string; nonce: `0x${string}` } | undefined;

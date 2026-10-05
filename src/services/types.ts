@@ -1,4 +1,4 @@
-import type { Address, Hash } from 'viem';
+import type { Address, Hash, Hex } from 'viem';
 
 export type GemType = string;
 /**
@@ -350,6 +350,7 @@ export interface SwapRequestAction {
 export interface RedemptionRequest {
   tokenId: bigint;
   requestHash: Hash;
+  workflowIdHash: Hash;
 }
 
 export interface CancelRedemptionRequest {
@@ -364,6 +365,50 @@ export interface CancelRedemptionRequest {
  */
 export interface ConfirmRedemptionRequest {
   tokenId: bigint;
+}
+
+export interface SetCollectorCommitmentRequest {
+  tokenId: bigint;
+  collectorCommitment: Hash;
+}
+
+export interface StartRedemptionFulfillmentRequest {
+  tokenId: bigint;
+}
+
+export interface SubmitFulfillmentProofRequest {
+  tokenId: bigint;
+  proofDigest: Hash;
+}
+
+export interface ApproveFulfillmentProofRequest {
+  tokenId: bigint;
+  approvalId: Hash;
+  approvalVersion: bigint;
+}
+
+export interface RejectFulfillmentProofRequest {
+  tokenId: bigint;
+  reasonHash: Hash;
+}
+
+export interface FinalizeRedemptionRequest {
+  tokenId: bigint;
+  nonce: Hash;
+  issuedAt: bigint;
+  deadline: bigint;
+  authorizer: Address;
+  signature: Hex;
+}
+
+export interface ProposeRedemptionRecoveryRequest {
+  tokenId: bigint;
+  evidenceDigest: Hash;
+}
+
+export interface RedemptionRecoveryActionRequest {
+  tokenId: bigint;
+  proposalHash: Hash;
 }
 
 export interface FundReserveRequest {

@@ -2,28 +2,28 @@ import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { createCommitment } from '../_shared/commitment.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { keccak256, toBytes } from 'npm:viem@2';
+import {
+  normalizedFulfillmentDetails,
+  sameFulfillmentDetails,
+} from '../_shared/redemptionCommitment.ts';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 Deno.serve(async (request) => {
   const early = preflight(request);
   if (early) return early;
   try {
     const user = await requireUser(request);
-    const { wallet, gemId, tokenId, fulfillmentMethod, fulfillmentDetails } = await request.json();
+    const { wallet, gemId, tokenId, fulfillmentMethod, fulfillmentDetails, clientRequestId } =
+      await request.json();
+    if (!UUID.test(String(clientRequestId ?? ''))) {
+      return json({ error: 'clientRequestId must be a UUID' }, 400);
+    }
     if (!['pickup', 'insured_delivery'].includes(fulfillmentMethod)) {
       return json({ error: 'Invalid fulfillment method' }, 400);
     }
-    if (fulfillmentMethod === 'pickup' && !fulfillmentDetails?.pickupLocation) {
-      return json({ error: 'Pickup location is required' }, 400);
-    }
-    if (
-      fulfillmentMethod === 'insured_delivery' &&
-      (!fulfillmentDetails?.recipientName ||
-        !fulfillmentDetails?.addressLine1 ||
-        !fulfillmentDetails?.city ||
-        !fulfillmentDetails?.country ||
-        !fulfillmentDetails?.postalCode)
-    )
-      return json({ error: 'Complete insured-delivery details are required' }, 400);
+    const normalizedDetails = normalizedFulfillmentDetails(fulfillmentMethod, fulfillmentDetails);
 
     const admin = adminClient();
     const deployment = await requireProtocolDeployment(admin, request);
@@ -38,16 +38,52 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (!link) return json({ error: 'Verified primary wallet required' }, 403);
 
+    const { data: existing, error: existingError } = await admin
+      .from('redemption_requests')
+      .select(
+        'id,request_hash,canonical_payload,status,requester_wallet,gem_id::text,token_id::text,fulfillment_method,fulfillment_details',
+      )
+      .eq('deployment_id', deployment.id)
+      .eq('requester_id', user.id)
+      .eq('client_request_id', clientRequestId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) {
+      if (
+        existing.requester_wallet !== normalizedWallet ||
+        String(existing.gem_id) !== String(gemId) ||
+        String(existing.token_id) !== String(tokenId) ||
+        existing.fulfillment_method !== fulfillmentMethod ||
+        !sameFulfillmentDetails(existing.fulfillment_details, normalizedDetails)
+      ) {
+        return json(
+          { error: 'clientRequestId is already bound to different redemption input' },
+          409,
+        );
+      }
+      if (!existing.request_hash || !existing.canonical_payload || existing.status === 'draft') {
+        throw new Error('The prior redemption commitment is incomplete; contact support');
+      }
+      return json({
+        workflowId: existing.id,
+        workflowIdHash: keccak256(toBytes(existing.id)),
+        requestHash: existing.request_hash,
+        canonicalPayload: existing.canonical_payload,
+        resumed: true,
+      });
+    }
+
     const { data: record, error } = await admin
       .from('redemption_requests')
       .insert({
         deployment_id: deployment.id,
+        client_request_id: clientRequestId,
         requester_id: user.id,
         requester_wallet: normalizedWallet,
         gem_id: String(gemId),
         token_id: String(tokenId),
         fulfillment_method: fulfillmentMethod,
-        fulfillment_details: fulfillmentDetails,
+        fulfillment_details: normalizedDetails,
       })
       .select('id')
       .single();
@@ -58,6 +94,7 @@ Deno.serve(async (request) => {
       gemId: String(gemId),
       tokenId: String(tokenId),
       fulfillmentMethod,
+      fulfillmentDetails: normalizedDetails,
       workflowRecordId: record.id,
       timestamp,
     });
@@ -83,6 +120,7 @@ Deno.serve(async (request) => {
     });
     return json({
       workflowId: record.id,
+      workflowIdHash: keccak256(toBytes(record.id)),
       requestHash: commitment.hash,
       canonicalPayload: commitment.canonicalPayload,
     });

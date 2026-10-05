@@ -1,1170 +1,1164 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Field, Labeled, inputClass } from '@/components/ui/Field';
-import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Skeleton } from '@/components/ui/States';
-import { useAuth } from '@/providers/AuthProvider';
-import { RedemptionQueue } from '@/components/verify/RedemptionQueue';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { OperationsAccessGate } from '@/components/operations/OperationsAccessGate';
+import { LifecycleTracker } from '@/components/operations/LifecycleTracker';
 import {
-  confirmCustody,
-  loadQueue,
-  loadSubmission,
-  previewPrice,
-  recordCustodyTerm,
-  rejectSubmission,
-  setVerificationMode,
-  submitGrading,
-  ppmToNumber,
-  usdFromBaseUnits,
-  type Breakdown,
-  type EvidenceFile,
-  type GradeInput,
-  type MatrixOptions,
-  type QueueItem,
-  type VerificationMode,
-} from '@/services/offchain/verification';
+  eventPresentation,
+  redemptionLifecycleStages,
+  sellerLifecycleStages,
+} from '@/components/operations/lifecyclePresentation';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Field, Labeled, inputClass } from '@/components/ui/Field';
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Tabs } from '@/components/ui/Tabs';
+import { EvidenceUpload } from '@/components/operations/EvidenceUpload';
+import {
+  activateMatrix,
+  approveRedemptionProof,
+  assignRedemption,
+  clearOperationIdempotencyKey,
+  correctWorkflow,
+  loadAdminOverview,
+  loadAppraisalMatrices,
+  loadRedemptionTracker,
+  operationIdempotencyKey,
+  startSellerActivation,
+  resumeRedemptionActionIntent,
+  rejectRedemptionProof,
+  mutateRedemptionRecovery,
+  type RedemptionTracker,
+  type OperationsOrganization,
+  type SellerWorkflowView,
+  type WorkflowEvidenceView,
+  type WorkflowKind,
+} from '@/services/offchain/operations';
+import { useOperationsAccess } from '@/hooks/useOperationsAccess';
+import { TxButton } from '@/components/tx/TxButton';
+import { dataService } from '@/services';
+import type { RedemptionMutationResult } from '@/services/offchain/operations';
+import { useAccount } from 'wagmi';
 
-/**
- * Grading portal for third-party labs.
- *
- * Not linked from public navigation, and non-members get the same "not found"
- * response the API returns rather than a login prompt — an unauthorised visitor
- * learns nothing about whether the route exists.
- *
- * Every dropdown below is populated from the pricing matrix the server serves,
- * never from a local list. A hardcoded option that the matrix has since dropped
- * would let a grader assess a whole stone before the engine refused it.
- */
-
-const EMPTY: GradeInput = {
-  variety: '',
-  caratWeight: 0,
-  clarity: '',
-  treatment: '',
-  shape: '',
-  color: '',
-  colorGrade: '',
-};
-
-const money = (value: number) => `$${value.toLocaleString('en-US')}`;
-const titleCase = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+type AdminTab = 'seller' | 'redemption' | 'matrix';
 
 export default function VerifyPage() {
-  const { user, loading: authLoading } = useAuth();
-  /*
-   * Deliberately distinct from `refreshing`. Only the first load has nothing to
-   * show and may replace the page with a skeleton; a later refetch must leave the
-   * rendered page in place, or every queue update blanks the whole portal.
-   */
-  const [initialising, setInitialising] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [organization, setOrganization] = useState<string>();
-  const [matrix, setMatrix] = useState<MatrixOptions>();
-  const [mode, setMode] = useState<VerificationMode>('lab');
-  const [modePending, setModePending] = useState<VerificationMode>();
-  const [canManage, setCanManage] = useState(false);
-  const [canCustody, setCanCustody] = useState(false);
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [custodyQueue, setCustodyQueue] = useState<QueueItem[]>([]);
-  const [intakeId, setIntakeId] = useState<string>();
-  const [intakeNotes, setIntakeNotes] = useState('');
-  const [intakeMatches, setIntakeMatches] = useState(true);
-  const [intakeEscrowEnds, setIntakeEscrowEnds] = useState('');
-  const [intakeBusy, setIntakeBusy] = useState(false);
-  const [termGemId, setTermGemId] = useState('');
-  const [termEscrowEnds, setTermEscrowEnds] = useState('');
-  const [termNote, setTermNote] = useState('');
-  const [termAttested, setTermAttested] = useState(false);
-  const [termBusy, setTermBusy] = useState(false);
-  const [selected, setSelected] = useState<QueueItem>();
-  const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
-  const [primaryImageId, setPrimaryImageId] = useState<string>();
-  const [grades, setGrades] = useState<GradeInput>(EMPTY);
-  const [preview, setPreview] = useState<{ usd: number; breakdown: Breakdown; version: string }>();
-  const [priceError, setPriceError] = useState<string>();
-  const [submitting, setSubmitting] = useState(false);
-  const [rejecting, setRejecting] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
-  const [result, setResult] = useState<{ tone: 'ok' | 'warn' | 'error'; message: string }>();
+  return (
+    <OperationsAccessGate capability="admin.read">
+      <AdminWorkspace />
+    </OperationsAccessGate>
+  );
+}
 
-  const refresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      const data = await loadQueue();
-      if (!data) {
-        setOrganization(undefined);
-        return;
-      }
-      setOrganization(data.organization);
-      setMatrix(data.matrix);
-      setMode(data.verificationMode);
-      setCanManage(data.canManageSettings);
-      setCanCustody(data.canConfirmCustody);
-      setQueue(data.queue);
-      setCustodyQueue(data.custodyQueue ?? []);
-    } finally {
-      setRefreshing(false);
-      setInitialising(false);
-    }
-  }, []);
+function AdminWorkspace() {
+  const { has } = useOperationsAccess();
+  const [tab, setTab] = useState<AdminTab>('seller');
+  const [selectedSellerId, setSelectedSellerId] = useState<string>();
+  const [selectedRedemptionId, setSelectedRedemptionId] = useState<string>();
+  const overview = useQuery({
+    queryKey: ['operations', 'admin', 'overview'],
+    queryFn: loadAdminOverview,
+    placeholderData: (previous) => previous,
+  });
 
-  useEffect(() => {
-    if (!authLoading && user) void refresh();
-    else if (!authLoading) setInitialising(false);
-  }, [authLoading, user, refresh]);
-
-  const variety = matrix?.varieties.find((entry) => entry.name === grades.variety);
-  const images = useMemo(() => evidence.filter((file) => file.eligibleAsPrimaryImage), [evidence]);
-
-  const complete = useMemo(
-    () =>
-      Boolean(
-        grades.variety &&
-        grades.clarity &&
-        grades.treatment &&
-        grades.shape &&
-        grades.color &&
-        grades.colorGrade &&
-        grades.caratWeight > 0,
-      ),
-    [grades],
+  if (overview.isLoading && !overview.data) {
+    return (
+      <div className="space-y-3">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-96" />
+      </div>
+    );
+  }
+  if (overview.isError && !overview.data) {
+    return (
+      <ErrorState message={overview.error instanceof Error ? overview.error.message : undefined} />
+    );
+  }
+  const data = overview.data ?? {
+    sellerWorkflows: [],
+    redemptionWorkflows: [],
+    matrices: [],
+    organizations: [],
+  };
+  const selectedSeller = data.sellerWorkflows.find((item) => item.workflowId === selectedSellerId);
+  const selectedRedemption = data.redemptionWorkflows.find(
+    (item) => item.id === selectedRedemptionId,
   );
 
-  // Priced server-side by the same code path that will commit the figure, so the
-  // number a grader approves cannot drift from the number recorded.
-  useEffect(() => {
-    if (!selected || !complete) {
-      setPreview(undefined);
-      setPriceError(undefined);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(async () => {
-      try {
-        const priced = await previewPrice(selected.id, grades);
-        if (cancelled) return;
-        setPriceError(undefined);
-        setPreview({
-          usd: usdFromBaseUnits(priced.approvedValuationUsd),
-          breakdown: priced.breakdown,
-          version: priced.matrixVersion,
-        });
-      } catch (error) {
-        if (cancelled) return;
-        setPreview(undefined);
-        setPriceError(error instanceof Error ? error.message : 'Pricing failed');
-      }
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [selected, grades, complete]);
-
-  async function open(item: QueueItem) {
-    setSelected(item);
-    setGrades({ ...EMPTY, caratWeight: item.carats ?? 0 });
-    setPreview(undefined);
-    setResult(undefined);
-    setEvidence([]);
-    setPrimaryImageId(undefined);
-    setRejectReason('');
-    // Without this the empty-evidence branch renders while the fetch is in
-    // flight, telling the grader the stone has no photograph and will be
-    // registered without one — alarming, and untrue.
-    setEvidenceLoading(true);
-    try {
-      const detail = await loadSubmission(item.id);
-      setEvidence(detail.evidence);
-      // Default to the seller's first photograph; the grader can promote another.
-      setPrimaryImageId(detail.evidence.find((file) => file.eligibleAsPrimaryImage)?.id);
-    } catch (error) {
-      setResult({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'Evidence could not be loaded',
-      });
-    } finally {
-      setEvidenceLoading(false);
-    }
-  }
-
-  function close() {
-    setSelected(undefined);
-    setEvidence([]);
-    setPrimaryImageId(undefined);
-  }
-
-  async function commit(event: FormEvent) {
-    event.preventDefault();
-    if (!selected || !complete) return;
-    setSubmitting(true);
-    setResult(undefined);
-    try {
-      const response = await submitGrading(selected.id, grades, primaryImageId);
-      const usd = money(usdFromBaseUnits(response.approvedValuationUsd));
-      if (response.activationState === 'failed') {
-        // The valuation is durable and activation is resumable, so this is a
-        // retry prompt rather than a lost grading.
-        setResult({
-          tone: 'warn',
-          message: `Valuation recorded at ${usd}, but the on-chain activation did not complete: ${
-            response.activationError ?? 'unknown error'
-          }. An operator can resume it; the grading is saved and will not be redone.`,
-        });
-      } else {
-        setResult({
-          tone: 'ok',
-          message: `Recorded at ${usd}. Gem ${response.activation?.onchainGemId ?? 'pending'}.`,
-        });
-      }
-      close();
-      await refresh();
-    } catch (error) {
-      setResult({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'Grading failed',
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function refuse() {
-    if (!selected) return;
-    setRejecting(true);
-    setResult(undefined);
-    try {
-      await rejectSubmission(selected.id, rejectReason.trim());
-      setResult({ tone: 'ok', message: 'Submission rejected. Nothing was written on-chain.' });
-      close();
-      await refresh();
-    } catch (error) {
-      setResult({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'Rejection failed',
-      });
-    } finally {
-      setRejecting(false);
-    }
-  }
-
-  /*
-   * One round trip, not two. The mode governs how *future* submissions are
-   * routed, so nothing already in the queue changes and the reload that used to
-   * follow was pure latency — and it blanked the page while it ran.
-   */
-  /*
-   * Records physical arrival, which is what releases a stone to the grading
-   * queue. Nothing on-chain: `confirmCustody()` stays inside the atomic
-   * activation sequence and attests to this event afterwards.
-   */
-  async function recordIntake(submissionId: string) {
-    setIntakeBusy(true);
-    setResult(undefined);
-    try {
-      await confirmCustody(submissionId, {
-        matchesDeclared: intakeMatches,
-        conditionNotes: intakeNotes.trim(),
-        // Date-only input, taken as end of day so a term recorded for today's
-        // date does not lapse at midnight this morning.
-        reserveEscrowEndsAt: new Date(`${intakeEscrowEnds}T23:59:59`).toISOString(),
-      });
-      setResult({
-        tone: 'ok',
-        message: 'Custody recorded. The stone is now available for grading.',
-      });
-      setIntakeId(undefined);
-      setIntakeNotes('');
-      setIntakeMatches(true);
-      setIntakeEscrowEnds('');
-      await refresh();
-    } catch (error) {
-      setResult({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'Custody confirmation failed',
-      });
-    } finally {
-      setIntakeBusy(false);
-    }
-  }
-
-  function openIntake(item: QueueItem) {
-    setIntakeId(item.id);
-    setIntakeNotes('');
-    setIntakeMatches(true);
-    setIntakeEscrowEnds('');
-    setResult(undefined);
-  }
-
-  async function recordMissingTerm() {
-    setTermBusy(true);
-    setResult(undefined);
-    try {
-      const recorded = await recordCustodyTerm({
-        gemId: termGemId.trim(),
-        reserveEscrowEndsAt: new Date(`${termEscrowEnds}T23:59:59`).toISOString(),
-        attestationNote: termNote.trim(),
-      });
-      setResult({
-        tone: 'ok',
-        message: `Reserve escrow term recorded for Gem #${recorded.gemId}. New gift cards may be claimed through ${new Date(recorded.reserveEscrowEndsAt).toLocaleDateString()}.`,
-      });
-      setTermGemId('');
-      setTermEscrowEnds('');
-      setTermNote('');
-      setTermAttested(false);
-    } catch (error) {
-      setResult({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'The custody term could not be recorded',
-      });
-    } finally {
-      setTermBusy(false);
-    }
-  }
-
-  async function changeMode(next: VerificationMode) {
-    if (next === mode || modePending) return;
-    setResult(undefined);
-    setModePending(next);
-    try {
-      const { verificationMode } = await setVerificationMode(next);
-      setMode(verificationMode);
-    } catch (error) {
-      setResult({
-        tone: 'error',
-        message: error instanceof Error ? error.message : 'Could not change verification mode',
-      });
-    } finally {
-      setModePending(undefined);
-    }
-  }
-
-  if (authLoading || initialising) {
-    return (
-      <div className="mx-auto w-full max-w-content p-8">
-        <Skeleton className="h-64" />
-      </div>
-    );
-  }
-
-  // Same response an unauthorised caller gets from the API: the route does not
-  // advertise its own existence.
-  if (!user || !organization || !matrix) {
-    return (
-      <div className="mx-auto w-full max-w-content px-6 py-24 text-center">
-        <h1 className="font-display text-[28px] font-medium text-ink">Page not found</h1>
-        <p className="mt-3 text-[14px] text-ink-muted">
-          This address does not correspond to anything you can access.
-        </p>
-      </div>
-    );
-  }
-
   return (
-    <div className="mx-auto w-full max-w-content space-y-6 px-5 py-8 sm:px-6 md:px-10">
+    <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-atelier">
-            Verification portal
-          </p>
-          <h1 className="mt-2 font-display text-[27px] font-medium tracking-[-0.03em] text-ink">
-            Gemological review
-          </h1>
-          <p className="mt-2 text-[13.5px] text-ink-muted">
-            Signed in as {organization}. Grades recorded here set the permanent on-chain valuation.
+          <h2 className="font-display text-[24px] font-medium tracking-[-0.03em] text-ink">
+            Protocol operations review
+          </h2>
+          <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-muted">
+            Review seller and redemption lifecycles from their append-only event streams.
+            Corrections remain visible beside the records they supersede.
           </p>
         </div>
-        <StatusBadge tone="neutral" dot>
-          {refreshing ? 'Refreshing…' : `${queue.length} awaiting review`}
-        </StatusBadge>
-      </header>
-
-      {canManage && <ModeControl mode={mode} pending={modePending} onChange={changeMode} />}
-
-      {mode === 'auto' && (
-        <p className="rounded-[4px] border border-amber/25 bg-amber/[0.06] px-4 py-3 text-[13px] text-amber">
-          Automatic verification is active. New submissions are priced by the test-only
-          $500-per-carat rule and listed without reaching this queue.
-        </p>
-      )}
-
-      {result && (
-        <div
-          role="status"
-          className={`rounded-[4px] border px-4 py-3 text-[13px] ${
-            result.tone === 'ok'
-              ? 'border-emerald/25 bg-emerald/[0.06] text-emerald'
-              : result.tone === 'warn'
-                ? 'border-amber/25 bg-amber/[0.06] text-amber'
-                : 'border-ruby/25 bg-ruby/[0.06] text-ruby'
-          }`}
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => void overview.refetch()}
+          disabled={overview.isFetching}
         >
-          {result.message}
-        </div>
-      )}
-
-      {/*
-        Same audience as the custody queue: the operator who physically holds
-        the stones. Intake is the first half of custody and handover the last,
-        so they belong on one screen.
-      */}
-      {canCustody && <RedemptionQueue />}
-
-      {canCustody && (
-        <CustodyQueue
-          items={custodyQueue}
-          openId={intakeId}
-          notes={intakeNotes}
-          matches={intakeMatches}
-          escrowEnds={intakeEscrowEnds}
-          busy={intakeBusy}
-          onOpen={openIntake}
-          onCancel={() => setIntakeId(undefined)}
-          onNotes={setIntakeNotes}
-          onMatches={setIntakeMatches}
-          onEscrowEnds={setIntakeEscrowEnds}
-          onConfirm={recordIntake}
-        />
-      )}
-
-      {canCustody && (
-        <MissingCustodyTerm
-          gemId={termGemId}
-          escrowEnds={termEscrowEnds}
-          note={termNote}
-          attested={termAttested}
-          busy={termBusy}
-          onGemId={setTermGemId}
-          onEscrowEnds={setTermEscrowEnds}
-          onNote={setTermNote}
-          onAttested={setTermAttested}
-          onRecord={recordMissingTerm}
-        />
-      )}
-
-      <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
-        {/*
-          The queue is a sidebar on a wide screen and a picker on a narrow one.
-          Stacked, it ran to as many rows as there were stones — up to a hundred —
-          so choosing the first one put its grading form a hundred rows further
-          down the page, with nothing to suggest it had appeared at all. Capped
-          and scrollable, the form is always the next thing on screen.
-        */}
-        <Card className="flex max-h-[50dvh] flex-col p-0 lg:max-h-none">
-          <div className="shrink-0 border-b border-line/[0.08] px-4 py-3 text-[12px] font-semibold text-ink-soft">
-            Awaiting grading
-          </div>
-          {queue.length === 0 ? (
-            <p className="px-4 py-6 text-[13px] text-ink-muted">Nothing awaiting review.</p>
+          {overview.isFetching ? 'Refreshing…' : 'Refresh from source'}
+        </Button>
+      </header>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'seller', label: 'Seller lifecycles', count: data.sellerWorkflows.length },
+          {
+            key: 'redemption',
+            label: 'Redemption lifecycles',
+            count: data.redemptionWorkflows.length,
+          },
+          { key: 'matrix', label: 'Matrix activation' },
+        ]}
+      />
+      {tab === 'seller' && (
+        <WorkflowSplit
+          items={data.sellerWorkflows.map((workflow) => ({
+            id: workflow.workflowId,
+            title: workflow.stoneName ?? `Submission ${workflow.submissionId.slice(0, 8)}`,
+            subtitle: workflow.sellerName ?? workflow.submissionId,
+            status: workflow.state,
+            legacy: workflow.legacyBaseline,
+          }))}
+          empty="No seller lifecycle projections exist."
+          selectedId={selectedSellerId}
+          onSelect={setSelectedSellerId}
+        >
+          {selectedSeller ? (
+            <SellerReview workflow={selectedSeller} canCorrect={has('admin.correct')} />
           ) : (
-            <ul className="min-h-0 overflow-y-auto">
-              {queue.map((item) => (
-                <li key={item.id}>
-                  <button
-                    type="button"
-                    onClick={() => void open(item)}
-                    className={`w-full border-b border-line/[0.06] px-4 py-3 text-left transition-colors hover:bg-line/[0.03] ${
-                      selected?.id === item.id ? 'bg-line/[0.05]' : ''
-                    }`}
-                  >
-                    <div className="text-[13.5px] font-medium text-ink">{item.gem_name}</div>
-                    <div className="mt-0.5 font-mono text-[11px] text-ink-dim">
-                      {item.carats ?? '—'} ct · {new Date(item.created_at).toLocaleDateString()}
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <EmptyState
+              title="Select a seller workflow"
+              hint="Review explicit appraisal, bank receipt and activation events."
+            />
           )}
-        </Card>
-
-        {selected ? (
-          <div className="-order-1 space-y-5 lg:order-none">
-            <Card className="space-y-4 p-5">
-              <div>
-                <h2 className="font-display text-[17px] font-medium text-ink">
-                  {selected.gem_name}
-                </h2>
-                <p className="mt-1 text-[12px] text-ink-dim">
-                  Seller claims below are unverified. Your grades are what price the stone.
-                </p>
-              </div>
-
-              {/* Intake findings travel with the stone: a divergence noted on arrival
-                  is something the grader should know before measuring. */}
-              {selected.custody_received_at && (
-                <div
-                  className={`rounded-[4px] border px-3 py-2.5 text-[12.5px] ${
-                    selected.custody_matches_declared === false
-                      ? 'border-amber/25 bg-amber/[0.06] text-amber'
-                      : 'border-line/[0.08] bg-line/[0.02] text-ink-muted'
-                  }`}
-                >
-                  <span className="font-semibold">
-                    {selected.custody_matches_declared === false
-                      ? 'Received — diverges from the seller’s declaration'
-                      : 'Received and matches the declaration'}
-                  </span>
-                  <span className="ml-1.5 text-ink-dim">
-                    {new Date(selected.custody_received_at).toLocaleDateString()}
-                  </span>
-                  {selected.custody_condition_notes && (
-                    <p className="mt-1 text-ink-soft">{selected.custody_condition_notes}</p>
-                  )}
-                </div>
-              )}
-
-              <dl className="grid grid-cols-2 gap-x-5 gap-y-2 rounded-[4px] bg-line/[0.03] p-3 text-[12.5px] sm:grid-cols-3">
-                {Object.entries(selected.attributes ?? {})
-                  .filter(([, value]) => value !== '' && value !== null)
-                  .map(([key, value]) => (
-                    <div key={key}>
-                      <dt className="text-[10.5px] uppercase tracking-[0.1em] text-ink-dim">
-                        {key}
-                      </dt>
-                      <dd className="text-ink-soft">{String(value)}</dd>
-                    </div>
-                  ))}
-              </dl>
-
-              <ImageSelector
-                images={images}
-                loading={evidenceLoading}
-                selectedId={primaryImageId}
-                onSelect={setPrimaryImageId}
-              />
-
-              <div>
-                <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Certificates</h3>
-                {evidenceLoading ? (
-                  <p className="text-[12.5px] text-ink-muted">Loading evidence…</p>
-                ) : evidence.length === 0 ? (
-                  <p className="text-[12.5px] text-ink-muted">No evidence files on record.</p>
-                ) : (
-                  <ul className="space-y-1.5">
-                    {evidence
-                      .filter((file) => !file.eligibleAsPrimaryImage)
-                      .map((file) => (
-                        <li key={file.id} className="flex items-center justify-between gap-3">
-                          <span className="font-mono text-[11.5px] text-ink-muted">
-                            {file.category} · {file.sha256.slice(0, 12)}…
-                          </span>
-                          {file.url ? (
-                            <a
-                              href={file.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[12px] font-medium text-atelier"
-                            >
-                              Open ↗
-                            </a>
-                          ) : (
-                            <span className="text-[12px] text-ink-dim">Unavailable</span>
-                          )}
-                        </li>
-                      ))}
-                  </ul>
-                )}
-                <p className="mt-2 text-[11px] text-ink-dim">
-                  Certificates stay private and are never published to IPFS.
-                </p>
-              </div>
-            </Card>
-
-            <form onSubmit={commit}>
-              <Card className="space-y-4 p-5">
-                <h3 className="text-[13px] font-semibold text-ink">Authoritative grading</h3>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Labeled label="Variety">
-                    <select
-                      className={inputClass}
-                      value={grades.variety}
-                      onChange={(event) =>
-                        setGrades({
-                          ...grades,
-                          variety: event.target.value,
-                          color: '',
-                          colorGrade: '',
-                        })
-                      }
-                    >
-                      <option value="">Select…</option>
-                      {matrix.varieties.map((entry) => (
-                        <option key={entry.name} value={entry.name}>
-                          {titleCase(entry.name)}
-                        </option>
-                      ))}
-                    </select>
-                  </Labeled>
-                  <Labeled
-                    label="Carat weight"
-                    hint={`Priced from ${matrix.caratRange.min} to ${matrix.caratRange.max} ct`}
-                  >
-                    <input
-                      type="number"
-                      step="0.01"
-                      min={matrix.caratRange.min}
-                      max={matrix.caratRange.max}
-                      className={inputClass}
-                      value={grades.caratWeight || ''}
-                      onChange={(event) =>
-                        setGrades({ ...grades, caratWeight: Number(event.target.value) })
-                      }
-                    />
-                  </Labeled>
-                  <Choice
-                    label="Clarity"
-                    options={matrix.clarities}
-                    value={grades.clarity}
-                    onChange={(clarity) => setGrades({ ...grades, clarity })}
-                  />
-                  <Choice
-                    label="Treatment"
-                    options={matrix.treatments}
-                    value={grades.treatment}
-                    onChange={(treatment) => setGrades({ ...grades, treatment })}
-                  />
-                  <Choice
-                    label="Shape"
-                    options={matrix.shapes}
-                    value={grades.shape}
-                    onChange={(shape) => setGrades({ ...grades, shape })}
-                  />
-                  <Choice
-                    label="Colour"
-                    options={variety?.colors ?? []}
-                    value={grades.color}
-                    disabled={!variety}
-                    onChange={(color) => setGrades({ ...grades, color })}
-                  />
-                  <Choice
-                    label="Colour grade"
-                    options={variety?.colorGrades ?? []}
-                    value={grades.colorGrade}
-                    disabled={!variety}
-                    onChange={(colorGrade) => setGrades({ ...grades, colorGrade })}
-                  />
-                </div>
-
-                {priceError && (
-                  <p
-                    role="alert"
-                    className="rounded-[4px] border border-ruby/25 bg-ruby/[0.06] px-3 py-2.5 text-[12.5px] text-ruby"
-                  >
-                    {priceError}
-                  </p>
-                )}
-
-                {preview && (
-                  <PriceBreakdown
-                    usd={preview.usd}
-                    breakdown={preview.breakdown}
-                    version={preview.version}
-                  />
-                )}
-
-                <div className="flex flex-wrap items-center gap-3 border-t border-line/[0.08] pt-4">
-                  <Button type="submit" disabled={!complete || !preview || submitting}>
-                    {submitting ? 'Recording…' : 'Approve and record on-chain'}
-                  </Button>
-                  <p className="text-[11.5px] text-ink-dim">
-                    This registers the gem, writes a permanent valuation, and cannot be undone.
-                  </p>
-                </div>
-              </Card>
-            </form>
-
-            <Card className="space-y-3 p-5">
-              <h3 className="text-[13px] font-semibold text-ink">Reject</h3>
-              <p className="text-[12.5px] text-ink-muted">
-                Refuses the stone. Nothing is registered on-chain and no image is published, so a
-                rejected submission leaves no permanent trace.
-              </p>
-              <Labeled label="Reason" hint="Shared with the seller. At least 10 characters.">
-                <textarea
-                  className={`${inputClass} min-h-[80px]`}
-                  value={rejectReason}
-                  onChange={(event) => setRejectReason(event.target.value)}
-                />
-              </Labeled>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={rejectReason.trim().length < 10 || rejecting}
-                onClick={() => void refuse()}
-              >
-                {rejecting ? 'Rejecting…' : 'Reject submission'}
-              </Button>
-            </Card>
-          </div>
-        ) : (
-          <Card className="flex items-center justify-center p-12">
-            <p className="text-[13.5px] text-ink-muted">Select a submission to begin grading.</p>
-          </Card>
-        )}
-      </div>
+        </WorkflowSplit>
+      )}
+      {tab === 'redemption' && (
+        <WorkflowSplit
+          items={data.redemptionWorkflows.map((workflow) => ({
+            id: workflow.id,
+            title: workflow.gem?.name ?? `Token #${workflow.tokenId}`,
+            subtitle: `Token #${workflow.tokenId} · ${workflow.method === 'pickup' ? 'Pickup' : 'Courier'}`,
+            status: workflow.status,
+            legacy: false,
+          }))}
+          empty="No redemption lifecycle projections exist."
+          selectedId={selectedRedemptionId}
+          onSelect={setSelectedRedemptionId}
+        >
+          {selectedRedemption ? (
+            <RedemptionReview
+              workflow={selectedRedemption}
+              canCorrect={has('admin.correct')}
+              organizations={data.organizations}
+            />
+          ) : (
+            <EmptyState
+              title="Select a redemption workflow"
+              hint="Review delivery proof, owner authorization and chain finalization."
+            />
+          )}
+        </WorkflowSplit>
+      )}
+      {tab === 'matrix' && <MatrixActivation canActivate={has('matrix.activate')} />}
     </div>
   );
 }
 
-function MissingCustodyTerm({
-  gemId,
-  escrowEnds,
-  note,
-  attested,
-  busy,
-  onGemId,
-  onEscrowEnds,
-  onNote,
-  onAttested,
-  onRecord,
+function WorkflowSplit({
+  items,
+  empty,
+  selectedId,
+  onSelect,
+  children,
 }: {
-  gemId: string;
-  escrowEnds: string;
-  note: string;
-  attested: boolean;
-  busy: boolean;
-  onGemId: (value: string) => void;
-  onEscrowEnds: (value: string) => void;
-  onNote: (value: string) => void;
-  onAttested: (value: boolean) => void;
-  onRecord: () => void | Promise<void>;
+  items: Array<{ id: string; title: string; subtitle: string; status: string; legacy: boolean }>;
+  empty: string;
+  selectedId?: string;
+  onSelect: (id: string) => void;
+  children: React.ReactNode;
 }) {
-  const [earliestEscrowEnd] = useState(() =>
-    new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
-  );
-  const ready = /^\d+$/.test(gemId.trim()) && escrowEnds && note.trim().length >= 10 && attested;
-
   return (
-    <Card className="space-y-3">
-      <div>
-        <h2 className="text-[13px] font-semibold text-ink">Missing custody terms</h2>
-        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-          Use this only for an already-tokenised gemstone whose original intake record is missing.
-          Record the actual custody agreement date shown in your source document. It cannot be
-          changed later, and Digital Carat will never calculate or guess it.
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,.7fr)_minmax(0,1.3fr)]">
+      <Card className="p-0">
+        {items.length === 0 ? (
+          <p className="px-4 py-8 text-[12px] text-ink-dim">{empty}</p>
+        ) : (
+          <ul className="divide-y divide-line/[0.06]">
+            {items.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  aria-pressed={selectedId === item.id}
+                  onClick={() => onSelect(item.id)}
+                  className="flex w-full items-start justify-between gap-3 px-4 py-3.5 text-left hover:bg-line/[0.025] aria-pressed:bg-atelier/[0.07]"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-semibold text-ink">
+                      {item.title}
+                    </span>
+                    <span className="mt-1 block truncate text-[11px] text-ink-muted">
+                      {item.subtitle}
+                    </span>
+                    {item.legacy && (
+                      <span className="mt-1 block text-[10px] text-amber">
+                        Legacy baseline, evidence not inferred
+                      </span>
+                    )}
+                  </span>
+                  <StatusBadge tone="neutral" className="shrink-0">
+                    {item.status.replaceAll('_', ' ')}
+                  </StatusBadge>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+      {children}
+    </div>
+  );
+}
+
+function SellerReview({
+  workflow,
+  canCorrect,
+}: {
+  workflow: SellerWorkflowView;
+  canCorrect: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const activate = useMutation({
+    mutationFn: async () => {
+      const intent = `admin:seller:${workflow.workflowId}:activation`;
+      const response = await startSellerActivation({
+        submissionId: workflow.submissionId,
+        expectedVersion: workflow.version,
+        idempotencyKey: operationIdempotencyKey(intent),
+      });
+      clearOperationIdempotencyKey(intent);
+      return response;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['operations', 'admin'] }),
+  });
+  return (
+    <Card className="space-y-5 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-[15px] font-semibold text-ink">
+            {workflow.stoneName ?? 'Seller workflow'}
+          </h3>
+          <p className="mt-1 font-mono text-[10px] text-ink-dim">{workflow.workflowId}</p>
+        </div>
+        {workflow.bankReceivedAt ? (
+          <StatusBadge tone="success">Bank receipt verified</StatusBadge>
+        ) : (
+          <StatusBadge tone="warning">Awaiting bank receipt</StatusBadge>
+        )}
+      </div>
+      <LifecycleTracker
+        title="Seller lifecycle"
+        stages={sellerLifecycleStages(workflow)}
+        events={eventPresentation(workflow.events)}
+      />
+      {workflow.nextActions.includes('start_seller_activation') && (
+        <div className="border-t border-line/[0.07] pt-4">
+          <p className="mb-3 text-[12px] leading-relaxed text-ink-muted">
+            Activation rechecks the immutable appraisal and authoritative bank receipt. It does not
+            trust the browser display.
+          </p>
+          <Button onClick={() => activate.mutate()} disabled={activate.isPending}>
+            {activate.isPending ? 'Starting…' : 'Start protocol activation'}
+          </Button>
+        </div>
+      )}
+      {activate.error && (
+        <p role="alert" className="text-[12px] text-ruby">
+          {activate.error instanceof Error ? activate.error.message : 'Activation could not start.'}
         </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field
-          label="On-chain gemstone ID"
-          placeholder="For example, 3"
-          inputMode="numeric"
-          value={gemId}
-          onChange={(event) => onGemId(event.target.value.replace(/\D/g, ''))}
+      )}
+      {canCorrect && (
+        <CorrectionForm
+          kind="seller"
+          workflowId={workflow.workflowId}
+          version={workflow.version}
+          events={workflow.events}
         />
-        <Labeled label="Reserve escrow ends">
-          <input
-            type="date"
-            className={inputClass}
-            min={earliestEscrowEnd}
-            value={escrowEnds}
-            onChange={(event) => onEscrowEnds(event.target.value)}
-          />
-        </Labeled>
-      </div>
-      <Labeled
-        label="Agreement reference"
-        hint="Required audit note. Do not include a home address or other delivery details."
-      >
-        <textarea
-          className={`${inputClass} min-h-[68px]`}
-          maxLength={2_000}
-          value={note}
-          onChange={(event) => onNote(event.target.value)}
-          placeholder="Document or agreement reference used to verify the term"
-        />
-      </Labeled>
-      <label className="flex items-start gap-2.5 text-[12.5px] text-ink-soft">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={attested}
-          onChange={(event) => onAttested(event.target.checked)}
-        />
-        <span>I confirm this is the actual custody agreement end date, not an estimate.</span>
-      </label>
-      <Button type="button" size="sm" disabled={busy || !ready} onClick={() => void onRecord()}>
-        {busy ? 'Recording…' : 'Record one-time term'}
-      </Button>
+      )}
     </Card>
   );
 }
 
-/**
- * Stones that have not physically arrived yet.
- *
- * Rendered only for members who can clear it. A grading lab seeing an intake
- * list it cannot act on would imply an authority it does not hold, and the
- * stones in it are precisely the ones nobody can assess yet.
- */
-function CustodyQueue({
-  items,
-  openId,
-  notes,
-  matches,
-  escrowEnds,
-  busy,
-  onOpen,
-  onCancel,
-  onNotes,
-  onMatches,
-  onEscrowEnds,
-  onConfirm,
+export function RedemptionReview({
+  workflow,
+  canCorrect,
+  organizations = [],
 }: {
-  items: QueueItem[];
-  openId?: string;
-  notes: string;
-  matches: boolean;
-  escrowEnds: string;
-  busy: boolean;
-  onOpen: (item: QueueItem) => void;
-  onCancel: () => void;
-  onNotes: (value: string) => void;
-  onMatches: (value: boolean) => void;
-  onEscrowEnds: (value: string) => void;
-  onConfirm: (submissionId: string) => void | Promise<void>;
+  workflow: RedemptionTracker;
+  canCorrect: boolean;
+  organizations?: OperationsOrganization[];
 }) {
-  // Read once on mount: the clock is impure, and this only needs to stop a
-  // custodian back-dating the term, not to tick.
-  const [earliestEscrowEnd] = useState(() =>
-    new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+  const queryClient = useQueryClient();
+  const { address } = useAccount();
+  const { data: access } = useOperationsAccess();
+  const organizationId = access?.memberships.find((entry) =>
+    entry.capabilities.includes('admin.read'),
+  )?.organizationId;
+  const approvalOrganizationId = access?.memberships.find((entry) =>
+    entry.capabilities.includes('redemption.approve'),
+  )?.organizationId;
+  const detailQuery = useQuery({
+    queryKey: ['operations', 'redemption', 'detail', workflow.id, organizationId],
+    queryFn: () => loadRedemptionTracker(workflow.id, organizationId),
+    enabled: Boolean(organizationId),
+  });
+  const detail = detailQuery.data ?? workflow;
+  const [prepared, setPrepared] = useState<{
+    intent: string;
+    storageKey?: string;
+    result: RedemptionMutationResult;
+  }>();
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [preparedRejection, setPreparedRejection] = useState<{
+    intent: string;
+    storageKey?: string;
+    reason: string;
+    result: RedemptionMutationResult;
+  }>();
+  const [custodianOrganizationId, setCustodianOrganizationId] = useState(
+    workflow.assignment?.custodianOrganizationId ?? '',
   );
+  const [bankOrganizationId, setBankOrganizationId] = useState(
+    workflow.assignment?.bankOrganizationId ?? '',
+  );
+  useEffect(() => {
+    setCustodianOrganizationId(detail.assignment?.custodianOrganizationId ?? '');
+    setBankOrganizationId(detail.assignment?.bankOrganizationId ?? '');
+  }, [detail.assignment?.bankOrganizationId, detail.assignment?.custodianOrganizationId]);
+  const assignment = useMutation({
+    mutationFn: async () => {
+      if (!organizationId) throw new Error('Admin organization is unavailable.');
+      if (!custodianOrganizationId) throw new Error('Choose an active custodian.');
+      if (detail.method === 'pickup' && !bankOrganizationId) {
+        throw new Error('Pickup redemptions require an active storage bank.');
+      }
+      const storageKey = `admin:redemption:${detail.id}:assignment:${detail.version}`;
+      const response = await assignRedemption({
+        organizationId,
+        requestId: detail.id,
+        expectedVersion: detail.version,
+        custodianOrganizationId,
+        bankOrganizationId: bankOrganizationId || null,
+        idempotencyKey: operationIdempotencyKey(storageKey),
+      });
+      clearOperationIdempotencyKey(storageKey);
+      return response;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['operations'] }),
+  });
+  const pendingApproval = useQuery({
+    queryKey: ['operations', 'redemption', workflow.id, 'pending-action', 'approval'],
+    queryFn: () =>
+      resumeRedemptionActionIntent({
+        requestId: workflow.id,
+        intentAction: 'approve_fulfillment_proof',
+        organizationId: approvalOrganizationId,
+      }),
+    enabled: Boolean(
+      approvalOrganizationId && detail.capabilities?.includes('approve_fulfillment_proof'),
+    ),
+  });
+  useEffect(() => {
+    if (!pendingApproval.data || prepared) return;
+    setPrepared({
+      intent: pendingApproval.data.idempotencyKey,
+      result: {
+        request: detail,
+        chainAction: 'approveFulfillmentProof',
+        args: pendingApproval.data.chainArguments,
+      },
+    });
+  }, [detail, pendingApproval.data, prepared]);
+  const pendingRejection = useQuery({
+    queryKey: ['operations', 'redemption', workflow.id, 'pending-action', 'rejection'],
+    queryFn: () =>
+      resumeRedemptionActionIntent({
+        requestId: workflow.id,
+        intentAction: 'reject_fulfillment_proof',
+        organizationId: approvalOrganizationId,
+      }),
+    enabled: Boolean(
+      approvalOrganizationId && detail.capabilities?.includes('reject_fulfillment_proof'),
+    ),
+  });
+  useEffect(() => {
+    if (!pendingRejection.data || preparedRejection) return;
+    setPreparedRejection({
+      intent: pendingRejection.data.idempotencyKey,
+      reason: String(pendingRejection.data.payload.reason ?? ''),
+      result: {
+        request: detail,
+        chainAction: 'rejectFulfillmentProof',
+        args: pendingRejection.data.chainArguments,
+      },
+    });
+  }, [detail, pendingRejection.data, preparedRejection]);
+  const approval = useMutation({
+    mutationFn: async () => {
+      if (!approvalOrganizationId) {
+        throw new Error('This organization cannot approve redemption proof.');
+      }
+      if (!address) throw new Error('Connect the verified proof-approver wallet.');
+      const intent = `admin:redemption:${workflow.id}:proof:${detail.version}`;
+      const idempotencyKey = operationIdempotencyKey(intent);
+      const response = await approveRedemptionProof({
+        requestId: workflow.id,
+        organizationId: approvalOrganizationId,
+        expectedVersion: detail.version,
+        idempotencyKey,
+        approverWallet: address,
+      });
+      return { intent: idempotencyKey, storageKey: intent, result: response };
+    },
+    onSuccess: setPrepared,
+  });
+  const preparedArgs = prepared?.result.args;
+  const preparedValid =
+    prepared?.result.chainAction === 'approveFulfillmentProof' &&
+    Boolean(preparedArgs?.tokenId && preparedArgs.approvalId && preparedArgs.approvalVersion);
+  const rejection = useMutation({
+    mutationFn: async () => {
+      if (!approvalOrganizationId || !address) {
+        throw new Error('Connect the verified proof-approver wallet.');
+      }
+      const reason = rejectionReason.trim();
+      if (reason.length < 10)
+        throw new Error('Enter a rejection reason of at least 10 characters.');
+      const storageKey = `admin:redemption:${workflow.id}:reject:${detail.version}`;
+      const intent = operationIdempotencyKey(storageKey);
+      const result = await rejectRedemptionProof({
+        requestId: workflow.id,
+        organizationId: approvalOrganizationId,
+        expectedVersion: detail.version,
+        idempotencyKey: intent,
+        approverWallet: address,
+        reason,
+      });
+      return { intent, storageKey, reason, result };
+    },
+    onSuccess: setPreparedRejection,
+  });
+  const rejectionArgs = preparedRejection?.result.args;
+  const rejectionValid =
+    preparedRejection?.result.chainAction === 'rejectFulfillmentProof' &&
+    Boolean(rejectionArgs?.tokenId && rejectionArgs.reasonHash);
   return (
-    <Card className="p-0">
-      <div className="flex items-center justify-between border-b border-line/[0.08] px-4 py-3">
+    <Card className="space-y-5 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-[13px] font-semibold text-ink">Awaiting custody</h2>
-          <p className="mt-0.5 text-[11.5px] text-ink-muted">
-            Log a stone once it physically arrives. Grading cannot start until it does.
-          </p>
+          <h3 className="text-[15px] font-semibold text-ink">
+            {detail.gem?.name ?? `Token #${detail.tokenId}`}
+          </h3>
+          <p className="mt-1 font-mono text-[10px] text-ink-dim">{detail.id}</p>
         </div>
-        <StatusBadge tone={items.length > 0 ? 'warning' : 'neutral'} dot>
-          {items.length} in transit
+        <StatusBadge tone="info">
+          {detail.method === 'pickup' ? 'Bank pickup' : 'Insured courier'}
         </StatusBadge>
       </div>
+      <LifecycleTracker
+        title="Redemption lifecycle"
+        stages={redemptionLifecycleStages(detail)}
+        events={eventPresentation(detail.events ?? [])}
+      />
+      {canCorrect && (
+        <div className="space-y-3 border-t border-line/[0.07] pt-4">
+          <div>
+            <h4 className="text-[13px] font-semibold text-ink">Fulfillment assignment</h4>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+              Only active organizations returned by the operations service can be assigned. Pickup
+              requires both a custodian and the receiving storage bank.
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Labeled label="Assigned custodian">
+              <select
+                className={inputClass}
+                value={custodianOrganizationId}
+                onChange={(event) => setCustodianOrganizationId(event.target.value)}
+              >
+                <option value="">Choose active custodian</option>
+                {organizations
+                  .filter((entry) => entry.kind === 'custodian')
+                  .map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+              </select>
+            </Labeled>
+            <Labeled
+              label="Assigned storage bank"
+              hint={detail.method === 'pickup' ? 'Required for pickup' : 'Optional for courier'}
+            >
+              <select
+                className={inputClass}
+                value={bankOrganizationId}
+                onChange={(event) => setBankOrganizationId(event.target.value)}
+              >
+                <option value="">
+                  {detail.method === 'pickup' ? 'Choose active bank' : 'No bank'}
+                </option>
+                {organizations
+                  .filter((entry) => entry.kind === 'bank')
+                  .map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+              </select>
+            </Labeled>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={
+              assignment.isPending ||
+              !custodianOrganizationId ||
+              (detail.method === 'pickup' && !bankOrganizationId)
+            }
+            onClick={() => assignment.mutate()}
+          >
+            {assignment.isPending
+              ? 'Saving assignment…'
+              : detail.assignment
+                ? 'Update assignment'
+                : 'Assign fulfillment teams'}
+          </Button>
+          {organizations.length === 0 && (
+            <p role="alert" className="text-[11.5px] text-amber">
+              No active custodian or bank choices are available. Assignment remains disabled.
+            </p>
+          )}
+          {assignment.error && (
+            <p role="alert" className="text-[12px] text-ruby">
+              {assignment.error instanceof Error
+                ? assignment.error.message
+                : 'Assignment could not be saved.'}
+            </p>
+          )}
+        </div>
+      )}
+      {detail.capabilities?.includes('approve_fulfillment_proof') && (
+        <div className="space-y-3 border-t border-line/[0.07] pt-4">
+          <div className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] p-3">
+            <p className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-dim">
+              Proof digest
+            </p>
+            <p className="mt-1 break-all font-mono text-[11px] text-ink">
+              {detail.proofDigest ?? 'Proof digest unavailable'}
+            </p>
+          </div>
+          <p className="text-[11.5px] text-ink-muted">
+            Approval permits the server to issue a request-bound owner code. It does not burn the
+            token.
+          </p>
+          {!prepared ? (
+            <Button onClick={() => approval.mutate()} disabled={approval.isPending}>
+              {approval.isPending ? 'Preparing approval…' : 'Prepare delivery proof approval'}
+            </Button>
+          ) : !preparedValid ? (
+            <p role="alert" className="text-[12px] text-ruby">
+              The prepared approval is incomplete. Reload instead of signing it.
+            </p>
+          ) : (
+            <TxButton
+              telemetryFlow="redemption_proof_approval"
+              action={() =>
+                dataService.approveFulfillmentProof({
+                  tokenId: BigInt(preparedArgs!.tokenId),
+                  approvalId: preparedArgs!.approvalId!,
+                  approvalVersion: BigInt(preparedArgs!.approvalVersion!),
+                })
+              }
+              onConfirmed={async ({ hash }) => {
+                if (!address) throw new Error('Reconnect the verified proof-approver wallet.');
+                await approveRedemptionProof({
+                  requestId: workflow.id,
+                  organizationId: approvalOrganizationId!,
+                  expectedVersion: detail.version,
+                  idempotencyKey: prepared.intent,
+                  approverWallet: address,
+                  transactionHash: hash,
+                });
+                if (prepared.storageKey) clearOperationIdempotencyKey(prepared.storageKey);
+              }}
+              doneLabel="Return to tracker"
+              onDone={() => {
+                setPrepared(undefined);
+                void queryClient.invalidateQueries({ queryKey: ['operations'] });
+              }}
+            >
+              Approve proof in wallet
+            </TxButton>
+          )}
+        </div>
+      )}
+      {detail.capabilities?.includes('reject_fulfillment_proof') && (
+        <div className="space-y-3 border-t border-line/[0.07] pt-4">
+          <div>
+            <h4 className="text-[13px] font-semibold text-ink">Reject submitted proof</h4>
+            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+              Rejection is written on-chain, keeps the reason in the audit trail and returns the
+              request to the custodian for a new pickup or courier proof.
+            </p>
+          </div>
+          {!preparedRejection ? (
+            <>
+              <Labeled label="Rejection reason" hint="10–2000 characters; retained internally">
+                <textarea
+                  className={`${inputClass} min-h-24 py-3`}
+                  value={rejectionReason}
+                  onChange={(event) => setRejectionReason(event.target.value)}
+                  minLength={10}
+                  maxLength={2_000}
+                />
+              </Labeled>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() => rejection.mutate()}
+                disabled={rejection.isPending || rejectionReason.trim().length < 10}
+              >
+                {rejection.isPending ? 'Preparing rejection…' : 'Prepare proof rejection'}
+              </Button>
+            </>
+          ) : rejectionValid ? (
+            <TxButton
+              variant="danger"
+              telemetryFlow="redemption_proof_rejection"
+              action={() =>
+                dataService.rejectFulfillmentProof({
+                  tokenId: BigInt(rejectionArgs!.tokenId),
+                  reasonHash: rejectionArgs!.reasonHash!,
+                })
+              }
+              onConfirmed={async ({ hash }) => {
+                if (!approvalOrganizationId || !address) {
+                  throw new Error('Reconnect the verified proof-approver wallet.');
+                }
+                await rejectRedemptionProof({
+                  requestId: workflow.id,
+                  organizationId: approvalOrganizationId,
+                  expectedVersion: detail.version,
+                  idempotencyKey: preparedRejection.intent,
+                  approverWallet: address,
+                  reason: preparedRejection.reason,
+                  transactionHash: hash,
+                });
+                if (preparedRejection.storageKey) {
+                  clearOperationIdempotencyKey(preparedRejection.storageKey);
+                }
+              }}
+              doneLabel="Return to tracker"
+              onDone={() => {
+                setPreparedRejection(undefined);
+                setRejectionReason('');
+                void queryClient.invalidateQueries({ queryKey: ['operations'] });
+              }}
+            >
+              Reject proof in wallet
+            </TxButton>
+          ) : (
+            <p role="alert" className="text-[12px] text-ruby">
+              The rejection preparation is incomplete. Reload instead of signing it.
+            </p>
+          )}
+          {rejection.error && (
+            <p role="alert" className="text-[12px] text-ruby">
+              {rejection.error instanceof Error
+                ? rejection.error.message
+                : 'Proof rejection could not be prepared.'}
+            </p>
+          )}
+        </div>
+      )}
+      {approval.error && (
+        <p role="alert" className="text-[12px] text-ruby">
+          {approval.error instanceof Error
+            ? approval.error.message
+            : 'Proof could not be approved.'}
+        </p>
+      )}
+      {(detail.recovery ||
+        detail.capabilities?.some((capability) =>
+          ['propose_recovery', 'approve_recovery', 'execute_recovery'].includes(capability),
+        )) && (
+        <RecoveryPanel
+          request={detail}
+          organizationId={
+            access?.memberships.find((entry) => entry.capabilities.includes('redemption.recover'))
+              ?.organizationId
+          }
+          wallet={address}
+        />
+      )}
+      {canCorrect && (
+        <CorrectionForm
+          kind="redemption"
+          workflowId={detail.id}
+          version={detail.version}
+          events={detail.events ?? []}
+        />
+      )}
+    </Card>
+  );
+}
 
-      {items.length === 0 ? (
-        <p className="px-4 py-5 text-[13px] text-ink-muted">Nothing awaiting arrival.</p>
+type RecoveryAction = 'propose_recovery' | 'approve_recovery' | 'execute_recovery';
+
+function RecoveryPanel({
+  request,
+  organizationId,
+  wallet,
+}: {
+  request: RedemptionTracker;
+  organizationId?: string;
+  wallet?: `0x${string}`;
+}) {
+  const queryClient = useQueryClient();
+  const [evidence, setEvidence] = useState<WorkflowEvidenceView>();
+  const [openedAt] = useState(() => Date.now());
+  const recovery = request.recovery;
+  const action: RecoveryAction = !recovery
+    ? 'propose_recovery'
+    : recovery.approvals < recovery.requiredApprovals
+      ? 'approve_recovery'
+      : 'execute_recovery';
+  const canAct = request.capabilities?.includes(action) ?? false;
+  const graceComplete = Boolean(recovery && Date.parse(recovery.executeAfter) <= openedAt);
+  const [prepared, setPrepared] = useState<{
+    action: RecoveryAction;
+    idempotencyKey: string;
+    storageKey?: string;
+    expectedVersion: number;
+    recoveryWallet: string;
+    evidenceId?: string;
+    result: RedemptionMutationResult;
+  }>();
+  const pending = useQuery({
+    queryKey: ['operations', 'redemption', request.id, 'pending-action', action],
+    queryFn: () =>
+      resumeRedemptionActionIntent({
+        requestId: request.id,
+        intentAction: action,
+        organizationId,
+      }),
+    enabled: Boolean(organizationId && canAct),
+  });
+  useEffect(() => {
+    if (!pending.data || prepared) return;
+    const chainAction = {
+      propose_recovery: 'proposeRecovery',
+      approve_recovery: 'approveRecovery',
+      execute_recovery: 'executeRecovery',
+    } as const;
+    setPrepared({
+      action,
+      idempotencyKey: pending.data.idempotencyKey,
+      expectedVersion: pending.data.expectedVersion,
+      recoveryWallet: String(pending.data.payload.recoveryWallet ?? ''),
+      evidenceId:
+        typeof pending.data.payload.evidenceId === 'string'
+          ? pending.data.payload.evidenceId
+          : undefined,
+      result: {
+        request,
+        chainAction: chainAction[action],
+        args: pending.data.chainArguments,
+      },
+    });
+  }, [action, pending.data, prepared, request]);
+
+  const prepare = useMutation({
+    mutationFn: async () => {
+      if (!organizationId || !wallet) {
+        throw new Error('Connect a verified recovery-admin wallet.');
+      }
+      if (action === 'propose_recovery' && !evidence) {
+        throw new Error('Upload and verify recovery evidence first.');
+      }
+      const storageKey = `admin:redemption:${request.id}:${action}:${recovery?.proposalHash ?? request.version}`;
+      const idempotencyKey = operationIdempotencyKey(storageKey);
+      const result = await mutateRedemptionRecovery(action, {
+        requestId: request.id,
+        organizationId,
+        expectedVersion: request.version,
+        idempotencyKey,
+        recoveryWallet: wallet,
+        ...(evidence ? { evidenceId: evidence.id } : {}),
+      });
+      return {
+        action,
+        idempotencyKey,
+        storageKey,
+        expectedVersion: request.version,
+        recoveryWallet: wallet,
+        evidenceId: evidence?.id,
+        result,
+      };
+    },
+    onSuccess: setPrepared,
+  });
+  const args = prepared?.result.args;
+  const preparedValid = Boolean(
+    prepared &&
+    args?.tokenId &&
+    ((prepared.action === 'propose_recovery' &&
+      prepared.result.chainAction === 'proposeRecovery' &&
+      args.evidenceDigest) ||
+      (prepared.action === 'approve_recovery' &&
+        prepared.result.chainAction === 'approveRecovery' &&
+        args.proposalHash) ||
+      (prepared.action === 'execute_recovery' &&
+        prepared.result.chainAction === 'executeRecovery' &&
+        args.proposalHash)),
+  );
+  const walletMatches = Boolean(
+    wallet && prepared && wallet.toLowerCase() === prepared.recoveryWallet.toLowerCase(),
+  );
+  async function confirm(hash: `0x${string}`) {
+    if (!organizationId || !wallet || !prepared || !walletMatches) {
+      throw new Error('Reconnect the recovery-admin wallet that prepared this action.');
+    }
+    await mutateRedemptionRecovery(prepared.action, {
+      requestId: request.id,
+      organizationId,
+      expectedVersion: prepared.expectedVersion,
+      idempotencyKey: prepared.idempotencyKey,
+      recoveryWallet: wallet,
+      ...(prepared.evidenceId ? { evidenceId: prepared.evidenceId } : {}),
+      transactionHash: hash,
+    });
+    if (prepared.storageKey) clearOperationIdempotencyKey(prepared.storageKey);
+  }
+
+  return (
+    <div className="space-y-3 border-t border-ruby/20 pt-4">
+      <div>
+        <h4 className="text-[13px] font-semibold text-ruby">Emergency recovery</h4>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+          Recovery is a delayed last resort. It needs two distinct on-chain admin wallets; the
+          proposer counts as the first approval. Proposal identity and timing come only from the
+          verified contract event and view.
+        </p>
+      </div>
+      {recovery && (
+        <div className="grid gap-2 rounded-[4px] border border-ruby/20 bg-ruby/[0.035] p-3 text-[11px] sm:grid-cols-2">
+          <span className="text-ink-muted">
+            Approvals{' '}
+            <strong className="text-ink">
+              {recovery.approvals}/{recovery.requiredApprovals}
+            </strong>
+          </span>
+          <span className="text-ink-muted">
+            Grace ends{' '}
+            <strong className="text-ink">{new Date(recovery.executeAfter).toLocaleString()}</strong>
+          </span>
+          <span className="break-all font-mono text-ink-dim sm:col-span-2">
+            Proposal {recovery.proposalHash}
+          </span>
+        </div>
+      )}
+      {canAct && action === 'propose_recovery' && !prepared && (
+        <EvidenceUpload
+          requestId={request.id}
+          organizationId={organizationId}
+          category="recovery_evidence"
+          label="Recovery evidence"
+          onUploaded={setEvidence}
+        />
+      )}
+      {canAct && action === 'execute_recovery' && !graceComplete && (
+        <p className="text-[11.5px] text-amber">
+          Both approvals are recorded. Execution remains locked until the seven-day grace period
+          ends.
+        </p>
+      )}
+      {canAct && !prepared && (action !== 'execute_recovery' || graceComplete) && (
+        <Button
+          size="sm"
+          variant={action === 'execute_recovery' ? 'danger' : 'secondary'}
+          disabled={prepare.isPending || (action === 'propose_recovery' && !evidence)}
+          onClick={() => prepare.mutate()}
+        >
+          {prepare.isPending
+            ? 'Preparing recovery…'
+            : action === 'propose_recovery'
+              ? 'Prepare recovery proposal'
+              : action === 'approve_recovery'
+                ? 'Prepare second-wallet approval'
+                : 'Prepare recovery execution'}
+        </Button>
+      )}
+      {prepared && !walletMatches && (
+        <p role="alert" className="text-[12px] text-amber">
+          Connect the recovery wallet that prepared this action: {prepared.recoveryWallet}
+        </p>
+      )}
+      {prepared && preparedValid && walletMatches && (
+        <TxButton
+          variant={prepared.action === 'execute_recovery' ? 'danger' : 'primary'}
+          telemetryFlow={`redemption_${prepared.action}`}
+          action={() => {
+            if (prepared.action === 'propose_recovery') {
+              return dataService.proposeRedemptionRecovery({
+                tokenId: BigInt(args!.tokenId),
+                evidenceDigest: args!.evidenceDigest!,
+              });
+            }
+            if (prepared.action === 'approve_recovery') {
+              return dataService.approveRedemptionRecovery({
+                tokenId: BigInt(args!.tokenId),
+                proposalHash: args!.proposalHash!,
+              });
+            }
+            return dataService.executeRedemptionRecovery({
+              tokenId: BigInt(args!.tokenId),
+              proposalHash: args!.proposalHash!,
+            });
+          }}
+          onConfirmed={({ hash }) => confirm(hash)}
+          doneLabel="Return to tracker"
+          onDone={() => {
+            setPrepared(undefined);
+            setEvidence(undefined);
+            void queryClient.invalidateQueries({ queryKey: ['operations'] });
+          }}
+        >
+          {prepared.action === 'propose_recovery'
+            ? 'Propose recovery in wallet'
+            : prepared.action === 'approve_recovery'
+              ? 'Approve with this distinct wallet'
+              : 'Execute delayed recovery'}
+        </TxButton>
+      )}
+      {prepared && !preparedValid && (
+        <p role="alert" className="text-[12px] text-ruby">
+          The server preparation is incomplete. Reload instead of signing it.
+        </p>
+      )}
+      {prepare.error && (
+        <p role="alert" className="text-[12px] text-ruby">
+          {prepare.error instanceof Error
+            ? prepare.error.message
+            : 'Recovery could not be prepared.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CorrectionForm({
+  kind,
+  workflowId,
+  version,
+  events,
+}: {
+  kind: WorkflowKind;
+  workflowId: string;
+  version: number;
+  events: SellerWorkflowView['events'];
+}) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [supersedesEventId, setSupersedesEventId] = useState('');
+  const [toState, setToState] = useState('');
+  const [reason, setReason] = useState('');
+  const [payload, setPayload] = useState('{}');
+  const mutation = useMutation({
+    mutationFn: async (event: FormEvent) => {
+      event.preventDefault();
+      const intent = `admin:${kind}:${workflowId}:correct:${supersedesEventId}`;
+      const response = await correctWorkflow({
+        workflowKind: kind,
+        workflowId,
+        expectedVersion: version,
+        supersedesEventId,
+        toState: toState.trim(),
+        reason: reason.trim(),
+        payload: JSON.parse(payload) as Record<string, unknown>,
+        idempotencyKey: operationIdempotencyKey(intent),
+      });
+      clearOperationIdempotencyKey(intent);
+      return response;
+    },
+    onSuccess: async () => {
+      setOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ['operations', 'admin'] });
+    },
+  });
+  if (!open) {
+    return (
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+        Append correction
+      </Button>
+    );
+  }
+  return (
+    <form
+      onSubmit={(event) => mutation.mutate(event)}
+      className="space-y-3 rounded-[4px] border border-amber/25 bg-amber/[0.035] p-4"
+    >
+      <p className="text-[12px] leading-relaxed text-amber">
+        Corrections never edit history. This appends a new event that visibly supersedes the
+        selected record.
+      </p>
+      <Labeled label="Event to supersede">
+        <select
+          className={inputClass}
+          value={supersedesEventId}
+          onChange={(event) => setSupersedesEventId(event.target.value)}
+          required
+        >
+          <option value="">Choose event</option>
+          {events.map((event) => (
+            <option key={event.id} value={event.id}>
+              #{event.sequence} {event.type.replaceAll('_', ' ')}
+            </option>
+          ))}
+        </select>
+      </Labeled>
+      <Field
+        label="Corrected workflow state"
+        value={toState}
+        onChange={(event) => setToState(event.target.value)}
+        required
+      />
+      <Labeled label="Correction reason" hint="Minimum 10 characters">
+        <textarea
+          className={`${inputClass} min-h-24 py-3`}
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          minLength={10}
+          required
+        />
+      </Labeled>
+      <Labeled label="Correction payload JSON">
+        <textarea
+          className={`${inputClass} min-h-24 py-3 font-mono text-[11px]`}
+          value={payload}
+          onChange={(event) => setPayload(event.target.value)}
+          required
+        />
+      </Labeled>
+      {mutation.error && (
+        <p role="alert" className="text-[12px] text-ruby">
+          {mutation.error instanceof Error
+            ? mutation.error.message
+            : 'Correction could not be appended.'}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Button
+          type="submit"
+          size="sm"
+          disabled={
+            mutation.isPending || !supersedesEventId || reason.trim().length < 10 || !toState.trim()
+          }
+        >
+          {mutation.isPending ? 'Appending…' : 'Append correction'}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function MatrixActivation({ canActivate }: { canActivate: boolean }) {
+  const queryClient = useQueryClient();
+  const matrices = useQuery({
+    queryKey: ['operations', 'matrices'],
+    queryFn: loadAppraisalMatrices,
+  });
+  const active = useMemo(
+    () => matrices.data?.find((matrix) => matrix.state === 'active'),
+    [matrices.data],
+  );
+  const mutation = useMutation({
+    mutationFn: (matrixId: string) => activateMatrix(matrixId, active?.version ?? ''),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['operations', 'matrices'] }),
+  });
+  if (matrices.isLoading) return <Skeleton className="h-64" />;
+  if (matrices.isError) {
+    return (
+      <ErrorState message={matrices.error instanceof Error ? matrices.error.message : undefined} />
+    );
+  }
+  return (
+    <Card className="p-0">
+      <div className="border-b border-line/[0.07] px-4 py-3">
+        <h3 className="text-[13px] font-semibold text-ink">Matrix approval history</h3>
+        <p className="mt-1 text-[11.5px] text-ink-muted">
+          Only a proposed version can replace the current active matrix.
+        </p>
+      </div>
+      {(matrices.data ?? []).length === 0 ? (
+        <p className="px-4 py-8 text-[12px] text-ink-dim">No matrix versions exist.</p>
       ) : (
-        <ul>
-          {items.map((item) => (
-            <li key={item.id} className="border-b border-line/[0.06] px-4 py-3 last:border-b-0">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="text-[13.5px] font-medium text-ink">{item.gem_name}</div>
-                  <div className="mt-0.5 font-mono text-[11px] text-ink-dim">
-                    {item.carats ?? '—'} ct declared · submitted{' '}
-                    {new Date(item.created_at).toLocaleDateString()}
-                  </div>
-                </div>
-                {openId === item.id ? (
-                  <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
-                    Cancel
-                  </Button>
-                ) : (
-                  <Button type="button" size="sm" variant="secondary" onClick={() => onOpen(item)}>
-                    Record arrival
+        <ul className="divide-y divide-line/[0.06]">
+          {matrices.data!.map((matrix) => (
+            <li
+              key={matrix.id ?? matrix.hash}
+              className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5"
+            >
+              <div>
+                <p className="text-[13px] font-semibold text-ink">{matrix.version}</p>
+                <p className="mt-1 font-mono text-[10px] text-ink-dim">{matrix.hash}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <StatusBadge
+                  tone={
+                    matrix.state === 'active'
+                      ? 'success'
+                      : matrix.state === 'proposed'
+                        ? 'info'
+                        : 'neutral'
+                  }
+                >
+                  {matrix.state}
+                </StatusBadge>
+                {canActivate && matrix.state === 'proposed' && matrix.id && (
+                  <Button
+                    size="sm"
+                    onClick={() => mutation.mutate(matrix.id!)}
+                    disabled={mutation.isPending || !active}
+                  >
+                    Activate
                   </Button>
                 )}
               </div>
-
-              {openId === item.id && (
-                <div className="mt-3 space-y-3 rounded-[4px] bg-line/[0.03] p-3">
-                  <label className="flex items-start gap-2.5 text-[12.5px] text-ink-soft">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={matches}
-                      onChange={(event) => onMatches(event.target.checked)}
-                    />
-                    <span>
-                      The stone that arrived matches the declared carat and dimensions.
-                      <span className="mt-0.5 block text-[11px] text-ink-dim">
-                        Unchecking does not reject it — the grader’s measurements are authoritative
-                        either way. It flags the divergence for them.
-                      </span>
-                    </span>
-                  </label>
-
-                  <Labeled
-                    label="Condition on arrival"
-                    hint={
-                      matches
-                        ? 'Optional. Operational record only, never published.'
-                        : 'Required — describe the divergence.'
-                    }
-                  >
-                    <textarea
-                      className={`${inputClass} min-h-[68px]`}
-                      value={notes}
-                      onChange={(event) => onNotes(event.target.value)}
-                    />
-                  </Labeled>
-
-                  <Labeled
-                    label="Reserve escrow ends"
-                    hint="From this stone's escrow arrangement. A gift card issued over its token cannot be claimed after this date, so it cannot be left blank."
-                  >
-                    <input
-                      type="date"
-                      className={inputClass}
-                      min={earliestEscrowEnd}
-                      value={escrowEnds}
-                      onChange={(event) => onEscrowEnds(event.target.value)}
-                    />
-                  </Labeled>
-
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={busy || !escrowEnds || (!matches && notes.trim().length < 10)}
-                    onClick={() => void onConfirm(item.id)}
-                  >
-                    {busy ? 'Recording…' : 'Confirm custody'}
-                  </Button>
-                </div>
-              )}
             </li>
           ))}
         </ul>
       )}
+      {mutation.error && (
+        <p role="alert" className="m-3 text-[12px] text-ruby">
+          {mutation.error instanceof Error
+            ? mutation.error.message
+            : 'Matrix could not be activated.'}
+        </p>
+      )}
     </Card>
-  );
-}
-
-/** Matrix-backed dropdown. Options are lowercase keys; labels are presentational. */
-function Choice({
-  label,
-  options,
-  value,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  options: string[];
-  value: string;
-  disabled?: boolean;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <Labeled label={label}>
-      <select
-        className={inputClass}
-        value={value}
-        disabled={disabled}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">Select…</option>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {titleCase(option)}
-          </option>
-        ))}
-      </select>
-    </Labeled>
-  );
-}
-
-/**
- * Promotes one seller photograph to the public NFT image.
- *
- * The choice is permanent: the image is pinned to IPFS, its CID sealed into the
- * metadata document, and that document's URI written by `registerGem` to a field
- * with no setter. Reviewing the photograph here is the only opportunity to
- * reject a bad one.
- */
-function ImageSelector({
-  images,
-  loading,
-  selectedId,
-  onSelect,
-}: {
-  images: EvidenceFile[];
-  loading: boolean;
-  selectedId?: string;
-  onSelect: (id: string) => void;
-}) {
-  if (loading) {
-    return (
-      <div>
-        <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Public image</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[0, 1, 2, 3].map((slot) => (
-            <Skeleton key={slot} className="h-28" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (images.length === 0) {
-    return (
-      <div>
-        <h3 className="mb-2 text-[12px] font-semibold text-ink-soft">Public image</h3>
-        <p className="text-[12.5px] text-ink-muted">
-          No gemstone media on this submission. The gem will be registered without a public image,
-          and that cannot be added later.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <fieldset>
-      <legend className="mb-2 text-[12px] font-semibold text-ink-soft">
-        Public image · permanent
-      </legend>
-      <p className="mb-2.5 text-[11.5px] text-ink-dim">
-        The selected photograph is published to IPFS and written into the token metadata. It cannot
-        be changed after approval.
-      </p>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {images.map((file) => {
-          const active = file.id === selectedId;
-          return (
-            <label
-              key={file.id}
-              className={`relative block cursor-pointer overflow-hidden rounded-[4px] border transition-colors ${
-                active ? 'border-atelier' : 'border-line/[0.1] hover:border-line/25'
-              }`}
-            >
-              <input
-                type="radio"
-                name="primary-image"
-                className="sr-only"
-                checked={active}
-                onChange={() => onSelect(file.id)}
-              />
-              {file.url ? (
-                <img
-                  src={file.url}
-                  alt={`Gemstone media ${file.sha256.slice(0, 8)}`}
-                  className="h-28 w-full object-cover"
-                />
-              ) : (
-                <span className="flex h-28 items-center justify-center text-[11px] text-ink-dim">
-                  Unavailable
-                </span>
-              )}
-              {active && (
-                <span className="absolute left-1.5 top-1.5 rounded-[3px] bg-atelier px-1.5 py-0.5 text-[10px] font-semibold text-black">
-                  Primary
-                </span>
-              )}
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
-}
-
-/** Protocol-wide switch, visible only to an admin organisation's owner. */
-function ModeControl({
-  mode,
-  pending,
-  onChange,
-}: {
-  mode: VerificationMode;
-  pending?: VerificationMode;
-  onChange: (mode: VerificationMode) => void | Promise<void>;
-}) {
-  return (
-    <Card className="flex flex-wrap items-center justify-between gap-4 p-4">
-      <div>
-        <h2 className="text-[13px] font-semibold text-ink">Verification mode</h2>
-        <p className="mt-1 max-w-prose text-[12.5px] text-ink-muted">
-          {mode === 'lab'
-            ? 'New submissions wait here for a graded valuation. Nothing reaches the chain until a lab approves.'
-            : 'New submissions bypass this queue and are priced by the test-only $500-per-carat rule.'}
-        </p>
-      </div>
-      <div className="flex gap-2">
-        {(['lab', 'auto'] as const).map((option) => (
-          <Button
-            key={option}
-            type="button"
-            variant={mode === option ? 'primary' : 'ghost'}
-            // Both disable while a switch is in flight: the setting is global, and
-            // a second click mid-request would race the first.
-            disabled={Boolean(pending)}
-            aria-pressed={mode === option}
-            onClick={() => void onChange(option)}
-          >
-            {pending === option ? 'Switching…' : option === 'lab' ? 'Lab review' : 'Automatic'}
-          </Button>
-        ))}
-      </div>
-    </Card>
-  );
-}
-
-/** Full derivation, so the grader approves a figure they can see computed. */
-function PriceBreakdown({
-  usd,
-  breakdown,
-  version,
-}: {
-  usd: number;
-  breakdown: Breakdown;
-  version: string;
-}) {
-  const rows: Array<[string, string]> = [
-    ['Base per carat', money(Number(breakdown.basePricePerCaratUsd))],
-    ['Carat', `× ${ppmToNumber(breakdown.caratMultiplierPpm).toFixed(3)}`],
-    ['Clarity', `× ${ppmToNumber(breakdown.clarityMultiplierPpm).toFixed(2)}`],
-    ['Treatment', `× ${ppmToNumber(breakdown.treatmentMultiplierPpm).toFixed(2)}`],
-  ];
-
-  return (
-    <div className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] p-4">
-      <div className="flex items-baseline justify-between gap-4">
-        <span className="text-[12px] font-semibold text-ink-soft">Computed valuation</span>
-        <span className="font-mono text-[22px] font-medium text-ink">{money(usd)}</span>
-      </div>
-
-      <dl className="mt-3 space-y-1 text-[12px]">
-        {rows.map(([label, value]) => (
-          <div key={label} className="flex justify-between gap-4">
-            <dt className="text-ink-muted">{label}</dt>
-            <dd className="font-mono text-ink-soft">{value}</dd>
-          </div>
-        ))}
-        <div className="flex justify-between gap-4 border-t border-line/[0.07] pt-1">
-          <dt className="text-ink-muted">Base value</dt>
-          <dd className="font-mono text-ink-soft">
-            {money(usdFromBaseUnits(breakdown.baseValueUsd))}
-          </dd>
-        </div>
-      </dl>
-
-      <div className="mt-3 border-t border-line/[0.07] pt-3">
-        <p className="mb-1.5 text-[11px] uppercase tracking-[0.1em] text-ink-dim">
-          Market preference
-        </p>
-        <dl className="space-y-1 text-[12px]">
-          {breakdown.marketMultipliers.map((detail) => (
-            <div key={detail.criterion} className="flex justify-between gap-4">
-              <dt className="text-ink-muted">
-                {detail.criterion} · {detail.choice}
-                <span className="ml-1.5 text-ink-dim">
-                  ({detail.observed}/{detail.totalObserved} bids)
-                </span>
-              </dt>
-              <dd className="font-mono text-ink-soft">
-                × {ppmToNumber(detail.multiplierPpm).toFixed(3)}
-                {detail.clamped && <span className="ml-1 text-amber">clamped</span>}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-
-      <p className="mt-3 font-mono text-[10.5px] text-ink-dim">{version}</p>
-    </div>
   );
 }

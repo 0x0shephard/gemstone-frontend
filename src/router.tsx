@@ -17,6 +17,9 @@ const SwapsPage = lazyRoute(() => import('@/pages/SwapsPage'));
 const RedeemPage = lazyRoute(() => import('@/pages/RedeemPage'));
 const ProfilePage = lazyRoute(() => import('@/pages/ProfilePage'));
 const SellerPage = lazyRoute(() => import('@/pages/SellerPage'));
+const GemLabPage = lazyRoute(() => import('@/pages/GemLabPage'));
+const BankPage = lazyRoute(() => import('@/pages/BankPage'));
+const CustodianPage = lazyRoute(() => import('@/pages/CustodianPage'));
 const VerifyPage = lazyRoute(() => import('@/pages/VerifyPage'));
 const AboutPage = lazyRoute(() => import('@/pages/AboutPage'));
 const GiftClaimPage = lazyRoute(() => import('@/pages/GiftClaimPage'));
@@ -53,6 +56,9 @@ export const router = createBrowserRouter([
       { path: '/redeem', element: route(<RedeemPage />) },
       { path: '/profile', element: route(<ProfilePage />) },
       { path: '/seller', element: route(<SellerPage />) },
+      { path: '/gemlab', element: route(<GemLabPage />) },
+      { path: '/bank', element: route(<BankPage />) },
+      { path: '/custodian', element: route(<CustodianPage />) },
       // Deliberately absent from navigation. Non-members are shown the same
       // "not found" the API returns rather than a sign-in prompt.
       { path: '/verify', element: route(<VerifyPage />) },

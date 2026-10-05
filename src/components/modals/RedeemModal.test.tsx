@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   createCommitment: vi.fn(),
   getWorkflow: vi.fn(),
   requestRedemption: vi.fn(),
+  markOnchainRequested: vi.fn(),
 }));
 
 vi.mock('wagmi', () => ({
@@ -24,6 +25,10 @@ vi.mock('@/services/offchain/workflows', () => ({
 vi.mock('@/services/offchain/redemptions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/offchain/redemptions')>()),
   getRedemptionWorkflow: mocks.getWorkflow,
+}));
+vi.mock('@/services/offchain/operations', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/offchain/operations')>()),
+  markRedemptionOnchainRequested: mocks.markOnchainRequested,
 }));
 vi.mock('@/components/modals/parts', () => ({
   ModalGemHeader: () => null,
@@ -71,6 +76,7 @@ import { RedeemModal } from './index';
 
 const requestHash = `0x${'a'.repeat(64)}` as const;
 const transactionHash = `0x${'b'.repeat(64)}` as const;
+const workflowIdHash = `0x${'c'.repeat(64)}` as const;
 const gem = {
   gemId: 7n,
   tokenId: 42n,
@@ -84,8 +90,14 @@ describe('RedeemModal', () => {
     mocks.createCommitment.mockReset();
     mocks.getWorkflow.mockReset();
     mocks.requestRedemption.mockReset();
-    mocks.createCommitment.mockResolvedValue({ workflowId: 'request-123', requestHash });
+    mocks.markOnchainRequested.mockReset();
+    mocks.createCommitment.mockResolvedValue({
+      workflowId: 'request-123',
+      requestHash,
+      workflowIdHash,
+    });
     mocks.requestRedemption.mockResolvedValue({ hash: transactionHash, status: 'success' });
+    mocks.markOnchainRequested.mockResolvedValue({});
   });
 
   it('shows a receipt only after chain confirmation and a persisted backend workflow', async () => {
@@ -103,6 +115,11 @@ describe('RedeemModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Request redemption' }));
 
     await waitFor(() => expect(mocks.requestRedemption).toHaveBeenCalled());
+    expect(mocks.requestRedemption).toHaveBeenCalledWith({
+      tokenId: 42n,
+      requestHash,
+      workflowIdHash,
+    });
     expect(screen.queryByText('Redemption request recorded')).not.toBeInTheDocument();
     expect(mocks.createCommitment).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -121,6 +138,9 @@ describe('RedeemModal', () => {
       createdAt: '2026-10-02T12:00:00.000Z',
     });
     expect(await screen.findByText('Redemption request recorded')).toBeInTheDocument();
+    expect(mocks.markOnchainRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: 'request-123', transactionHash }),
+    );
     expect(screen.getByText('request-123')).toBeInTheDocument();
     expect(screen.getByText(requestHash)).toBeInTheDocument();
   });

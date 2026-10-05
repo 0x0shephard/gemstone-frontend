@@ -15,6 +15,22 @@ export const PAGE_META: Record<string, { title: string; subtitle: string }> = {
   },
   '/profile': { title: 'Portfolio', subtitle: 'Your gemstone holdings and protocol activity' },
   '/seller': { title: 'Seller portal', subtitle: 'Submit gemstones and manage seller status' },
+  '/gemlab': {
+    title: 'Gem lab',
+    subtitle: 'Review evidence, appraise stones and propose valuation matrices',
+  },
+  '/bank': {
+    title: 'Storage bank',
+    subtitle: 'Record physical arrivals, locations and custody dates',
+  },
+  '/custodian': {
+    title: 'Custodian operations',
+    subtitle: 'Coordinate collection, dispatch and proven delivery',
+  },
+  '/verify': {
+    title: 'Operations admin',
+    subtitle: 'Review lifecycle evidence, approvals and append-only corrections',
+  },
   '/about': { title: 'About Digital Carat', subtitle: 'The vault for tokenized gemstones' },
 };
 
