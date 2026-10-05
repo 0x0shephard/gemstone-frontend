@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { capabilitiesFor } from './operations';
+import { capabilitiesFor, isGlobalOperationalAdmin } from './operations';
 
 const migration = readFileSync(
   join(process.cwd(), 'supabase/migrations/202610030001_operational_lifecycles.sql'),
@@ -26,8 +26,31 @@ describe('operational capability matrix', () => {
       expect(capabilitiesFor('admin', role)).not.toContain('admin.correct');
     }
     expect(capabilitiesFor('admin', 'org_admin')).toEqual(
-      expect.arrayContaining(['matrix.activate', 'redemption.approve', 'admin.correct']),
+      expect.arrayContaining([
+        'gemlab.appraise',
+        'bank.receive',
+        'custodian.fulfill',
+        'matrix.activate',
+        'redemption.approve',
+        'admin.correct',
+      ]),
     );
+  });
+
+  it('reserves global operational override for an admin organization administrator', () => {
+    const membership = {
+      profileId: 'profile',
+      organizationId: 'organization',
+      organizationName: 'Operations',
+      kind: 'admin' as const,
+      role: 'org_admin' as const,
+      capabilities: capabilitiesFor('admin', 'org_admin'),
+    };
+    expect(isGlobalOperationalAdmin(membership)).toBe(true);
+    expect(isGlobalOperationalAdmin({ ...membership, kind: 'bank' })).toBe(false);
+    expect(isGlobalOperationalAdmin({ ...membership, role: 'bank_operator' })).toBe(false);
+    expect(redemptionLifecycle).toContain('if (isGlobalOperationalAdmin(membership)) return;');
+    expect(redemptionLifecycle).toContain('if (!isGlobalOperationalAdmin(membership))');
   });
 
   it('does not infer bank or custody authority from organization kind alone', () => {

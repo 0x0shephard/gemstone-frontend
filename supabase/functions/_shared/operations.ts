@@ -51,8 +51,11 @@ const capabilityMatrix: Partial<
     // unavailable to incidental roles that happen to belong to an admin org.
     org_admin: [
       'gemlab.read',
+      'gemlab.appraise',
       'matrix.propose',
       'matrix.activate',
+      'bank.receive',
+      'custodian.fulfill',
       'admin.read',
       'admin.correct',
       'redemption.approve',
@@ -60,6 +63,10 @@ const capabilityMatrix: Partial<
     ],
   },
 };
+
+export function isGlobalOperationalAdmin(membership: OperationalMembership): boolean {
+  return membership.kind === 'admin' && membership.role === 'org_admin';
+}
 
 export function capabilitiesFor(
   kind: OperationalMembership['kind'],

@@ -5,6 +5,7 @@ import { sendEmail, escapeHtml } from '../_shared/email.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import {
   allOperationalMemberships,
+  isGlobalOperationalAdmin,
   type OperationalCapability,
   type OperationalMembership,
 } from '../_shared/operations.ts';
@@ -151,6 +152,9 @@ async function requireAssignment(
   assignmentRole: 'custodian' | 'bank',
   membership: OperationalMembership,
 ) {
+  // An explicit admin-organization administrator is the audited break-glass
+  // operator. Every other operational actor remains bound to its assignment.
+  if (isGlobalOperationalAdmin(membership)) return;
   const { data, error } = await admin
     .from('redemption_workflow_assignments')
     .select('id')
@@ -637,14 +641,6 @@ Deno.serve(async (request) => {
       else if (scope === 'custodian' && abstract.has('custodian.fulfill')) {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
-        const { data: assignments, error: assignmentError } = await admin
-          .from('redemption_workflow_assignments')
-          .select('redemption_request_id')
-          .eq('deployment_id', deployment.id)
-          .eq('assignment_role', 'custodian')
-          .eq('organization_id', membership.organizationId);
-        if (assignmentError) throw assignmentError;
-        if (!assignments?.length) return json({ requests: [] });
         query = query.in('status', [
           'onchain_requested',
           'custodian_collected',
@@ -655,21 +651,23 @@ Deno.serve(async (request) => {
           'delivery_proof_submitted',
           'proof_approved',
         ]);
-        query = query.in(
-          'id',
-          (assignments ?? []).map((item) => item.redemption_request_id),
-        );
+        if (!isGlobalOperationalAdmin(membership)) {
+          const { data: assignments, error: assignmentError } = await admin
+            .from('redemption_workflow_assignments')
+            .select('redemption_request_id')
+            .eq('deployment_id', deployment.id)
+            .eq('assignment_role', 'custodian')
+            .eq('organization_id', membership.organizationId);
+          if (assignmentError) throw assignmentError;
+          if (!assignments?.length) return json({ requests: [] });
+          query = query.in(
+            'id',
+            assignments.map((item) => item.redemption_request_id),
+          );
+        }
       } else if (scope === 'bank' && abstract.has('bank.receive')) {
         const membership = membershipFor(memberships, 'bank.receive', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
-        const { data: assignments, error: assignmentError } = await admin
-          .from('redemption_workflow_assignments')
-          .select('redemption_request_id')
-          .eq('deployment_id', deployment.id)
-          .eq('assignment_role', 'bank')
-          .eq('organization_id', membership.organizationId);
-        if (assignmentError) throw assignmentError;
-        if (!assignments?.length) return json({ requests: [] });
         query = query
           .eq('fulfillment_method', 'pickup')
           .in('status', [
@@ -679,10 +677,20 @@ Deno.serve(async (request) => {
             'pickup_proof_submitted',
             'proof_approved',
           ]);
-        query = query.in(
-          'id',
-          (assignments ?? []).map((item) => item.redemption_request_id),
-        );
+        if (!isGlobalOperationalAdmin(membership)) {
+          const { data: assignments, error: assignmentError } = await admin
+            .from('redemption_workflow_assignments')
+            .select('redemption_request_id')
+            .eq('deployment_id', deployment.id)
+            .eq('assignment_role', 'bank')
+            .eq('organization_id', membership.organizationId);
+          if (assignmentError) throw assignmentError;
+          if (!assignments?.length) return json({ requests: [] });
+          query = query.in(
+            'id',
+            assignments.map((item) => item.redemption_request_id),
+          );
+        }
       } else if (scope !== 'admin' || !abstract.has('admin.read')) {
         return json({ error: 'Not found' }, 404);
       }
