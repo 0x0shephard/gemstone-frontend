@@ -31,4 +31,13 @@ describe('seller automation error sanitization', () => {
       ),
     ).toBe('JSON is not a valid request object. — invalid transaction at [RPC endpoint]');
   });
+
+  it('keeps the message of a plain PostgREST error object', () => {
+    expect(
+      safeErrorMessage(
+        { code: '22023', message: 'Custody dates are inconsistent', details: null, hint: null },
+        'Bank workflow failed',
+      ),
+    ).toBe('Custody dates are inconsistent');
+  });
 });

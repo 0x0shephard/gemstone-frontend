@@ -7,7 +7,13 @@ export function safeErrorMessage(error: unknown, fallback: string): string {
       ? error.shortMessage
       : error instanceof Error
         ? error.message
-        : fallback;
+        : // Supabase/PostgREST errors are plain objects, not Error instances.
+          error &&
+            typeof error === 'object' &&
+            'message' in error &&
+            typeof error.message === 'string'
+          ? error.message
+          : fallback;
   const details =
     error &&
     typeof error === 'object' &&
