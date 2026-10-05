@@ -189,7 +189,7 @@ export default function AuctionsPage() {
               Live
             </div>
             <div className="mt-1 font-mono text-[19px] tracking-[-0.03em] text-ink">
-              {live.length}
+              {isLoading ? '—' : live.length}
             </div>
           </div>
           <div>
@@ -197,7 +197,7 @@ export default function AuctionsPage() {
               Awaiting settlement
             </div>
             <div className="mt-1 font-mono text-[19px] tracking-[-0.03em] text-ink">
-              {ended.length}
+              {isLoading ? '—' : ended.length}
             </div>
           </div>
         </div>
