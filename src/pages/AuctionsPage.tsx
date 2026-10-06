@@ -56,8 +56,8 @@ function AuctionRow({ auction: a, mode, address, onBid }: RowProps) {
         {usdFromWad(a.floorUsd)}
       </td>
       <td className="px-4 py-3 text-right font-mono text-[13px] font-semibold text-ink">
-        {/* The highest bid is contract state; the count waits on the event scan. */}
-        {a.highestBidder || a.bids > 0 ? a.highestBidFmt : 'No bids'}
+        {/* The highest bid is contract state; a cancelled bid leaves no leader. */}
+        {a.highestBidder ? a.highestBidFmt : 'No bids'}
       </td>
       <td className="px-4 py-3 text-right font-mono text-[13px] text-ink-soft">
         {Math.max(a.bids, a.highestBidder ? 1 : 0)}
@@ -96,6 +96,20 @@ function AuctionRow({ auction: a, mode, address, onBid }: RowProps) {
           >
             Settle
           </TxButton>
+        ) : mode === 'live' && mine ? (
+          <div className="flex justify-end gap-2">
+            <Button size="sm" onClick={() => onBid(a.gem)}>
+              Raise bid
+            </Button>
+            <TxButton
+              size="sm"
+              variant="secondary"
+              action={() => dataService.cancelAuctionBid({ gemId: a.gem.gemId })}
+              pendingLabel="Cancelling…"
+            >
+              Cancel bid
+            </TxButton>
+          </div>
         ) : mode === 'live' ? (
           <Button size="sm" onClick={() => onBid(a.gem)}>
             Place bid

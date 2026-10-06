@@ -481,6 +481,23 @@ const bidColumns: Column<Bid>[] = [
     align: 'right',
     render: (r) => <CountdownBadge seconds={r.secondsLeft} />,
   },
+  {
+    key: 'actions',
+    header: '',
+    align: 'right',
+    // Only the leader has funds escrowed; an outbid bid was already refunded.
+    render: (r) =>
+      r.status === 'Leading' && r.secondsLeft > 0 ? (
+        <TxButton
+          size="sm"
+          variant="secondary"
+          action={() => dataService.cancelAuctionBid({ gemId: r.gem.gemId })}
+          pendingLabel="Cancelling…"
+        >
+          Cancel bid
+        </TxButton>
+      ) : null,
+  },
 ];
 
 function BidsTable({ rows }: { rows: Bid[] }) {

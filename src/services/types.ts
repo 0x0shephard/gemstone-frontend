@@ -305,6 +305,11 @@ export interface BidRequest {
   saleAmountUsd: bigint;
 }
 
+/** Withdraws the caller's leading primary-auction bid before close. */
+export interface CancelAuctionBidRequest {
+  gemId: bigint;
+}
+
 export interface SettleAuctionRequest {
   gemId: bigint;
 }

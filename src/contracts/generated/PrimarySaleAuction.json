@@ -204,6 +204,19 @@
   },
   {
     "type": "function",
+    "name": "cancelBid",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "claimRefund",
     "inputs": [
       {
@@ -739,6 +752,37 @@
   },
   {
     "type": "event",
+    "name": "BidCancelled",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "paymentAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BidPlaced",
     "inputs": [
       {
@@ -1155,6 +1199,11 @@
   {
     "type": "error",
     "name": "InvalidInitialization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotHighestBidder",
     "inputs": []
   },
   {

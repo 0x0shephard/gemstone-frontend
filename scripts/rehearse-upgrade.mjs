@@ -48,7 +48,11 @@ const IMPLEMENTATION_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a92
 const UPGRADER_ROLE = keccak256(stringToHex('UPGRADER_ROLE'));
 
 const manifest = JSON.parse(
-  fs.readFileSync(path.join(contractsDir, 'deployments/sepolia.json'), 'utf8'),
+  // The live suite may be a newer manifest than sepolia.json (e.g. a fresh deployment).
+  fs.readFileSync(
+    path.join(contractsDir, 'deployments', process.env.DEPLOYMENT_MANIFEST ?? 'sepolia.json'),
+    'utf8',
+  ),
 );
 const addresses = manifest.addresses;
 const client = createPublicClient({ transport: http(FORK, { timeout: 60_000 }) });

@@ -66,6 +66,7 @@ import type {
   RejectFulfillmentProofRequest,
   RevokeApprovalRequest,
   SettleAuctionRequest,
+  CancelAuctionBidRequest,
   SettleListingAuctionRequest,
   SwapRequest,
   SwapRequestAction,
@@ -2061,6 +2062,13 @@ export const chainService: IDataService = {
     };
     return runContractTransaction(call);
   },
+  cancelAuctionBid: (request: CancelAuctionBidRequest) =>
+    runContractTransaction({
+      ...contract('PrimarySaleAuction'),
+      functionName: 'cancelBid',
+      intentKey: `cancel-bid:${request.gemId}`,
+      args: [request.gemId],
+    }),
   settleAuction: (request: SettleAuctionRequest) =>
     runContractTransaction({
       ...contract('PrimarySaleAuction'),

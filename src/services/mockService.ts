@@ -198,6 +198,7 @@ export const mockService: IDataService = {
   approveTransfer: ok,
   revokeApproval: ok,
   bid: ok,
+  cancelAuctionBid: ok,
   settleAuction: ok,
   settleListingAuction: ok,
   claimRefund: ok,
