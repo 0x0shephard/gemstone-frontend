@@ -913,6 +913,7 @@ async function getAuctions(): Promise<Auction[]> {
       return {
         gem,
         highestBidFmt: `$${Number(formatUnits(state[8], 18)).toLocaleString()}`,
+        highestBidUsd: state[8],
         highestBidder: state[5] === zeroAddress ? undefined : state[5],
         bids: events.filter(
           (event) =>

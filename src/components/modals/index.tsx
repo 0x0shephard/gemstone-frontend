@@ -17,9 +17,10 @@ import {
 } from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
-import { useGems, useProfile, useRedemptions } from '@/hooks/useData';
+import { useAuctions, useGems, useProfile, useRedemptions } from '@/hooks/useData';
+import { minimumBidUsd } from '@/lib/auctionBid';
 import { contractAddresses, giftOperatorAddress, NATIVE_ASSET } from '@/config/contracts';
-import { zeroHash } from 'viem';
+import { formatUnits, zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
 import { env } from '@/config/env';
 import { createRedemptionCommitment } from '@/services/offchain/workflows';
@@ -62,6 +63,13 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
   const saleUsd = Number(amount) || 0;
   const shortfall = reserveShortfallUsd(gem);
   const total = saleUsd + shortfall;
+  const { data: auctions } = useAuctions();
+  const auction = auctions?.find((candidate) => candidate.gem.gemId === gem.gemId);
+  const minimumUsd = auction ? minimumBidUsd(auction) : undefined;
+  const minimumFmt =
+    minimumUsd === undefined ? undefined : fmtUsd(Number(formatUnits(minimumUsd, 18)));
+  const belowMinimum =
+    saleAmountUsd !== null && minimumUsd !== undefined && saleAmountUsd < minimumUsd;
   return (
     <Modal
       open={open}
@@ -70,12 +78,26 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
       subtitle="Highest bid wins at auction close."
     >
       <ModalGemHeader gem={gem} />
+      {auction && (
+        <div className="rounded-[4px] border border-line/[0.08] bg-panel p-3">
+          <SummaryRow
+            label="Current top bid"
+            value={auction.highestBidder ? auction.highestBidFmt : 'No bids yet'}
+          />
+          <SummaryRow label="Minimum bid" value={minimumFmt ?? '—'} />
+        </div>
+      )}
       <Field
         label="Bid amount (USD)"
         inputMode="decimal"
-        placeholder="0"
+        placeholder={minimumFmt ? `${minimumFmt} or more` : '0'}
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
+        error={
+          belowMinimum
+            ? `Bid at least ${minimumFmt}. The reserve top-up is added on top.`
+            : undefined
+        }
       />
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">Payment asset</span>
@@ -99,7 +121,7 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
       <ApprovalNote asset={asset} />
       <TxButton
         block
-        disabled={!asset || !saleAmountUsd}
+        disabled={!asset || !saleAmountUsd || belowMinimum}
         action={() =>
           dataService.bid({
             gemId: gem.gemId,

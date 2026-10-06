@@ -93,6 +93,8 @@ export interface DecoratedGem extends Gem {
 export interface Auction {
   gem: DecoratedGem;
   highestBidFmt: string;
+  /** Sale value of the leading bid in 18-decimal USD, excluding the reserve top-up. */
+  highestBidUsd?: bigint;
   highestBidder?: Address;
   bids: number;
   secondsLeft: number;
