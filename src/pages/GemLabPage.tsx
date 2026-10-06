@@ -13,6 +13,7 @@ import { Field, Labeled, inputClass } from '@/components/ui/Field';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Tabs } from '@/components/ui/Tabs';
 import { useOperationsAccess } from '@/hooks/useOperationsAccess';
+import { gradeLabel, gradeOptions, type GradeOptions } from '@/lib/gradeOptions';
 import {
   clearOperationIdempotencyKey,
   createMatrixDraft,
@@ -218,6 +219,7 @@ function GemLabWorkspace() {
               <AppraisalForm
                 value={grades}
                 onChange={setGrades}
+                options={gradeOptions(detailQuery.data.matrix.document)}
                 disabled={!has('gemlab.appraise') || appraisal.isPending || !primaryImageId}
                 preview={previewQuery.data?.approvedValuationUsd}
                 previewPending={previewQuery.isFetching}
@@ -384,9 +386,46 @@ function EvidenceReview({
   );
 }
 
+function GradeSelect({
+  label,
+  value,
+  choices,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  choices: string[];
+  placeholder: string;
+  onChange: (next: string) => void;
+}) {
+  // A prefilled value outside the matrix shows as unselected rather than silently kept.
+  const selected = choices.find((choice) => choice.toLowerCase() === value.trim().toLowerCase());
+  return (
+    <Labeled label={label}>
+      <select
+        className={inputClass}
+        value={selected ?? ''}
+        onChange={(event) => onChange(event.target.value)}
+        required
+      >
+        <option value="" disabled>
+          {placeholder}
+        </option>
+        {choices.map((choice) => (
+          <option key={choice} value={choice}>
+            {gradeLabel(choice)}
+          </option>
+        ))}
+      </select>
+    </Labeled>
+  );
+}
+
 function AppraisalForm({
   value,
   onChange,
+  options,
   disabled,
   preview,
   previewPending,
@@ -395,6 +434,7 @@ function AppraisalForm({
 }: {
   value: GemGradeInput;
   onChange: (value: GemGradeInput) => void;
+  options?: GradeOptions;
   disabled: boolean;
   preview?: string;
   previewPending: boolean;
@@ -403,55 +443,110 @@ function AppraisalForm({
 }) {
   const set = <K extends keyof GemGradeInput>(key: K, next: GemGradeInput[K]) =>
     onChange({ ...value, [key]: next });
+  const variety = options?.varieties.find(
+    (candidate) => candidate.name.toLowerCase() === value.variety.trim().toLowerCase(),
+  );
+  const caratField = (
+    <Field
+      label="Carat weight"
+      type="number"
+      min="0.01"
+      step="0.01"
+      value={value.caratWeight || ''}
+      onChange={(event) => set('caratWeight', Number(event.target.value))}
+      required
+    />
+  );
   return (
     <form onSubmit={onSubmit} className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Field
-          label="Variety"
-          value={value.variety}
-          onChange={(event) => set('variety', event.target.value)}
-          required
-        />
-        <Field
-          label="Carat weight"
-          type="number"
-          min="0.01"
-          step="0.01"
-          value={value.caratWeight || ''}
-          onChange={(event) => set('caratWeight', Number(event.target.value))}
-          required
-        />
-        <Field
-          label="Clarity"
-          value={value.clarity}
-          onChange={(event) => set('clarity', event.target.value)}
-          required
-        />
-        <Field
-          label="Treatment"
-          value={value.treatment}
-          onChange={(event) => set('treatment', event.target.value)}
-          required
-        />
-        <Field
-          label="Shape"
-          value={value.shape}
-          onChange={(event) => set('shape', event.target.value)}
-          required
-        />
-        <Field
-          label="Color"
-          value={value.color}
-          onChange={(event) => set('color', event.target.value)}
-          required
-        />
-        <Field
-          label="Color grade"
-          value={value.colorGrade}
-          onChange={(event) => set('colorGrade', event.target.value)}
-          required
-        />
-      </div>
+      {options ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <GradeSelect
+            label="Variety"
+            value={value.variety}
+            choices={options.varieties.map((candidate) => candidate.name)}
+            placeholder="Choose variety"
+            // Colours and colour grades belong to a variety, so a change clears them.
+            onChange={(next) => onChange({ ...value, variety: next, color: '', colorGrade: '' })}
+          />
+          {caratField}
+          <GradeSelect
+            label="Clarity"
+            value={value.clarity}
+            choices={options.clarities}
+            placeholder="Choose clarity"
+            onChange={(next) => set('clarity', next)}
+          />
+          <GradeSelect
+            label="Treatment"
+            value={value.treatment}
+            choices={options.treatments}
+            placeholder="Choose treatment"
+            onChange={(next) => set('treatment', next)}
+          />
+          <GradeSelect
+            label="Shape"
+            value={value.shape}
+            choices={options.shapes}
+            placeholder="Choose shape"
+            onChange={(next) => set('shape', next)}
+          />
+          <GradeSelect
+            label="Color"
+            value={value.color}
+            choices={variety?.colors ?? []}
+            placeholder={variety ? 'Choose color' : 'Choose variety first'}
+            onChange={(next) => set('color', next)}
+          />
+          <GradeSelect
+            label="Color grade"
+            value={value.colorGrade}
+            choices={variety?.colorGrades ?? []}
+            placeholder={variety ? 'Choose color grade' : 'Choose variety first'}
+            onChange={(next) => set('colorGrade', next)}
+          />
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Field
+            label="Variety"
+            value={value.variety}
+            onChange={(event) => set('variety', event.target.value)}
+            required
+          />
+          {caratField}
+          <Field
+            label="Clarity"
+            value={value.clarity}
+            onChange={(event) => set('clarity', event.target.value)}
+            required
+          />
+          <Field
+            label="Treatment"
+            value={value.treatment}
+            onChange={(event) => set('treatment', event.target.value)}
+            required
+          />
+          <Field
+            label="Shape"
+            value={value.shape}
+            onChange={(event) => set('shape', event.target.value)}
+            required
+          />
+          <Field
+            label="Color"
+            value={value.color}
+            onChange={(event) => set('color', event.target.value)}
+            required
+          />
+          <Field
+            label="Color grade"
+            value={value.colorGrade}
+            onChange={(event) => set('colorGrade', event.target.value)}
+            required
+          />
+        </div>
+      )}
       {error && (
         <p role="alert" className="text-[12px] text-ruby">
           {error}
