@@ -845,6 +845,46 @@ type AuctionState = readonly [
   bigint,
 ];
 
+/**
+ * Unsettled auctions the address currently leads, read from contract state.
+ *
+ * Portfolio bids otherwise come from the event projection, which can take minutes
+ * on a throttled public RPC; a leading bid is known from `auctions()` immediately.
+ */
+async function leadingBidsFromState(address: Address): Promise<Bid[]> {
+  const ids = await gemIds();
+  const now = BigInt(Math.floor(Date.now() / 1_000));
+  const states = (await Promise.all(
+    ids.map((gemId) =>
+      client.readContract({
+        ...contract('PrimarySaleAuction'),
+        functionName: 'auctions',
+        args: [gemId],
+      }),
+    ),
+  )) as AuctionState[];
+  const rows = await Promise.all(
+    ids.map(async (gemId, index): Promise<Bid | undefined> => {
+      const state = states[index];
+      if (!state[0] || state[1] || state[5] === zeroAddress || !isAddressEqual(state[5], address)) {
+        return;
+      }
+      const gem = await readGem(gemId);
+      if (!gem) return;
+      const top = `$${Number(formatUnits(state[8], 18)).toLocaleString()}`;
+      return {
+        gem,
+        myBidFmt: top,
+        topBidFmt: top,
+        status: 'Leading',
+        statusColor: 'var(--dc-emerald)',
+        secondsLeft: Number(state[3] > now ? state[3] - now : 0n),
+      };
+    }),
+  );
+  return rows.filter((bid): bid is Bid => Boolean(bid));
+}
+
 async function getAuctions(): Promise<Auction[]> {
   const ids = await gemIds();
   const now = BigInt(Math.floor(Date.now() / 1_000));
@@ -1412,11 +1452,14 @@ export const chainService: IDataService = {
      * invalidates this query and fills the event-backed tabs on the next pass.
      */
     const snapshot = settledSnapshot;
+    const leadingBids = address
+      ? await leadingBidsFromState(address as Address).catch(() => [] as Bid[])
+      : [];
     if (!snapshot) {
       void projection().catch(() => undefined);
       return {
         owned,
-        bids: [],
+        bids: leadingBids,
         offers: [],
         swaps: [],
         redemptions: [],
@@ -1429,7 +1472,10 @@ export const chainService: IDataService = {
           redemptions: { state: 'syncing', message: 'Redemptions are still syncing.' },
           activity: { state: 'syncing', message: 'History is still syncing.' },
         },
-        stats: { ...ownedStats(), activeBids: 0 },
+        stats: {
+          ...ownedStats(),
+          activeBids: leadingBids.filter((bid) => bid.secondsLeft > 0).length,
+        },
       };
     }
     const bidEvents = latestBidEventsForAddress(snapshot.events, address);
@@ -1493,7 +1539,14 @@ export const chainService: IDataService = {
       getSwaps(),
       getRedemptions(),
     ]);
-    const bids = bidsResult.status === 'fulfilled' ? bidsResult.value : [];
+    const eventBids = bidsResult.status === 'fulfilled' ? bidsResult.value : [];
+    // Event rows carry the user's own bid amount; contract state fills any gap.
+    const bids = [
+      ...eventBids,
+      ...leadingBids.filter(
+        (leading) => !eventBids.some((bid) => bid.gem.gemId === leading.gem.gemId),
+      ),
+    ];
     const offers = offersResult.status === 'fulfilled' ? offersResult.value : [];
     const swaps = swapsResult.status === 'fulfilled' ? swapsResult.value : [];
     const redemptions = redemptionsResult.status === 'fulfilled' ? redemptionsResult.value : [];

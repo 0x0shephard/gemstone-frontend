@@ -56,9 +56,12 @@ function AuctionRow({ auction: a, mode, address, onBid }: RowProps) {
         {usdFromWad(a.floorUsd)}
       </td>
       <td className="px-4 py-3 text-right font-mono text-[13px] font-semibold text-ink">
-        {a.bids > 0 ? a.highestBidFmt : 'No bids'}
+        {/* The highest bid is contract state; the count waits on the event scan. */}
+        {a.highestBidder || a.bids > 0 ? a.highestBidFmt : 'No bids'}
       </td>
-      <td className="px-4 py-3 text-right font-mono text-[13px] text-ink-soft">{a.bids}</td>
+      <td className="px-4 py-3 text-right font-mono text-[13px] text-ink-soft">
+        {Math.max(a.bids, a.highestBidder ? 1 : 0)}
+      </td>
       <td className="px-4 py-3">
         {mode === 'past' ? (
           <StatusBadge tone={a.outcome === 'Minted' ? 'success' : 'warning'} dot>

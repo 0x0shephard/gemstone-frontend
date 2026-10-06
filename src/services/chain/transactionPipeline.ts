@@ -208,9 +208,23 @@ async function requireVerifiedWallet(): Promise<Address> {
 
 async function ensureChain(gestureGate: StepGateLease | null): Promise<void> {
   const account = getAccount(wagmiConfig);
-  if (account.chainId === env.chainId) return;
+  const walletConnect = isWalletConnectConnector(account.connector);
+  /*
+   * wagmi's cached chain can be stale when a mobile wallet changes network without
+   * emitting `chainChanged`; the switch was then skipped and the write failed with
+   * viem's chain-mismatch error. Ask the connector for the wallet's live chain.
+   */
+  const chainId =
+    !walletConnect && account.connector?.getChainId
+      ? await withPreflightTimeout(
+          account.connector.getChainId(),
+          'The wallet did not report its network. Reopen the wallet and return here; no transaction was sent.',
+          CHAIN_PREFLIGHT_TIMEOUT_MS,
+        )
+      : account.chainId;
+  if (chainId === env.chainId) return;
 
-  if (isWalletConnectConnector(account.connector) && account.connector?.getProvider) {
+  if (walletConnect && account.connector?.getProvider) {
     const provider = (await withPreflightTimeout(
       account.connector.getProvider(),
       'The wallet session did not respond. Reopen the wallet and return here; no transaction was sent.',
