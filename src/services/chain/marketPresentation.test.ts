@@ -7,6 +7,7 @@ import {
   groupAuctions,
   groupActionableSwaps,
   latestBidEventsForAddress,
+  auctionBidCount,
 } from './marketPresentation';
 import type { Auction, SwapRequest } from '../types';
 
@@ -37,6 +38,18 @@ describe('market presentation', () => {
       bidder,
     );
     expect(latest.map((event) => event.blockNumber)).toEqual([3n, 2n]);
+  });
+
+  it('counts bids that were not withdrawn', () => {
+    const other = '0x2222222222222222222222222222222222222222';
+    const events = [
+      bidEvent(5n, 1n),
+      bidEvent(5n, 2n, other),
+      { ...bidEvent(5n, 3n, other), eventName: 'BidCancelled' },
+      bidEvent(5n, 4n),
+      bidEvent(6n, 5n),
+    ];
+    expect(auctionBidCount(events, 5n)).toBe(2);
   });
 
   it('drops a bid the account cancelled, unless it bid again afterwards', () => {

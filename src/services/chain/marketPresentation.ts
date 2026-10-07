@@ -33,6 +33,17 @@ export function formatSwapCash(
   )} ${descriptor.symbol} ($${Number(formatUnits(usdValue, 18)).toLocaleString()})`;
 }
 
+/** Bids placed on a primary auction that were not later withdrawn. */
+export function auctionBidCount(events: ProjectedEvent[], gemId: bigint): number {
+  let count = 0;
+  for (const event of events) {
+    if (event.module !== 'PrimarySaleAuction' || event.args.gemId !== gemId) continue;
+    if (event.eventName === 'BidPlaced') count += 1;
+    if (event.eventName === 'BidCancelled') count -= 1;
+  }
+  return Math.max(count, 0);
+}
+
 export function latestBidEventsForAddress(
   events: ProjectedEvent[],
   address?: string,

@@ -88,6 +88,7 @@ import {
   describePaymentAsset,
   escrowedSwapTokenIds,
   formatSwapCash,
+  auctionBidCount,
   latestBidEventsForAddress,
 } from './marketPresentation';
 
@@ -916,12 +917,7 @@ async function getAuctions(): Promise<Auction[]> {
         highestBidFmt: `$${Number(formatUnits(state[8], 18)).toLocaleString()}`,
         highestBidUsd: state[8],
         highestBidder: state[5] === zeroAddress ? undefined : state[5],
-        bids: events.filter(
-          (event) =>
-            event.module === 'PrimarySaleAuction' &&
-            event.eventName === 'BidPlaced' &&
-            event.args.gemId === gemId,
-        ).length,
+        bids: auctionBidCount(events, gemId),
         secondsLeft: Number(state[3] > now ? state[3] - now : 0n),
         floorUsd: state[4],
         settled,
