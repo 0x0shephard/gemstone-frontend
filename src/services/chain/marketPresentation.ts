@@ -33,15 +33,21 @@ export function formatSwapCash(
   )} ${descriptor.symbol} ($${Number(formatUnits(usdValue, 18)).toLocaleString()})`;
 }
 
-/** Bids placed on a primary auction that were not later withdrawn. */
+/**
+ * Wallets with a standing bid on a primary auction: each bidder counts once,
+ * and a bidder whose latest action was cancelling is not counted. Re-bidding
+ * after being outbid is the same bidder, not another bid.
+ */
 export function auctionBidCount(events: ProjectedEvent[], gemId: bigint): number {
-  let count = 0;
+  const standing = new Map<string, boolean>();
   for (const event of events) {
     if (event.module !== 'PrimarySaleAuction' || event.args.gemId !== gemId) continue;
-    if (event.eventName === 'BidPlaced') count += 1;
-    if (event.eventName === 'BidCancelled') count -= 1;
+    if (typeof event.args.bidder !== 'string') continue;
+    const bidder = event.args.bidder.toLowerCase();
+    if (event.eventName === 'BidPlaced') standing.set(bidder, true);
+    if (event.eventName === 'BidCancelled') standing.set(bidder, false);
   }
-  return Math.max(count, 0);
+  return [...standing.values()].filter(Boolean).length;
 }
 
 export function latestBidEventsForAddress(

@@ -40,7 +40,7 @@ describe('market presentation', () => {
     expect(latest.map((event) => event.blockNumber)).toEqual([3n, 2n]);
   });
 
-  it('counts bids that were not withdrawn', () => {
+  it('counts each bidder once and skips bidders who withdrew', () => {
     const other = '0x2222222222222222222222222222222222222222';
     const events = [
       bidEvent(5n, 1n),
@@ -49,7 +49,8 @@ describe('market presentation', () => {
       bidEvent(5n, 4n),
       bidEvent(6n, 5n),
     ];
-    expect(auctionBidCount(events, 5n)).toBe(2);
+    // The default bidder bid twice; the other bidder cancelled.
+    expect(auctionBidCount(events, 5n)).toBe(1);
   });
 
   it('drops a bid the account cancelled, unless it bid again afterwards', () => {
