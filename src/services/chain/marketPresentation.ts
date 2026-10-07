@@ -43,14 +43,16 @@ export function latestBidEventsForAddress(
   for (const event of events) {
     if (
       event.module !== 'PrimarySaleAuction' ||
-      event.eventName !== 'BidPlaced' ||
+      (event.eventName !== 'BidPlaced' && event.eventName !== 'BidCancelled') ||
       typeof event.args.bidder !== 'string' ||
       event.args.bidder.toLowerCase() !== normalized ||
       typeof event.args.gemId !== 'bigint'
     ) {
       continue;
     }
-    latestByGem.set(String(event.args.gemId), event);
+    // A withdrawn bid is no longer the account's bid; a later BidPlaced revives it.
+    if (event.eventName === 'BidCancelled') latestByGem.delete(String(event.args.gemId));
+    else latestByGem.set(String(event.args.gemId), event);
   }
   return [...latestByGem.values()];
 }

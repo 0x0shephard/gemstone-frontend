@@ -39,6 +39,18 @@ describe('market presentation', () => {
     expect(latest.map((event) => event.blockNumber)).toEqual([3n, 2n]);
   });
 
+  it('drops a bid the account cancelled, unless it bid again afterwards', () => {
+    const cancelled = (gemId: bigint, blockNumber: bigint) => ({
+      ...bidEvent(gemId, blockNumber),
+      eventName: 'BidCancelled',
+    });
+    const latest = latestBidEventsForAddress(
+      [bidEvent(1n, 1n), cancelled(1n, 2n), bidEvent(2n, 3n), cancelled(2n, 4n), bidEvent(2n, 5n)],
+      bidder,
+    );
+    expect(latest.map((event) => event.blockNumber)).toEqual([5n]);
+  });
+
   it('formats six-decimal mock USDC swap adjustments', () => {
     const address = '0x29f4b1eF7261A372DB73493004CCf6A28175Dc54';
     const descriptor = describePaymentAsset(address, [

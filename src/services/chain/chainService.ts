@@ -1300,6 +1300,9 @@ async function activityFor(
   }
   const kindLabel = (module: string, eventName: string) => {
     if (module === 'PrimarySaleAuction' && eventName === 'BidPlaced') return 'Minting bid placed';
+    if (module === 'PrimarySaleAuction' && eventName === 'BidCancelled') {
+      return 'Minting bid cancelled';
+    }
     if (module === 'Marketplace' && eventName === 'OfferCreated') return 'Token bid placed';
     if (module === 'Marketplace' && eventName === 'OfferAccepted') return 'Token bid accepted';
     if (module === 'Marketplace' && eventName === 'OfferCancelled') return 'Token bid refunded';
@@ -1519,6 +1522,9 @@ export const chainService: IDataService = {
          * the sweep has still to act on it.
          */
         if (!gem || !auction[0] || auction[1]) return;
+        // No leader means the bid is gone: the account cancelled it, or was outbid
+        // and refunded before the new leader withdrew. Nothing remains to track.
+        if (auction[5] === zeroAddress) return;
         const mine = event.args.usdValue as bigint;
         const secondsLeft = Number(auction[3] > now ? auction[3] - now : 0n);
         const leading =
