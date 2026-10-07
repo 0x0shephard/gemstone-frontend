@@ -217,3 +217,30 @@ export function clearGiftHandoff(scope: GiftHandoffScope): void {
     // Nothing to do; an unreadable store is also an unwritable one.
   }
 }
+
+/** Card states after which a saved code has nothing left to recover. */
+const FINISHED_GIFT_STATUSES = new Set(['cancelled', 'claimed']);
+
+export function isFinishedGiftStatus(status: string | undefined): boolean {
+  return Boolean(status && FINISHED_GIFT_STATUSES.has(status));
+}
+
+/**
+ * Drops saved cards the server reports as cancelled or claimed.
+ *
+ * A saved card is restored by gem, so one cancelled elsewhere (another tab, the
+ * portfolio list, another device) reopened the composer on its dead QR page the
+ * next time the same token was gifted. Cards the server does not list yet are
+ * kept: a just-issued card may not have reached the cached list.
+ */
+export function pruneFinishedGiftHandoffs(
+  scope: Pick<GiftHandoffScope, 'chainId' | 'account'>,
+  cards: ReadonlyArray<{ id: string; status: string }>,
+): void {
+  const statusById = new Map(cards.map((card) => [card.id, card.status]));
+  for (const handoff of listGiftHandoffs(scope)) {
+    if (isFinishedGiftStatus(statusById.get(handoff.card.giftId))) {
+      clearGiftHandoff({ ...scope, giftId: handoff.card.giftId });
+    }
+  }
+}

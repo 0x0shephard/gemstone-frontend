@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { DecoratedGem } from '@/services/types';
 
 const giftMock = vi.hoisted(() => ({
   confirmGiftCardEscrow: vi.fn(),
   createGiftCard: vi.fn(),
+  listGiftCards: vi.fn(),
   resendGiftSenderCopy: vi.fn(),
 }));
 
 vi.mock('@/providers/AuthProvider', () => ({
-  useAuth: () => ({ linkedWallet: '0x00000000000000000000000000000000000000aa' }),
+  useAuth: () => ({
+    linkedWallet: '0x00000000000000000000000000000000000000aa',
+    user: { id: 'sender-user' },
+  }),
 }));
 vi.mock('@/config/env', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/config/env')>();
@@ -42,18 +47,28 @@ vi.mock('@/services/offchain/gift', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/offchain/gift')>()),
   confirmGiftCardEscrow: giftMock.confirmGiftCardEscrow,
   createGiftCard: giftMock.createGiftCard,
+  listGiftCards: giftMock.listGiftCards,
   resendGiftSenderCopy: giftMock.resendGiftSenderCopy,
 }));
 
 import { GiftCardComposer } from './GiftCardComposer';
-import { inspectGiftPreparationIntent, saveGiftHandoff } from '@/services/offchain/giftHandoff';
+import {
+  inspectGiftHandoff,
+  inspectGiftPreparationIntent,
+  saveGiftHandoff,
+} from '@/services/offchain/giftHandoff';
 
 const account = '0x00000000000000000000000000000000000000aa';
 const gem = { gemId: 19n, tokenId: 19n, name: 'Ruby', displayId: 'DC-19' } as DecoratedGem;
 const scope = { chainId: 11155111, account, gemId: '19' };
 
 function renderComposer() {
-  return render(<GiftCardComposer gem={gem} open onClose={vi.fn()} onBack={vi.fn()} />);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <GiftCardComposer gem={gem} open onClose={vi.fn()} onBack={vi.fn()} />
+    </QueryClientProvider>,
+  );
 }
 
 describe('GiftCardComposer', () => {
@@ -62,6 +77,34 @@ describe('GiftCardComposer', () => {
     giftMock.createGiftCard.mockReset();
     giftMock.confirmGiftCardEscrow.mockReset();
     giftMock.resendGiftSenderCopy.mockReset();
+    giftMock.listGiftCards.mockReset().mockResolvedValue([]);
+  });
+
+  it('starts a fresh gift when the saved card was cancelled elsewhere', async () => {
+    const giftId = '5f0c2b0e-0d2a-4a51-9b0e-6a2f4f1f9c11';
+    saveGiftHandoff({
+      ...scope,
+      card: {
+        giftId,
+        code: 'OLDC0DE123456789',
+        displayCode: 'OLDC-0DE1-2345-6789',
+        expiresAt: '2999-01-01T00:00:00.000Z',
+        tokenId: '19',
+        gemId: '19',
+        escrowWallet: '0x1111111111111111111111111111111111111111',
+        escrowed: true,
+      },
+      recipientEmail: 'friend@example.com',
+      recipientName: '',
+      message: '',
+      template: 'classic',
+    });
+    giftMock.listGiftCards.mockResolvedValue([{ id: giftId, status: 'cancelled' }]);
+    renderComposer();
+
+    expect(await screen.findByLabelText('Recipient email')).toBeInTheDocument();
+    expect(screen.queryByText('Gift card ready')).not.toBeInTheDocument();
+    expect(inspectGiftHandoff({ ...scope, giftId })).toBeUndefined();
   });
 
   it('drops a definitely rejected preparation so the next attempt uses the edited form', async () => {

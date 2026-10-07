@@ -23,6 +23,7 @@ import {
 import type { DecoratedGem } from '@/services/types';
 import {
   clearGiftHandoff,
+  pruneFinishedGiftHandoffs,
   listGiftHandoffs,
   saveGiftHandoff,
 } from '@/services/offchain/giftHandoff';
@@ -136,11 +137,22 @@ export function GiftCardList({ owned }: { owned: DecoratedGem[] }) {
       })
     : [];
 
+  // Saved codes for cards already cancelled or claimed would reopen the
+  // composer on a dead card the next time this token is gifted.
+  useEffect(() => {
+    if (linkedWallet && allCards) {
+      pruneFinishedGiftHandoffs({ chainId: env.chainId, account: linkedWallet }, allCards);
+    }
+  }, [allCards, linkedWallet]);
+
   const cancel = useMutation({
     mutationFn: cancelGiftCard,
     // An escrow cancellation changes both the private card row and chain-owned
     // portfolio, so refresh both rather than only the gift list.
-    onSuccess: () => queryClient.invalidateQueries(),
+    onSuccess: (_result, giftId) => {
+      if (linkedWallet) clearGiftHandoff({ chainId: env.chainId, account: linkedWallet, giftId });
+      return queryClient.invalidateQueries();
+    },
     onError: (cancelError: unknown) =>
       setError(cancelError instanceof Error ? cancelError.message : 'Could not cancel the card'),
   });

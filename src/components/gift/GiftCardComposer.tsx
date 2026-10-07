@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import type { DecoratedGem } from '@/services/types';
 import { Modal } from '@/components/ui/Modal';
 import { Field, Labeled, inputClass } from '@/components/ui/Field';
@@ -18,6 +19,7 @@ import {
   clearGiftHandoff,
   inspectGiftPreparationIntent,
   inspectGiftHandoff,
+  isFinishedGiftStatus,
   saveGiftPreparationIntent,
   saveGiftHandoff,
 } from '@/services/offchain/giftHandoff';
@@ -29,6 +31,7 @@ import {
   createGiftCard,
   emailGiftCard,
   giftClaimUrl,
+  listGiftCards,
   resendGiftSenderCopy,
   type CreatedGiftCard,
   type SenderCopyOutcome,
@@ -71,7 +74,7 @@ const MAX_MESSAGE = 500;
  * and the card becomes claimable only after the server verifies escrow custody.
  */
 export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardComposerProps) {
-  const { linkedWallet } = useAuth();
+  const { linkedWallet, user } = useAuth();
   const account = linkedWallet ?? '';
   /*
    * A card that survived the Canva redirect, if there was one.
@@ -126,6 +129,26 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
   const handoffScope = issued
     ? { chainId: env.chainId, account, giftId: issued.giftId }
     : { chainId: env.chainId, account, gemId: String(gem.gemId) };
+
+  /*
+   * A restored card may have been cancelled or claimed since it was saved, from
+   * the portfolio list or another device. Reopening its QR page then offered a
+   * dead card for a token the sender is trying to gift afresh.
+   */
+  const { data: serverCards } = useQuery({
+    queryKey: ['giftCards', user?.id ?? 'anonymous'],
+    queryFn: listGiftCards,
+    enabled: Boolean(user && restored),
+  });
+  useEffect(() => {
+    if (!restored || !serverCards || !issued || issued.giftId !== restored.card.giftId) return;
+    const status = serverCards.find((card) => card.id === restored.card.giftId)?.status;
+    if (!isFinishedGiftStatus(status)) return;
+    clearGiftHandoff({ chainId: env.chainId, account, giftId: restored.card.giftId });
+    setIssued(null);
+    setEscrowTxHash(undefined);
+    setStep('compose');
+  }, [account, issued, restored, serverCards]);
 
   const email = recipientEmail.trim().toLowerCase();
   const emailValid = EMAIL_PATTERN.test(email);
