@@ -20,7 +20,8 @@ const evidenceFile = {
 async function uploadEvidence(page: Page, label: string) {
   const form = page.getByText(label, { exact: true }).locator('xpath=ancestor::form[1]');
   await form.locator('input[type="file"]').setInputFiles(evidenceFile);
-  await form.getByRole('button', { name: 'Upload evidence' }).click();
+  // Choosing the file uploads it.
+  await expect(form.getByText(/uploaded and verified/)).toBeVisible();
 }
 
 async function chooseRequest(page: Page, name: RegExp) {
