@@ -149,7 +149,26 @@ export default function GemDetailPage() {
               <div className="mb-3 text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
                 {isManageView ? 'Ownership actions' : 'Available actions'}
               </div>
-              {isManageView ? (
+              {gem.transferLocked ? (
+                /*
+                 * RedemptionManager has locked the token. Every transfer reverts
+                 * until the redemption is cancelled or the token is burned, so
+                 * listing, swapping, sending and offers are all unavailable.
+                 */
+                <div className="space-y-3">
+                  <p className="text-[11.5px] leading-relaxed text-ink-dim">
+                    This gemstone is being redeemed for physical delivery. It cannot be listed,
+                    swapped, sent or bid on while the redemption is open.
+                  </p>
+                  {isManageView && (
+                    <Link to="/redeem" className="block">
+                      <Button variant="secondary" block>
+                        Track redemption
+                      </Button>
+                    </Link>
+                  )}
+                </div>
+              ) : isManageView ? (
                 <div className="grid grid-cols-2 gap-2.5">
                   {isActiveListing ? (
                     <>

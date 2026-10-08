@@ -263,6 +263,7 @@ export default function ProfilePage() {
                       g.tokenId &&
                       !g.listingSeller &&
                       !redemptionTokenIds.has(g.tokenId.toString()) &&
+                      !g.transferLocked &&
                       address &&
                       g.owner &&
                       isAddressEqual(g.owner, address) ? (

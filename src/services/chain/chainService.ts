@@ -331,6 +331,8 @@ function settledEvents(): ProjectionSnapshot['events'] {
   return settledSnapshot?.events ?? [];
 }
 
+/** GemRegistry.GemStatus.RedemptionRequested. */
+const GEM_STATUS_REDEMPTION_REQUESTED = 6;
 const GEM_PROBE_WINDOW = 25;
 const GEM_PROBE_LIMIT = 5_000;
 
@@ -524,6 +526,10 @@ async function readGemUncached(
         args: [registryGem.tokenId],
       })
       .catch(() => undefined)) as boolean | undefined;
+    // RedemptionManager sets the registry status and the lock together, so the
+    // registry read already in hand answers when the lock read fails. Treating
+    // an unread lock as "unlocked" offered redeeming stones in swaps.
+    if (Number(registryGem.status) === GEM_STATUS_REDEMPTION_REQUESTED) transferLocked = true;
     // Only the gift escrow wallet's tokens need it: see `inGiftEscrow`.
     if (giftOperatorAddress && isAddressEqual(owner, giftOperatorAddress)) {
       giftEscrowed = (await openGiftTokenIds())?.has(registryGem.tokenId.toString());

@@ -121,13 +121,18 @@ export function inGiftEscrow(
 }
 
 export function directSwapOwner(
-  gem: Pick<Gem, 'tokenId' | 'owner' | 'listingSeller' | 'escrowDepositor' | 'giftEscrowed'>,
+  gem: Pick<
+    Gem,
+    'tokenId' | 'owner' | 'listingSeller' | 'escrowDepositor' | 'giftEscrowed' | 'transferLocked'
+  >,
   viewer: Address | undefined,
   /** Contract escrows (Marketplace, SwapEscrow): everything they hold is escrowed. */
   custody: readonly (Address | undefined)[] = [],
   giftOperator?: Address,
 ): 'viewer' | 'other' | undefined {
   if (!gem.tokenId || !gem.owner || gem.listingSeller) return;
+  // A redeeming token is transfer-locked: no swap involving it can settle.
+  if (gem.transferLocked) return;
   if (custody.some((address) => address && isAddressEqual(gem.owner!, address))) return;
   if (inGiftEscrow(gem, giftOperator)) return;
   return viewer && isAddressEqual(gem.owner, viewer) ? 'viewer' : 'other';

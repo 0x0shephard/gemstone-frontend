@@ -100,19 +100,40 @@ describe('market presentation', () => {
   it('separates open swaps from expired escrow that only the proposer can clear', () => {
     const proposer = '0x1111111111111111111111111111111111111111';
     const swaps = [
-      { offerId: 1n, proposer, status: 'Active' },
-      { offerId: 2n, proposer, status: 'Expired' },
-      { offerId: 3n, proposer, status: 'Accepted' },
-      { offerId: 4n, proposer, status: 'Cancelled' },
+      { offerId: 1n, proposer, status: 'Active', gem: {} },
+      { offerId: 2n, proposer, status: 'Expired', gem: {} },
+      { offerId: 3n, proposer, status: 'Accepted', gem: {} },
+      { offerId: 4n, proposer, status: 'Cancelled', gem: {} },
     ] as unknown as SwapRequest[];
 
     expect(groupActionableSwaps(swaps, proposer)).toEqual({
       active: [swaps[0]],
       expiredOwned: [swaps[1]],
+      blockedOwned: [],
     });
     expect(groupActionableSwaps(swaps, '0x2222222222222222222222222222222222222222')).toEqual({
       active: [swaps[0]],
       expiredOwned: [],
+      blockedOwned: [],
+    });
+  });
+
+  it('takes swaps for a gemstone in redemption off the open board', () => {
+    const proposer = '0x1111111111111111111111111111111111111111';
+    const swaps = [
+      { offerId: 1n, proposer, status: 'Active', gem: { transferLocked: true } },
+      { offerId: 2n, proposer, status: 'Active', gem: { transferLocked: false } },
+    ] as unknown as SwapRequest[];
+
+    expect(groupActionableSwaps(swaps, proposer)).toEqual({
+      active: [swaps[1]],
+      expiredOwned: [],
+      blockedOwned: [swaps[0]],
+    });
+    expect(groupActionableSwaps(swaps, '0x2222222222222222222222222222222222222222')).toEqual({
+      active: [swaps[1]],
+      expiredOwned: [],
+      blockedOwned: [],
     });
   });
 

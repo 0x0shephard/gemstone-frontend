@@ -88,16 +88,22 @@ export function groupAuctions(auctions: Auction[]) {
  * Accepted and cancelled records are history, not open requests. An expired
  * offer is different: the contract still holds the proposer's offered NFT until
  * they cancel it, so only that proposer should see it in the cleanup queue.
+ *
+ * A live offer whose requested gemstone has since entered redemption can never
+ * be accepted (the token is transfer-locked), so it is not an open request
+ * either. Its proposer still has a token in escrow and needs to cancel it.
  */
 export function groupActionableSwaps(swaps: SwapRequest[], viewer?: string) {
   const normalized = viewer?.toLowerCase();
+  const ownedByViewer = (swap: SwapRequest) =>
+    Boolean(normalized) && swap.proposer.toLowerCase() === normalized;
+  const redeeming = (swap: SwapRequest) => swap.gem.transferLocked === true;
   return {
-    active: swaps.filter((swap) => swap.status === 'Active'),
-    expiredOwned: normalized
-      ? swaps.filter(
-          (swap) => swap.status === 'Expired' && swap.proposer.toLowerCase() === normalized,
-        )
-      : [],
+    active: swaps.filter((swap) => swap.status === 'Active' && !redeeming(swap)),
+    expiredOwned: swaps.filter((swap) => swap.status === 'Expired' && ownedByViewer(swap)),
+    blockedOwned: swaps.filter(
+      (swap) => swap.status === 'Active' && redeeming(swap) && ownedByViewer(swap),
+    ),
   };
 }
 

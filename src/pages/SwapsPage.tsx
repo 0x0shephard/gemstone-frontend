@@ -74,9 +74,13 @@ function SwapSide({
 }
 
 export function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address }) {
-  const canCancel = viewer?.toLowerCase() === swap.proposer.toLowerCase();
+  const open = swap.status === 'Active' || swap.status === 'Expired';
+  const canCancel = open && viewer?.toLowerCase() === swap.proposer.toLowerCase();
+  const requestedRedeeming = swap.gem.transferLocked === true;
   const canAccept =
-    swap.status === 'Active' && viewer?.toLowerCase() === swap.requestedOwner.toLowerCase();
+    swap.status === 'Active' &&
+    !requestedRedeeming &&
+    viewer?.toLowerCase() === swap.requestedOwner.toLowerCase();
 
   return (
     <Card className="p-4 sm:p-5">
@@ -113,6 +117,12 @@ export function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address
             </StatusBadge>
             <span className="text-[13px] font-medium text-emerald">{swap.diff}</span>
           </div>
+          {swap.status === 'Active' && requestedRedeeming && (
+            <p className="mt-2 max-w-md text-[11.5px] leading-relaxed text-ink-muted">
+              The requested gemstone is being redeemed, so this swap can no longer be accepted.
+              Cancel it to return your offered gemstone to your wallet.
+            </p>
+          )}
           {swap.status === 'Expired' && (
             <p className="mt-2 max-w-md text-[11.5px] leading-relaxed text-ink-muted">
               This offer expired, but the escrow still holds your offered gemstone. Cancel it to
@@ -130,7 +140,7 @@ export function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address
                 pendingLabel="Cancelling…"
                 telemetryFlow="swap_cancel"
               >
-                {swap.status === 'Expired' ? 'Return my gemstone' : 'Cancel'}
+                {swap.status === 'Expired' || requestedRedeeming ? 'Return my gemstone' : 'Cancel'}
               </TxButton>
             )}
             {canAccept && (
@@ -170,7 +180,12 @@ export default function SwapsPage() {
   const modals = useGemModals();
   const [offeredId, setOfferedId] = useState('');
   const offered = ownedGems.find((g) => g.gemId.toString() === offeredId);
-  const { active: activeSwaps, expiredOwned } = groupActionableSwaps(swaps ?? [], address);
+  const {
+    active: activeSwaps,
+    expiredOwned,
+    blockedOwned,
+  } = groupActionableSwaps(swaps ?? [], address);
+  const toClear = [...blockedOwned, ...expiredOwned];
 
   return (
     <div className="grid gap-6 xl:grid-cols-[.82fr_1.4fr]">
@@ -246,20 +261,21 @@ export default function SwapsPage() {
           ))
         )}
 
-        {!isLoading && !isError && expiredOwned.length > 0 && (
+        {!isLoading && !isError && toClear.length > 0 && (
           <section className="space-y-3 pt-3" aria-labelledby="expired-swaps-heading">
             <div>
               <h3
                 id="expired-swaps-heading"
                 className="font-display text-[17px] font-medium text-ink"
               >
-                Expired swaps to clear
+                Swaps to clear
               </h3>
               <p className="mt-1 text-[12px] leading-relaxed text-ink-muted">
-                These are not open offers. Cancel them to release your escrowed gemstones.
+                These offers expired or ask for a gemstone that is now being redeemed. Cancel them
+                to release your escrowed gemstones.
               </p>
             </div>
-            {expiredOwned.map((swap) => (
+            {toClear.map((swap) => (
               <SwapCard key={swap.offerId.toString()} swap={swap} viewer={address} />
             ))}
           </section>
