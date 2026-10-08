@@ -20,7 +20,7 @@ import { fmtUsd } from '@/lib/format';
 import { useAuctions, useGems, useProfile, useRedemptions } from '@/hooks/useData';
 import { minimumBidUsd } from '@/lib/auctionBid';
 import { contractAddresses, giftOperatorAddress, NATIVE_ASSET } from '@/config/contracts';
-import { formatUnits, zeroHash } from 'viem';
+import { formatUnits, keccak256, toHex, zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
 import { env } from '@/config/env';
 import { createRedemptionCommitment } from '@/services/offchain/workflows';
@@ -649,6 +649,15 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
   });
   const canRedeem = redemptionReserveEligible(gem) && gem.redeem === 'Eligible';
   const fulfillmentValid = redemptionFulfillmentIsValid(method, details);
+  /*
+   * The commitment request id is reused only for the same input, so a retry
+   * after a failed transaction resumes the same record. Keyed by token alone,
+   * changing the route or address after a failure reused the id with different
+   * details, which the server rightly refuses.
+   */
+  const commitmentKey = `redemption:${gem.tokenId}:commitment:${keccak256(
+    toHex(JSON.stringify([method, redemptionFulfillmentDetails(method, details)])),
+  ).slice(2, 18)}`;
   const request = async () => {
     if (!gem.tokenId || !address) throw new Error('A connected verified wallet is required');
     setReceipt(null);
@@ -660,7 +669,7 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
             tokenId: gem.tokenId,
             fulfillmentMethod: method,
             fulfillmentDetails: redemptionFulfillmentDetails(method, details),
-            clientRequestId: operationIdempotencyKey(`redemption:${gem.tokenId}:commitment`),
+            clientRequestId: operationIdempotencyKey(commitmentKey),
           })
         : {
             workflowId: `mock-redemption-${gem.tokenId}`,
@@ -795,7 +804,7 @@ export function RedeemModal({ gem, open, onClose }: BaseModalProps) {
               transactionHash: result.hash,
             });
             clearOperationIdempotencyKey(intent);
-            clearOperationIdempotencyKey(`redemption:${gem.tokenId}:commitment`);
+            clearOperationIdempotencyKey(commitmentKey);
           }
           const workflow =
             env.dataMode === 'chain'

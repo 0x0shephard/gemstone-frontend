@@ -573,6 +573,8 @@ async function runStep(
  * only, so viem has nothing to decode the custom error against and surfaces the
  * four bytes verbatim.
  */
+/** `ReserveManager.Insolvent(uint256,uint256)`. */
+const RESERVE_INSOLVENT = '0x1f2c89f0';
 const ERC20_INSUFFICIENT_ALLOWANCE = '0xfb8f41b2';
 
 export function decodeTransactionError(error: unknown): Error {
@@ -608,6 +610,15 @@ export function decodeTransactionError(error: unknown): Error {
         return new TransactionGuardError(
           'The gemstone transfer is not approved yet. Approve the escrow contract and continue.',
           'APPROVAL_REVERTED',
+        );
+      }
+      // ReserveManager.requireSolvent guards bids, purchases, offers, swap
+      // acceptance and redemption requests. Its error is not in the ABI of the
+      // contract being called, so it arrives as a bare selector.
+      if (selector === RESERVE_INSOLVENT) {
+        return new TransactionGuardError(
+          'Protocol reserves are briefly below full coverage, so bids, purchases, offers and new redemptions are paused. Try again once Digital Carat restores coverage.',
+          'CONTRACT_REVERTED',
         );
       }
       const errorName = reverted.data?.errorName;
