@@ -35,18 +35,18 @@ its web servers before global setup, so a fresh clone needs `up` first).
 
 ## Journeys
 
-| File                           | Covers                                                                                                                                              |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `buy.e2e.ts`                   | list, then purchase by another collector                                                                                                            |
-| `swap.e2e.ts`                  | propose and accept; own tokens never offered                                                                                                        |
-| `gift.e2e.ts`                  | escrow, sender copy, recipient email, claim                                                                                                         |
-| `gift-recovery.e2e.ts`         | abandoned setup replaced; interrupted gift finished from a new tab                                                                                  |
-| `faults.e2e.ts`                | wallet rejection; lost reply after broadcast (no second send)                                                                                       |
-| `redemption.e2e.ts`            | request, custodian hand-over in the verify portal, holder claims the reserve                                                                        |
-| `auction.e2e.ts`               | bid, 24 h time travel, settlement by the real `v1-auction-refresh` sweep                                                                            |
-| `offer.e2e.ts`                 | offer on an unlisted token, accepted by the holder                                                                                                  |
-| `redemption-cancel.e2e.ts`     | custodian cancels a redemption from the verify portal                                                                                               |
-| `operations-redemption.e2e.ts` | six-step redemption: admin accepts, vault confirms, dispatches and records arrival (server-signed), holder confirms with the emailed code and burns |
+| File                           | Covers                                                                                                                                                                                        |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `buy.e2e.ts`                   | list, then purchase by another collector                                                                                                                                                      |
+| `swap.e2e.ts`                  | propose and accept; own tokens never offered                                                                                                                                                  |
+| `gift.e2e.ts`                  | escrow, sender copy, recipient email, claim                                                                                                                                                   |
+| `gift-recovery.e2e.ts`         | abandoned setup replaced; interrupted gift finished from a new tab                                                                                                                            |
+| `faults.e2e.ts`                | wallet rejection; lost reply after broadcast (no second send)                                                                                                                                 |
+| `redemption.e2e.ts`            | request, custodian hand-over in the verify portal, holder claims the reserve                                                                                                                  |
+| `auction.e2e.ts`               | bid, 24 h time travel, settlement by the real `v1-auction-refresh` sweep                                                                                                                      |
+| `offer.e2e.ts`                 | offer on an unlisted token, accepted by the holder                                                                                                                                            |
+| `redemption-cancel.e2e.ts`     | custodian cancels a redemption from the verify portal                                                                                                                                         |
+| `operations-redemption.e2e.ts` | six-step redemption: admin accepts, the bank confirms and dispatches, the custodian records delivery (server-signed), the holder confirms with the emailed code, burns and claims the reserve |
 
 Not yet covered: notifications.
 

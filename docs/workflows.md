@@ -240,27 +240,29 @@ empty list. A wallet nobody has linked still gets a row; it simply cannot be
 emailed.
 
 Redemption is on this list because it cannot finish on its own: each of its
-six steps waits on a person. It runs through the custodian vault — the bank or
-storage vault that holds the stone — and every gem's on-chain custodian is the
-operator wallet that activated it, so the server signs the contract steps for
-the vault's staff:
+six steps waits on a person. The stone leaves from the bank that stored it in
+the seller cycle and reaches the holder through a custodian. Every gem's
+on-chain custodian is the operator wallet that activated it, so the server
+signs the contract steps for the bank and custodian staff:
 
-| Step                    | Who                        | What is recorded                                                                                           | On-chain                                                     |
-| ----------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| 1. On-chain request     | Holder, then Digital Carat | `onchain_requested` → `accepted` (admin picks the vault in `/verify`)                                      | `requestRedemption` (holder)                                 |
-| 2. Custodian collected  | Vault, `/custodian`        | `custodian_collected`                                                                                      | `startFulfillment` (server)                                  |
-| 3. Custodian dispatched | Vault                      | `custodian_dispatched`, with evidence                                                                      | —                                                            |
-| 4. Arrived              | Vault                      | `arrived` at the pickup point or the delivery address, then `proof_approved`; the holder is emailed a code | `submitFulfillmentProof`, `approveFulfillmentProof` (server) |
-| 5. Handed to customer   | Holder, `/redeem`          | `owner_authorized` once the holder enters the code                                                         | — (authorizer signs)                                         |
-| 6. Token burned         | Holder                     | `chain_burned`                                                                                             | `finalizeRedemption` (holder)                                |
+| Step                  | Who                                 | What is recorded                                                                                                                                                                     | On-chain                                                     |
+| --------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| 1. On-chain request   | Holder, then Digital Carat          | `onchain_requested` → `accepted` in `/verify`; the storing bank comes from the seller-cycle bank receipt (chosen only when none names an active bank), the admin picks the custodian | `requestRedemption` (holder)                                 |
+| 2. Bank confirms      | Storing bank, `/bank` → Redemptions | `custodian_collected`                                                                                                                                                                | `startFulfillment` (server)                                  |
+| 3. Bank dispatches    | Storing bank                        | `custodian_dispatched`, with evidence                                                                                                                                                | —                                                            |
+| 4. Custodian delivers | Custodian, `/custodian`             | `arrived` at the pickup point or the delivery address, then `proof_approved`; the holder is emailed a code                                                                           | `submitFulfillmentProof`, `approveFulfillmentProof` (server) |
+| 5. Handed to customer | Holder, `/redeem`                   | `owner_authorized` once the holder enters the code                                                                                                                                   | — (authorizer signs)                                         |
+| 6. Token burned       | Holder                              | `chain_burned`                                                                                                                                                                       | `finalizeRedemption` (holder)                                |
 
-The holder can cancel until the vault confirms (steps 1 and the acceptance
-after it; `RedemptionManager` allows it only before fulfillment starts), and can
-discard a request that never reached the chain. Approvals use
-`REDEMPTION_PROOF_APPROVER_PRIVATE_KEY` when set, otherwise the operator, which
-holds `PROOF_APPROVER_ROLE` on Sepolia. The state machine is
-`supabase/functions/_shared/redemptionFlow.ts`; rows left in the retired bank and
-proof-review states finish through the same arrival and approval steps.
+Acceptance writes a `bank` and a `custodian` row to
+`redemption_workflow_assignments`; each portal lists and acts only on its own
+assignments. The holder can cancel until the bank confirms (`RedemptionManager`
+allows it only before fulfillment starts), and can discard a request that never
+reached the chain. Approvals use `REDEMPTION_PROOF_APPROVER_PRIVATE_KEY` when
+set, otherwise the operator, which holds `PROOF_APPROVER_ROLE` on Sepolia. The
+state machine is `supabase/functions/_shared/redemptionFlow.ts`; rows left in the
+retired bank-pickup and proof-review states finish through the same delivery and
+approval steps.
 
 **Not covered.** A listing selling (`Purchased`) notifies nobody: the sale pays
 the seller automatically, so nothing is stranded, and the event carries only the

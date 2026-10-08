@@ -95,6 +95,8 @@ export interface RedemptionTracker {
     custodianOrganizationId?: string;
     bankOrganizationId?: string;
   } | null;
+  /** Admin view: the active bank that recorded this stone's seller-cycle receipt. */
+  storageBank?: { id: string; name: string } | null;
   proxyNomination?: RedemptionProxyNomination | null;
   /** Unexpired, server-issued finalization data; returned only to the owner. */
   authorization?: RedemptionAuthorization;
@@ -368,12 +370,17 @@ export async function startSellerActivation(input: {
   );
 }
 
-/** Step 1: Digital Carat accepts an on-chain request and names the vault that fulfils it. */
+/**
+ * Step 1: Digital Carat accepts an on-chain request. The storing bank comes from
+ * the seller cycle; the admin names the custodian that delivers the stone.
+ */
 export async function acceptRedemption(input: {
   requestId: string;
   organizationId: string;
   expectedVersion: number;
-  vaultOrganizationId: string;
+  custodianOrganizationId: string;
+  /** Only when no seller-cycle bank receipt names the storing bank. */
+  bankOrganizationId?: string;
   idempotencyKey: string;
 }): Promise<RedemptionMutationResult> {
   return mutateRedemptionLifecycle('accept_redemption', input);
@@ -607,7 +614,7 @@ export async function markRedemptionChainBurned(input: {
   return mutateRedemptionLifecycle('mark_chain_burned', input);
 }
 
-/** Step 2: the vault confirms the request; the server starts fulfillment on-chain. */
+/** Step 2: the storing bank confirms it holds the stone; the server starts fulfillment. */
 export async function confirmVaultCollection(input: {
   requestId: string;
   organizationId: string;
@@ -618,7 +625,7 @@ export async function confirmVaultCollection(input: {
   return mutateRedemptionLifecycle('custodian_collect', input, SERVER_SIGNED_DEADLINE_MS);
 }
 
-/** Step 3: the vault records dispatch with evidence. */
+/** Step 3: the bank records dispatch to the custodian, with evidence. */
 export async function recordCustodianDispatch(input: {
   requestId: string;
   organizationId: string;
@@ -632,7 +639,7 @@ export async function recordCustodianDispatch(input: {
   return mutateRedemptionLifecycle('custodian_dispatch', input);
 }
 
-/** Step 4: the vault records arrival; the server submits it as the on-chain proof. */
+/** Step 4: the custodian records delivery; the server submits it as the on-chain proof. */
 export async function recordRedemptionArrival(input: {
   requestId: string;
   organizationId: string;

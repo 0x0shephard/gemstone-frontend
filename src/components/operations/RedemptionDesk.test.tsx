@@ -1,7 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ReactNode } from 'react';
 import type { RedemptionTracker } from '@/services/offchain/operations';
 
 const mocks = vi.hoisted(() => ({
@@ -12,12 +11,14 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
 }));
 
-vi.mock('@/components/operations/OperationsAccessGate', () => ({
-  OperationsAccessGate: ({ children }: { children: ReactNode }) => children,
-}));
 vi.mock('@/hooks/useOperationsAccess', () => ({
   useOperationsAccess: () => ({
-    data: { memberships: [{ organizationId: 'vault-org', capabilities: ['custodian.fulfill'] }] },
+    data: {
+      memberships: [
+        { organizationId: 'bank-org', capabilities: ['bank.receive'] },
+        { organizationId: 'custodian-org', capabilities: ['custodian.fulfill'] },
+      ],
+    },
   }),
 }));
 vi.mock('@/components/operations/EvidenceUpload', () => ({
@@ -36,7 +37,7 @@ vi.mock('@/services/offchain/operations', async (importOriginal) => ({
   releaseRedemptionOwnerCode: mocks.release,
 }));
 
-import CustodianPage from './CustodianPage';
+import { RedemptionDesk } from './RedemptionDesk';
 
 function tracker(status: string, capabilities: string[], version = 3): RedemptionTracker {
   return {
@@ -54,39 +55,47 @@ function tracker(status: string, capabilities: string[], version = 3): Redemptio
   };
 }
 
-async function openRequest(value: RedemptionTracker) {
+async function openRequest(value: RedemptionTracker, scope: 'bank' | 'custodian') {
   mocks.list.mockResolvedValue([value]);
   mocks.detail.mockResolvedValue(value);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <CustodianPage />
+      <RedemptionDesk
+        scope={scope}
+        capability={scope === 'bank' ? 'bank.receive' : 'custodian.fulfill'}
+        title="Desk"
+        description="Desk"
+        empty="Empty"
+      />
     </QueryClientProvider>,
   );
   fireEvent.click(await screen.findByRole('button', { name: /Token #42/ }));
 }
 
-describe('custodian vault desk', () => {
+describe('redemption desks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
   });
 
-  it('confirms an accepted request without a wallet', async () => {
+  it('lets the storing bank confirm an accepted request without a wallet', async () => {
     mocks.confirm.mockResolvedValue({ request: tracker('custodian_collected', []) });
-    await openRequest(tracker('accepted', ['custodian_collect']));
-    fireEvent.click(await screen.findByRole('button', { name: 'Confirm request receipt' }));
+    await openRequest(tracker('accepted', ['custodian_collect']), 'bank');
+    expect(mocks.list).toHaveBeenCalledWith('bank', 'bank-org');
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm stone is in storage' }));
     await waitFor(() =>
       expect(mocks.confirm).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 'vault-org', expectedVersion: 3 }),
+        expect.objectContaining({ organizationId: 'bank-org', expectedVersion: 3 }),
       ),
     );
   });
 
-  it('records arrival and then sends the customer their code', async () => {
+  it('lets the custodian record delivery and then sends the customer their code', async () => {
     mocks.arrival.mockResolvedValue({ request: tracker('arrived', [], 7) });
     mocks.release.mockResolvedValue({ request: tracker('proof_approved', [], 8) });
-    await openRequest(tracker('custodian_dispatched', ['record_arrival'], 6));
+    await openRequest(tracker('custodian_dispatched', ['record_arrival'], 6), 'custodian');
+    expect(mocks.list).toHaveBeenCalledWith('custodian', 'custodian-org');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Upload evidence' }));
     fireEvent.change(screen.getByLabelText('Arrived at'), {
@@ -95,7 +104,7 @@ describe('custodian vault desk', () => {
     fireEvent.change(screen.getByLabelText('Pickup point'), {
       target: { value: 'Islamabad branch' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Record arrival' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Record delivery' }));
 
     await waitFor(() =>
       expect(mocks.arrival).toHaveBeenCalledWith(
@@ -109,7 +118,7 @@ describe('custodian vault desk', () => {
     // The code release uses the version the arrival produced.
     await waitFor(() =>
       expect(mocks.release).toHaveBeenCalledWith(
-        expect.objectContaining({ organizationId: 'vault-org', expectedVersion: 7 }),
+        expect.objectContaining({ organizationId: 'custodian-org', expectedVersion: 7 }),
       ),
     );
   });

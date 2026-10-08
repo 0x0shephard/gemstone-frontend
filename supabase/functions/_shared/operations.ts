@@ -37,12 +37,9 @@ const capabilityMatrix: Partial<
     gemologist: ['gemlab.read', 'gemlab.appraise'],
     org_admin: ['gemlab.read', 'gemlab.appraise', 'matrix.propose'],
   },
-  // The bank or storage vault that holds a stone is also its custodian for
-  // redemption: it confirms the request, dispatches the stone and records its
-  // arrival, so its members hold the custodian capability too.
   bank: {
-    bank_operator: ['bank.receive', 'custodian.fulfill'],
-    org_admin: ['bank.receive', 'custodian.fulfill'],
+    bank_operator: ['bank.receive'],
+    org_admin: ['bank.receive'],
   },
   custodian: {
     custody_operator: ['custodian.fulfill'],

@@ -68,37 +68,58 @@ describe('redemption acceptance', () => {
     mocks.release.mockResolvedValue({ request: tracker('proof_approved', []) });
   });
 
-  it('accepts an on-chain request into a bank or storage vault', async () => {
-    renderReview(tracker('onchain_requested', ['accept_redemption']));
+  it('uses the bank from the seller cycle and asks only for the custodian', async () => {
+    renderReview({
+      ...tracker('onchain_requested', ['accept_redemption']),
+      storageBank: { id: 'bank-1', name: 'Storage Bank' },
+    });
 
     const submit = await screen.findByRole('button', { name: 'Accept request' });
+    expect(await screen.findByText('Storage Bank')).toBeInTheDocument();
+    expect(screen.getByText('From the bank receipt in the seller cycle.')).toBeInTheDocument();
     expect(submit).toBeDisabled();
-    const select = screen.getByText('Custodian vault').parentElement!.querySelector('select')!;
-    const choices = [...select.querySelectorAll('option')].map((option) => option.textContent);
-    // Both kinds of vault can hold the stone.
-    expect(choices).toEqual([
-      'Choose the vault holding this stone',
-      'Secure Custody',
-      'Storage Bank',
-    ]);
-    fireEvent.change(select, { target: { value: 'bank-1' } });
+    const custodian = screen
+      .getByText('Delivery custodian')
+      .parentElement!.querySelector('select')!;
+    const choices = [...custodian.querySelectorAll('option')].map((option) => option.textContent);
+    expect(choices).toEqual(['Choose the custodian that delivers it', 'Secure Custody']);
+    fireEvent.change(custodian, { target: { value: 'custodian-1' } });
     fireEvent.click(submit);
 
+    await waitFor(() => expect(mocks.accept).toHaveBeenCalled());
+    const input = mocks.accept.mock.calls[0][0];
+    expect(input).toMatchObject({
+      organizationId: 'admin-org',
+      expectedVersion: 2,
+      custodianOrganizationId: 'custodian-1',
+    });
+    // The server reads the recorded bank itself; the client does not override it.
+    expect(input).not.toHaveProperty('bankOrganizationId');
+  });
+
+  it('asks for the bank when no seller-cycle receipt names one', async () => {
+    renderReview(tracker('onchain_requested', ['accept_redemption']));
+    const submit = await screen.findByRole('button', { name: 'Accept request' });
+    const bank = screen.getByText('Storage bank').parentElement!.querySelector('select')!;
+    fireEvent.change(bank, { target: { value: 'bank-1' } });
+    fireEvent.change(
+      screen.getByText('Delivery custodian').parentElement!.querySelector('select')!,
+      { target: { value: 'custodian-1' } },
+    );
+    fireEvent.click(submit);
     await waitFor(() =>
       expect(mocks.accept).toHaveBeenCalledWith(
         expect.objectContaining({
-          organizationId: 'admin-org',
-          requestId: '11111111-1111-4111-8111-111111111111',
-          expectedVersion: 2,
-          vaultOrganizationId: 'bank-1',
+          bankOrganizationId: 'bank-1',
+          custodianOrganizationId: 'custodian-1',
         }),
       ),
     );
   });
 
-  it('can send the customer code when the vault recorded arrival', async () => {
+  it('can send the customer code once the custodian recorded delivery', async () => {
     renderReview(tracker('arrived', ['release_owner_code']));
-    fireEvent.click(await screen.findByRole('button', { name: 'Approve arrival and send code' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve delivery and send code' }));
     await waitFor(() =>
       expect(mocks.release).toHaveBeenCalledWith(
         expect.objectContaining({ organizationId: 'admin-org', expectedVersion: 2 }),

@@ -58,8 +58,7 @@ describe('operational capability matrix', () => {
     expect(capabilitiesFor('bank', 'custodian')).toEqual([]);
     expect(capabilitiesFor('custodian', 'bank_operator')).toEqual([]);
     expect(capabilitiesFor('custodian', 'grader')).toEqual([]);
-    // A bank or storage vault is the custodian for the stones it holds.
-    expect(capabilitiesFor('bank', 'bank_operator')).toEqual(['bank.receive', 'custodian.fulfill']);
+    expect(capabilitiesFor('bank', 'bank_operator')).toEqual(['bank.receive']);
     expect(capabilitiesFor('custodian', 'custody_operator')).toEqual(['custodian.fulfill']);
   });
 

@@ -8,7 +8,7 @@ import {
 } from '../fixtures/stack';
 import { chain } from '../fixtures/chain';
 
-test('the holder can cancel an accepted redemption until the vault confirms it', async ({
+test('the holder can cancel an accepted redemption until the bank confirms it', async ({
   browser,
   stack,
 }) => {
@@ -24,7 +24,7 @@ test('the holder can cancel an accepted redemption until the vault confirms it',
   await tapThroughSteps(alice.page, () => nft.locked(tokenId));
   await alice.context.close();
 
-  // Digital Carat accepts; the vault has not confirmed yet, so the holder may still cancel.
+  // Digital Carat accepts; the bank has not confirmed yet, so the holder may still cancel.
   const admin = await actor(browser, stack, 'admin');
   await admin.page.goto('/verify');
   await admin.page.getByRole('button', { name: /Redemption lifecycles/ }).click();
@@ -33,7 +33,14 @@ test('the holder can cancel an accepted redemption until the vault confirms it',
     .first()
     .click();
   await selectByText(
-    admin.page.getByText('Custodian vault', { exact: true }).locator('xpath=..').locator('select'),
+    admin.page.getByText('Storage bank', { exact: true }).locator('xpath=..').locator('select'),
+    'E2E Bank',
+  );
+  await selectByText(
+    admin.page
+      .getByText('Delivery custodian', { exact: true })
+      .locator('xpath=..')
+      .locator('select'),
     'E2E Custodian',
   );
   await admin.page.getByRole('button', { name: 'Accept request' }).click();

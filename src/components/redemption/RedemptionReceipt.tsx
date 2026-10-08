@@ -20,7 +20,7 @@ export function redemptionWorkflowStatusText(
   }
   // Rows past acceptance carry the vault lifecycle's states; the tracker
   // above shows their detail, so the receipt only says the request is moving.
-  return STATUS_TEXT[status] ?? 'Request open · with the custodian vault';
+  return STATUS_TEXT[status] ?? 'Request open · with the bank and custodian';
 }
 
 export function redemptionWorkflowTitle(

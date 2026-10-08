@@ -4,9 +4,10 @@
  *
  * The holder sees six steps:
  *   1. On-chain request — Digital Carat accepts it.
- *   2. Custodian collected — the custodian vault confirms receipt of the request.
- *   3. Custodian dispatched — the vault sends the stone out.
- *   4. Arrived — at the pickup point, or in hand at the delivery address.
+ *   2. Bank confirms — the bank that stored the stone in the seller cycle
+ *      confirms it holds it.
+ *   3. Bank dispatches — the stone leaves the bank for the custodian.
+ *   4. Custodian delivers — to the pickup point or the holder's address.
  *   5. Handed to customer — the holder confirms with their emailed code.
  *   6. Token burned.
  *
@@ -98,18 +99,20 @@ const STEPS: readonly StepDefinition[] = [
   },
   {
     key: 'collected',
-    label: () => 'Custodian vault confirmed the request',
+    label: () => 'Bank confirmed the stone is in storage',
     completedBy: 'custodian_collected',
   },
   {
     key: 'dispatched',
-    label: () => 'Dispatched from the custodian vault',
+    label: () => 'Dispatched from the bank',
     completedBy: 'custodian_dispatched',
   },
   {
     key: 'arrived',
     label: (method) =>
-      method === 'pickup' ? 'Arrived at the pickup point' : 'Arrived at the delivery address',
+      method === 'pickup'
+        ? 'Custodian delivered it to the pickup point'
+        : 'Custodian delivered it to the delivery address',
     completedBy: 'arrived',
   },
   {

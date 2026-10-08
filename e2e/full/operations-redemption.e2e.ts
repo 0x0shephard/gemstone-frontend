@@ -34,7 +34,7 @@ function fieldInput(page: Page, label: string) {
   return page.getByText(label, { exact: true }).locator('xpath=..').locator('input');
 }
 
-test('acceptance, vault custody, the holder code and the final burn follow the six-step lifecycle', async ({
+test('acceptance, bank release, custodian delivery, the holder code and the burn follow the six-step lifecycle', async ({
   browser,
   stack,
 }) => {
@@ -58,41 +58,56 @@ test('acceptance, vault custody, the holder code and the final burn follow the s
   ).toBeVisible();
   await owner.context.close();
 
-  // ... Digital Carat accepts it into the vault that holds the stone.
+  // ... Digital Carat accepts it. These seeded gems have no seller-cycle bank
+  // receipt, so the admin names the storing bank as well as the custodian.
   const admin = await actor(browser, stack, 'admin');
   await admin.page.goto('/verify');
   await admin.page.getByRole('button', { name: /Redemption lifecycles/ }).click();
   await chooseRequest(admin.page, requestName);
   await selectByText(
-    admin.page.getByText('Custodian vault', { exact: true }).locator('xpath=..').locator('select'),
+    admin.page.getByText('Storage bank', { exact: true }).locator('xpath=..').locator('select'),
+    'E2E Bank',
+  );
+  await selectByText(
+    admin.page
+      .getByText('Delivery custodian', { exact: true })
+      .locator('xpath=..')
+      .locator('select'),
     'E2E Custodian',
   );
   await admin.page.getByRole('button', { name: 'Accept request' }).click();
   await expect(admin.page.getByRole('button', { name: 'Accept request' })).toBeHidden();
   await admin.context.close();
 
-  // 2-4. The vault confirms, dispatches and records arrival. The server signs
-  // the on-chain steps, so vault staff never connect a wallet.
-  const vault = await actor(browser, stack, 'custodian');
-  await vault.page.goto('/custodian');
-  await chooseRequest(vault.page, requestName);
-  await vault.page.getByRole('button', { name: 'Confirm request receipt' }).click();
+  // 2-3. The storing bank confirms it holds the stone and dispatches it. The
+  // server signs the on-chain step, so bank staff never connect a wallet.
+  const bank = await actor(browser, stack, 'bank');
+  await bank.page.goto('/bank');
+  await bank.page.getByRole('button', { name: /Redemptions/ }).click();
+  await chooseRequest(bank.page, requestName);
+  await bank.page.getByRole('button', { name: 'Confirm stone is in storage' }).click();
 
-  await uploadEvidence(vault.page, 'Record dispatch from the vault evidence');
-  await expect(vault.page.getByText(/Verified evidence/)).toBeVisible();
-  await fieldInput(vault.page, 'Dispatched at').fill('2026-10-08T01:05');
-  await fieldInput(vault.page, 'Carrier, optional').fill('E2E secure transport');
-  await vault.page.getByRole('button', { name: 'Record dispatch', exact: true }).click();
+  await uploadEvidence(bank.page, 'Record dispatch from the bank evidence');
+  await fieldInput(bank.page, 'Dispatched at').fill('2026-10-08T01:05');
+  await fieldInput(bank.page, 'Carrier, optional').fill('E2E secure transport');
+  await bank.page.getByRole('button', { name: 'Record dispatch', exact: true }).click();
+  await expect(
+    bank.page.getByText(/Dispatched\. The custodian records the delivery/),
+  ).toBeVisible();
+  await bank.context.close();
 
-  await uploadEvidence(vault.page, 'Record arrival at the pickup point evidence');
-  await expect(vault.page.getByText(/Verified evidence/)).toBeVisible();
-  await fieldInput(vault.page, 'Arrived at').fill('2026-10-08T01:10');
-  await fieldInput(vault.page, 'Pickup point').fill('E2E Geneva vault');
-  await vault.page.getByRole('button', { name: 'Record arrival', exact: true }).click();
-  await expect(vault.page.getByText(/The customer has their code/)).toBeVisible({
+  // 4. The custodian delivers to the pickup point; that releases the holder's code.
+  const custodian = await actor(browser, stack, 'custodian');
+  await custodian.page.goto('/custodian');
+  await chooseRequest(custodian.page, requestName);
+  await uploadEvidence(custodian.page, 'Record delivery at the pickup point evidence');
+  await fieldInput(custodian.page, 'Arrived at').fill('2026-10-08T01:10');
+  await fieldInput(custodian.page, 'Pickup point').fill('E2E Geneva vault');
+  await custodian.page.getByRole('button', { name: 'Record delivery', exact: true }).click();
+  await expect(custodian.page.getByText(/The customer has their code/)).toBeVisible({
     timeout: 60_000,
   });
-  await vault.context.close();
+  await custodian.context.close();
 
   // 5. The holder confirms the handover with the emailed code, and 6. burns.
   const finalOwner = await actor(browser, stack, 'alice');

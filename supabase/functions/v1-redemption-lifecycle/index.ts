@@ -178,13 +178,59 @@ async function requireAssignment(
   if (!data) throw new Error('Not found');
 }
 
+async function hasAssignment(
+  admin: ReturnType<typeof adminClient>,
+  deploymentId: string,
+  requestId: string,
+  assignmentRole: 'custodian' | 'bank',
+  membership: OperationalMembership | null,
+): Promise<boolean> {
+  if (!membership) return false;
+  try {
+    await requireAssignment(admin, deploymentId, requestId, assignmentRole, membership);
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Not found') return false;
+    throw error;
+  }
+}
+
+/**
+ * The bank that recorded the stone's arrival in the seller cycle, when it is an
+ * active bank organization. Redemption sends the stone back out from there.
+ */
+async function storageBank(
+  admin: ReturnType<typeof adminClient>,
+  deploymentId: string,
+  gemId: string | number,
+): Promise<{ id: string; name: string } | null> {
+  const { data, error } = await admin
+    .from('seller_submissions')
+    .select('bank_organization_id,verifier_organizations!bank_organization_id(id,name,kind,active)')
+    .eq('deployment_id', deploymentId)
+    .eq('onchain_gem_id', String(gemId))
+    .not('bank_organization_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  const organization = (data as Record<string, unknown> | null)?.verifier_organizations as
+    { id: string; name: string; kind: string; active: boolean } | null | undefined;
+  return organization?.active && organization.kind === 'bank'
+    ? { id: organization.id, name: organization.name }
+    : null;
+}
+
 function currentActions(
   row: RedemptionRow,
   owner: boolean,
   capabilities: Set<OperationalCapability>,
 ): string[] {
   const status = row.status as RedemptionLifecycleState;
-  const vault = capabilities.has('custodian.fulfill');
+  // The bank that stored the stone confirms and dispatches it; the custodian
+  // delivers it and records the arrival that releases the holder's code.
+  const bank = capabilities.has('bank.receive');
+  const custodian = capabilities.has('custodian.fulfill');
   const actions = ['request_evidence_upload', 'confirm_evidence_upload'];
   if (owner && ['draft', 'committed'].includes(row.status)) actions.push('discard_redemption');
   if (owner && row.status === 'committed') actions.push('mark_onchain_requested');
@@ -194,11 +240,11 @@ function currentActions(
   if (capabilities.has('redemption.approve') && status === 'onchain_requested') {
     actions.push('accept_redemption');
   }
-  if (vault && status === 'accepted') actions.push('custodian_collect');
-  if (vault && status === 'custodian_collected') actions.push('custodian_dispatch');
-  if (vault && ARRIVAL_FROM_STATES.includes(status)) actions.push('record_arrival');
+  if (bank && status === 'accepted') actions.push('custodian_collect');
+  if (bank && status === 'custodian_collected') actions.push('custodian_dispatch');
+  if (custodian && ARRIVAL_FROM_STATES.includes(status)) actions.push('record_arrival');
   if (
-    (vault || capabilities.has('redemption.approve')) &&
+    (custodian || capabilities.has('redemption.approve')) &&
     APPROVAL_PENDING_STATES.includes(status)
   ) {
     actions.push('release_owner_code');
@@ -704,9 +750,8 @@ Deno.serve(async (request) => {
       else if (scope === 'custodian' && abstract.has('custodian.fulfill')) {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
+        // The custodian takes over once the bank has dispatched the stone.
         query = query.in('status', [
-          'accepted',
-          'custodian_collected',
           'custodian_dispatched',
           'arrived',
           'bank_received',
@@ -733,15 +778,9 @@ Deno.serve(async (request) => {
       } else if (scope === 'bank' && abstract.has('bank.receive')) {
         const membership = membershipFor(memberships, 'bank.receive', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
-        query = query
-          .eq('fulfillment_method', 'pickup')
-          .in('status', [
-            'custodian_dispatched',
-            'bank_received',
-            'pickup_handover_recorded',
-            'pickup_proof_submitted',
-            'proof_approved',
-          ]);
+        // The storing bank confirms and dispatches; a dispatched stone stays
+        // listed so the bank can see where it went.
+        query = query.in('status', ['accepted', 'custodian_collected', 'custodian_dispatched']);
         if (!isGlobalOperationalAdmin(membership)) {
           const { data: assignments, error: assignmentError } = await admin
             .from('redemption_workflow_assignments')
@@ -815,13 +854,15 @@ Deno.serve(async (request) => {
       const bankMembership = membershipFor(memberships, 'bank.receive', organizationId);
       let custodianView = false;
       let bankView = false;
-      if (!owner && !adminView && custodianMembership) {
-        await requireAssignment(admin, deployment.id, requestId, 'custodian', custodianMembership);
-        custodianView = true;
-      }
-      if (!owner && !adminView && bankMembership && row.fulfillment_method === 'pickup') {
-        await requireAssignment(admin, deployment.id, requestId, 'bank', bankMembership);
-        bankView = true;
+      if (!owner && !adminView) {
+        custodianView = await hasAssignment(
+          admin,
+          deployment.id,
+          requestId,
+          'custodian',
+          custodianMembership,
+        );
+        bankView = await hasAssignment(admin, deployment.id, requestId, 'bank', bankMembership);
       }
       if (!owner && !adminView && !custodianView && !bankView) {
         return json({ error: 'Not found' }, 404);
@@ -867,17 +908,17 @@ Deno.serve(async (request) => {
           .filter((item) => {
             if (adminView) return true;
             if (owner) return item.category === 'proxy_identity';
-            if (custodianView)
-              return [
-                'custodian_collection',
-                'custodian_dispatch',
-                'courier_delivery',
-                'redemption_arrival',
-                'bank_handover',
-              ].includes(item.category);
+            if (
+              custodianView &&
+              ['custodian_dispatch', 'courier_delivery', 'redemption_arrival'].includes(
+                item.category,
+              )
+            ) {
+              return true;
+            }
             return (
               bankView &&
-              ['bank_receipt', 'bank_handover', 'proxy_identity'].includes(item.category)
+              ['custodian_collection', 'custodian_dispatch', 'bank_receipt'].includes(item.category)
             );
           })
           .map(async (item) => {
@@ -961,6 +1002,9 @@ Deno.serve(async (request) => {
         request: {
           ...tracker(row, version, events as unknown as Array<Record<string, unknown>>),
           assignment,
+          ...(adminView
+            ? { storageBank: await storageBank(admin, deployment.id, row.gem_id) }
+            : {}),
           ...(owner &&
           row.authorization_payload &&
           row.authorization_signature &&
@@ -1010,15 +1054,19 @@ Deno.serve(async (request) => {
       const requestedAction = String(body.intentAction ?? '');
       const allowed =
         (owner && ['nominate_proxy', 'cancel_redemption'].includes(requestedAction)) ||
+        (abstract.has('bank.receive') && requestedAction === 'custodian_collect') ||
         (abstract.has('custodian.fulfill') &&
-          ['custodian_collect', 'record_arrival', 'release_owner_code'].includes(
-            requestedAction,
-          )) ||
+          ['record_arrival', 'release_owner_code'].includes(requestedAction)) ||
         (abstract.has('redemption.approve') && requestedAction === 'release_owner_code') ||
         (abstract.has('redemption.recover') &&
           ['propose_recovery', 'approve_recovery', 'execute_recovery'].includes(requestedAction));
       if (!allowed) return json({ error: 'Not found' }, 404);
-      if (['custodian_collect', 'record_arrival'].includes(requestedAction)) {
+      if (requestedAction === 'custodian_collect') {
+        const membership = membershipFor(memberships, 'bank.receive', organizationId);
+        if (!membership) return json({ error: 'Not found' }, 404);
+        await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
+      }
+      if (requestedAction === 'record_arrival') {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
         await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
@@ -1054,22 +1102,24 @@ Deno.serve(async (request) => {
       const category = String(body.category ?? '');
       const allowed =
         (owner && category === 'proxy_identity') ||
-        (abstract.has('custodian.fulfill') &&
-          ['custodian_collection', 'custodian_dispatch', 'redemption_arrival'].includes(
-            category,
-          )) ||
-        (abstract.has('bank.receive') && category === 'bank_receipt') ||
+        (abstract.has('bank.receive') &&
+          ['custodian_collection', 'custodian_dispatch', 'bank_receipt'].includes(category)) ||
+        (abstract.has('custodian.fulfill') && category === 'redemption_arrival') ||
         (abstract.has('admin.correct') &&
           ['admin_correction', 'recovery_evidence'].includes(category)) ||
         (abstract.has('bank.receive') && category === 'bank_handover');
       if (!allowed) return json({ error: 'Not found' }, 404);
       let uploadOrganizationId: string | null = null;
-      if (['custodian_collection', 'custodian_dispatch', 'redemption_arrival'].includes(category)) {
+      if (category === 'redemption_arrival') {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
         await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
         uploadOrganizationId = membership.organizationId;
-      } else if (['bank_receipt', 'bank_handover'].includes(category)) {
+      } else if (
+        ['custodian_collection', 'custodian_dispatch', 'bank_receipt', 'bank_handover'].includes(
+          category,
+        )
+      ) {
         const membership = membershipFor(memberships, 'bank.receive', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
         await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
@@ -1436,21 +1486,33 @@ Deno.serve(async (request) => {
     }
 
     if (action === 'accept_redemption') {
-      // Step 1: Digital Carat accepts the on-chain request and names the vault
-      // (a bank or storage vault) that holds the stone and will fulfil it.
+      // Step 1: Digital Carat accepts the on-chain request. The bank that stored
+      // the stone in the seller cycle sends it back out; the admin names the
+      // custodian that delivers it to the pickup point or the holder.
       const membership = membershipFor(memberships, 'redemption.approve', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
       assertRedemptionTransition(row.status as RedemptionLifecycleState, 'accepted');
-      const vaultOrganizationId = requiredUuid(body.vaultOrganizationId, 'vaultOrganizationId');
-      const { data: vault, error: vaultError } = await admin
+      const custodianOrganizationId = requiredUuid(
+        body.custodianOrganizationId,
+        'custodianOrganizationId',
+      );
+      const recordedBank = await storageBank(admin, deployment.id, row.gem_id);
+      const bankOrganizationId =
+        recordedBank?.id ?? requiredUuid(body.bankOrganizationId, 'bankOrganizationId');
+      const { data: organizations, error: organizationError } = await admin
         .from('verifier_organizations')
         .select('id,name,kind,active')
-        .eq('id', vaultOrganizationId)
-        .maybeSingle();
-      if (vaultError) throw vaultError;
-      if (!vault?.active || !['bank', 'custodian'].includes(vault.kind)) {
-        return json({ error: 'Choose an active bank or custodian vault' }, 400);
-      }
+        .in('id', [custodianOrganizationId, bankOrganizationId]);
+      if (organizationError) throw organizationError;
+      const custodian = (organizations ?? []).find(
+        (entry) =>
+          entry.id === custodianOrganizationId && entry.kind === 'custodian' && entry.active,
+      );
+      const bank = (organizations ?? []).find(
+        (entry) => entry.id === bankOrganizationId && entry.kind === 'bank' && entry.active,
+      );
+      if (!custodian) return json({ error: 'Choose an active custodian' }, 400);
+      if (!bank) return json({ error: 'Choose the active bank that stores this stone' }, 400);
       const chain = serverChain(deployment);
       const record = await readRedemptionRecord(chain, manager(deployment), BigInt(row.token_id));
       if (
@@ -1459,26 +1521,33 @@ Deno.serve(async (request) => {
       ) {
         return json({ error: 'The on-chain request is not open for this workflow' }, 409);
       }
-      const { data: existing, error: existingError } = await admin
-        .from('redemption_workflow_assignments')
-        .select('organization_id')
-        .eq('deployment_id', deployment.id)
-        .eq('redemption_request_id', requestId)
-        .eq('assignment_role', 'custodian')
-        .maybeSingle();
-      if (existingError) throw existingError;
-      if (existing && existing.organization_id !== vaultOrganizationId) {
-        return json({ error: 'A different vault is already assigned to this request' }, 409);
-      }
-      if (!existing) {
-        const { error: assignError } = await admin.from('redemption_workflow_assignments').insert({
-          deployment_id: deployment.id,
-          redemption_request_id: requestId,
-          assignment_role: 'custodian',
-          organization_id: vaultOrganizationId,
-          assigned_by: user.id,
-        });
-        if (assignError && assignError.code !== '23505') throw assignError;
+      for (const [assignmentRole, organization] of [
+        ['bank', bank],
+        ['custodian', custodian],
+      ] as const) {
+        const { data: existing, error: existingError } = await admin
+          .from('redemption_workflow_assignments')
+          .select('organization_id')
+          .eq('deployment_id', deployment.id)
+          .eq('redemption_request_id', requestId)
+          .eq('assignment_role', assignmentRole)
+          .maybeSingle();
+        if (existingError) throw existingError;
+        if (existing && existing.organization_id !== organization.id) {
+          return json({ error: `A different ${assignmentRole} is already assigned` }, 409);
+        }
+        if (!existing) {
+          const { error: assignError } = await admin
+            .from('redemption_workflow_assignments')
+            .insert({
+              deployment_id: deployment.id,
+              redemption_request_id: requestId,
+              assignment_role: assignmentRole,
+              organization_id: organization.id,
+              assigned_by: user.id,
+            });
+          if (assignError && assignError.code !== '23505') throw assignError;
+        }
       }
       row = await complete({
         admin,
@@ -1491,18 +1560,24 @@ Deno.serve(async (request) => {
         userId: user.id,
         membership,
         capability: 'redemption.approve',
-        payload: { vaultOrganizationId, vaultName: vault.name },
+        payload: {
+          bankOrganizationId: bank.id,
+          bankName: bank.name,
+          bankFromSellerCycle: Boolean(recordedBank),
+          custodianOrganizationId: custodian.id,
+          custodianName: custodian.name,
+        },
         idempotencyKey,
       });
       return json({ request: tracker(row, expectedVersion + 1) });
     }
 
     if (action === 'custodian_collect') {
-      // Step 2: the vault confirms it has the request. The server, which is the
-      // gem's on-chain custodian, starts fulfillment; vault staff sign nothing.
-      const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
+      // Step 2: the storing bank confirms the stone is with it. The server, which
+      // is the gem's on-chain custodian, starts fulfillment; bank staff sign nothing.
+      const membership = membershipFor(memberships, 'bank.receive', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
-      await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
+      await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
       assertRedemptionTransition(row.status as RedemptionLifecycleState, 'custodian_collected');
       const payload = {
         note: String(body.note ?? '')
@@ -1548,7 +1623,7 @@ Deno.serve(async (request) => {
         toState: 'custodian_collected',
         userId: user.id,
         membership,
-        capability: 'custodian.fulfill',
+        capability: 'bank.receive',
         payload,
         transactionHash,
         idempotencyKey,
@@ -1557,10 +1632,10 @@ Deno.serve(async (request) => {
     }
 
     if (action === 'custodian_dispatch') {
-      // Step 3: the vault sends the stone to the pickup point or the holder.
-      const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
+      // Step 3: the bank dispatches the stone to the custodian for delivery.
+      const membership = membershipFor(memberships, 'bank.receive', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
-      await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
+      await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
       assertRedemptionTransition(row.status as RedemptionLifecycleState, 'custodian_dispatched');
       const proof = await evidence(
         admin,
@@ -1586,7 +1661,7 @@ Deno.serve(async (request) => {
         toState: 'custodian_dispatched',
         userId: user.id,
         membership,
-        capability: 'custodian.fulfill',
+        capability: 'bank.receive',
         payload,
         idempotencyKey,
       });
@@ -1594,8 +1669,8 @@ Deno.serve(async (request) => {
     }
 
     if (action === 'record_arrival') {
-      // Step 4: the stone is at the pickup point or in hand at the delivery
-      // address. The arrival evidence becomes the on-chain fulfillment proof.
+      // Step 4: the custodian delivered the stone to the pickup point or the
+      // holder's address. The arrival evidence becomes the on-chain proof.
       const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
       await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);

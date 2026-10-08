@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { OperationsAccessGate } from '@/components/operations/OperationsAccessGate';
+import { RedemptionDesk } from '@/components/operations/RedemptionDesk';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Labeled, inputClass } from '@/components/ui/Field';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { Tabs } from '@/components/ui/Tabs';
 import {
   clearOperationIdempotencyKey,
   loadBankSellerQueue,
@@ -24,7 +25,10 @@ export default function BankPage() {
   );
 }
 
+type BankTab = 'seller' | 'redemption';
+
 function BankWorkspace() {
+  const [tab, setTab] = useState<BankTab>('seller');
   const sellerQuery = useQuery({
     queryKey: ['operations', 'bank', 'seller'],
     queryFn: loadBankSellerQueue,
@@ -39,30 +43,37 @@ function BankWorkspace() {
             Physical storage desk
           </h2>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-muted">
-            Record only observed arrivals, assigned vault locations and custody dates. Listing
-            cannot advance from an inferred receipt.
+            Record only observed arrivals, assigned vault locations and custody dates. When a stone
+            is redeemed, confirm you hold it and dispatch it to the custodian.
           </p>
         </div>
         <StatusBadge tone="neutral" dot>
           {sellerQuery.isFetching ? 'Refreshing' : 'Authoritative receipts'}
         </StatusBadge>
       </header>
-      {/*
-       * The bank or storage vault holding a stone is also its custodian for
-       * redemption, and runs those steps from the custodian vault desk.
-       */}
-      <p className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] px-4 py-3 text-[12px] text-ink-muted">
-        Redemption requests assigned to this vault are confirmed, dispatched and handed over from
-        the{' '}
-        <Link to="/custodian" className="font-semibold text-ink underline underline-offset-2">
-          custodian vault desk
-        </Link>
-        .
-      </p>
-      <div className="space-y-5">
-        <SellerIntakeQueue query={sellerQuery} />
-        <LegacyCustodyTerm />
-      </div>
+      <Tabs
+        value={tab}
+        onChange={setTab}
+        tabs={[
+          { key: 'seller', label: 'Seller intake', count: sellerQuery.data?.length },
+          { key: 'redemption', label: 'Redemptions' },
+        ]}
+      />
+      {tab === 'seller' ? (
+        <div className="space-y-5">
+          <SellerIntakeQueue query={sellerQuery} />
+          <LegacyCustodyTerm />
+        </div>
+      ) : (
+        // The bank that stored a stone in the seller cycle sends it back out.
+        <RedemptionDesk
+          scope="bank"
+          capability="bank.receive"
+          title="Redemptions"
+          description="Accepted redemptions of stones this bank stores. Confirm the stone is with you, then record its dispatch to the custodian."
+          empty="No accepted redemptions are assigned to this bank."
+        />
+      )}
     </div>
   );
 }
