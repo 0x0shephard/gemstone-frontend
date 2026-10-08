@@ -91,6 +91,18 @@ describe('redemption desks', () => {
     );
   });
 
+  it('keeps delivery off the vault desk even for an account holding both roles', async () => {
+    // An admin's request carries every action the server allows it.
+    await openRequest(
+      tracker('custodian_dispatched', ['record_arrival', 'release_owner_code']),
+      'bank',
+    );
+    expect(
+      await screen.findByText(/Dispatched\. The delivery custodian records/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Record delivery' })).not.toBeInTheDocument();
+  });
+
   it('lets the custodian record delivery and then sends the customer their code', async () => {
     mocks.arrival.mockResolvedValue({ request: tracker('arrived', [], 7) });
     mocks.release.mockResolvedValue({ request: tracker('proof_approved', [], 8) });

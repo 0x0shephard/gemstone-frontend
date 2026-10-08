@@ -33,7 +33,7 @@ test('the holder can cancel an accepted redemption until the bank confirms it', 
     .first()
     .click();
   await selectByText(
-    admin.page.getByText('Storage bank', { exact: true }).locator('xpath=..').locator('select'),
+    admin.page.getByText('Vault custodian', { exact: true }).locator('xpath=..').locator('select'),
     'E2E Bank',
   );
   await selectByText(

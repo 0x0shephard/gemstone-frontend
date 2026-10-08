@@ -69,10 +69,10 @@ describe('redemption flow', () => {
 
   it('names the arrival step after the fulfilment route', () => {
     expect(redemptionSteps('pickup', 'accepted')[3].label).toBe(
-      'Custodian delivered it to the pickup point',
+      'Delivery custodian delivered it to the pickup point',
     );
     expect(redemptionSteps('insured_delivery', 'accepted')[3].label).toBe(
-      'Custodian delivered it to the delivery address',
+      'Delivery custodian delivered it to the delivery address',
     );
   });
 

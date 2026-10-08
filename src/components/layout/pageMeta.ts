@@ -20,12 +20,12 @@ export const PAGE_META: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Review evidence, appraise stones and propose valuation matrices',
   },
   '/bank': {
-    title: 'Storage bank',
-    subtitle: 'Record physical arrivals, locations and custody dates',
+    title: 'Vault custodian',
+    subtitle: 'Store arriving stones and release redeemed ones',
   },
   '/custodian': {
-    title: 'Custodian operations',
-    subtitle: 'Coordinate collection, dispatch and proven delivery',
+    title: 'Delivery custodian',
+    subtitle: 'Deliver redeemed stones to the pickup point or the holder',
   },
   '/verify': {
     title: 'Operations admin',

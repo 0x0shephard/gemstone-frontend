@@ -116,7 +116,7 @@ function GemLabWorkspace() {
     },
     onSuccess: async (result) => {
       setMessage(
-        `Appraisal recorded with matrix ${result.matrixVersion}. Storage bank receipt is still required before activation.`,
+        `Appraisal recorded with matrix ${result.matrixVersion}. Vault custodian receipt is still required before activation.`,
       );
       setSelected(undefined);
       await queryClient.invalidateQueries({ queryKey: ['operations', 'gemlab'] });

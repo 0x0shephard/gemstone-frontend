@@ -12,7 +12,7 @@ const sellerStages = [
   ['turkish_airlines', 'Turkish Airlines'],
   ['turkish_house', 'Turkish House'],
   ['safe_wagon_turkey', 'Safe Wagon Turkey'],
-  ['bank_received', 'Storage bank receipt'],
+  ['bank_received', 'Vault custodian receipt'],
   ['activation_started', 'Protocol activation'],
   ['registered', 'Gem registered'],
   ['listed', 'Listing active'],
@@ -123,7 +123,7 @@ export function sellerLifecycleStages(workflow: SellerWorkflowView): LifecycleSt
         ...stage,
         state: 'complete' as const,
         occurredAt: bankReceipt.occurredAt,
-        detail: 'Confirmed retroactively by the authoritative final storage-bank receipt.',
+        detail: 'Confirmed retroactively by the authoritative vault custodian receipt.',
       };
     }
     if (activation && activationBacked.has(stage.key) && stage.state !== 'complete') {

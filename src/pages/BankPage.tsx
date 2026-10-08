@@ -40,7 +40,7 @@ function BankWorkspace() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2 className="font-display text-[24px] font-medium tracking-[-0.03em] text-ink">
-            Physical storage desk
+            Vault custodian
           </h2>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-muted">
             Record only observed arrivals, assigned vault locations and custody dates. When a stone
@@ -70,8 +70,8 @@ function BankWorkspace() {
           scope="bank"
           capability="bank.receive"
           title="Redemptions"
-          description="Accepted redemptions of stones this bank stores. Confirm the stone is with you, then record its dispatch to the custodian."
-          empty="No accepted redemptions are assigned to this bank."
+          description="Accepted redemptions of stones this vault stores. Confirm the stone is with you, then record its dispatch to the delivery custodian."
+          empty="No accepted redemptions are assigned to this vault."
         />
       )}
     </div>

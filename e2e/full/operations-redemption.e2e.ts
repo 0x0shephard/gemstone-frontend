@@ -65,7 +65,7 @@ test('acceptance, bank release, custodian delivery, the holder code and the burn
   await admin.page.getByRole('button', { name: /Redemption lifecycles/ }).click();
   await chooseRequest(admin.page, requestName);
   await selectByText(
-    admin.page.getByText('Storage bank', { exact: true }).locator('xpath=..').locator('select'),
+    admin.page.getByText('Vault custodian', { exact: true }).locator('xpath=..').locator('select'),
     'E2E Bank',
   );
   await selectByText(
@@ -87,12 +87,12 @@ test('acceptance, bank release, custodian delivery, the holder code and the burn
   await chooseRequest(bank.page, requestName);
   await bank.page.getByRole('button', { name: 'Confirm stone is in storage' }).click();
 
-  await uploadEvidence(bank.page, 'Record dispatch from the bank evidence');
+  await uploadEvidence(bank.page, 'Record dispatch from the vault evidence');
   await fieldInput(bank.page, 'Dispatched at').fill('2026-10-08T01:05');
   await fieldInput(bank.page, 'Carrier, optional').fill('E2E secure transport');
   await bank.page.getByRole('button', { name: 'Record dispatch', exact: true }).click();
   await expect(
-    bank.page.getByText(/Dispatched\. The custodian records the delivery/),
+    bank.page.getByText(/Dispatched\. The delivery custodian records the delivery/),
   ).toBeVisible();
   await bank.context.close();
 

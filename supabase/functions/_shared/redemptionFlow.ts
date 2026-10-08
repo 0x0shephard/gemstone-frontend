@@ -99,20 +99,20 @@ const STEPS: readonly StepDefinition[] = [
   },
   {
     key: 'collected',
-    label: () => 'Bank confirmed the stone is in storage',
+    label: () => 'Vault custodian confirmed the stone is in storage',
     completedBy: 'custodian_collected',
   },
   {
     key: 'dispatched',
-    label: () => 'Dispatched from the bank',
+    label: () => 'Dispatched from the vault custodian',
     completedBy: 'custodian_dispatched',
   },
   {
     key: 'arrived',
     label: (method) =>
       method === 'pickup'
-        ? 'Custodian delivered it to the pickup point'
-        : 'Custodian delivered it to the delivery address',
+        ? 'Delivery custodian delivered it to the pickup point'
+        : 'Delivery custodian delivered it to the delivery address',
     completedBy: 'arrived',
   },
   {

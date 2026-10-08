@@ -53,18 +53,18 @@ const STEPS = [
   },
   {
     n: '02',
-    title: 'Bank confirms',
-    body: 'The bank storing your stone confirms it holds it and prepares its release.',
+    title: 'Vault confirms',
+    body: 'The vault custodian storing your stone confirms it holds it and prepares its release.',
   },
   {
     n: '03',
-    title: 'Bank dispatches',
-    body: 'The bank dispatches your stone to the custodian who delivers it.',
+    title: 'Vault dispatches',
+    body: 'The vault custodian dispatches your stone to the delivery custodian.',
   },
   {
     n: '04',
-    title: 'Custodian delivers',
-    body: 'The custodian delivers it to the pickup point or your address, and you are emailed a one-time code.',
+    title: 'Delivery custodian',
+    body: 'The delivery custodian delivers it to the pickup point or your address, and you are emailed a one-time code.',
   },
   {
     n: '05',
@@ -84,8 +84,8 @@ const STATUS_LABEL: Record<string, string> = {
   draft: 'Not submitted',
   committed: 'Awaiting wallet transaction',
   onchain_requested: 'Awaiting Digital Carat acceptance',
-  accepted: 'Accepted · with the storage bank',
-  custodian_collected: 'Bank preparing your stone',
+  accepted: 'Accepted · with the vault custodian',
+  custodian_collected: 'Vault preparing your stone',
   custodian_dispatched: 'On its way',
   bank_received: 'On its way',
   pickup_handover_recorded: 'Arrived',
@@ -128,8 +128,9 @@ export default function RedeemPage() {
             Redemption follows a verifiable custody path.
           </h2>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-            Your token stays locked while the bank releases the stone and the custodian delivers it,
-            and is burned only after you confirm the handover with your code.
+            Your token stays locked while the vault custodian releases the stone and the delivery
+            custodian brings it to you, and is burned only after you confirm the handover with your
+            code.
           </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -554,7 +555,7 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
           <div>
             <h5 className="text-[13px] font-semibold text-ink">Cancel redemption</h5>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              Cancelling unlocks your token and closes this request. It is available until the bank
+              Cancelling unlocks your token and closes this request. It is available until the vault
               confirms it holds the stone.
             </p>
           </div>
@@ -711,8 +712,8 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
             <h5 className="text-[13px] font-semibold text-ink">Confirm you received the stone</h5>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
               Enter the code we emailed when your stone arrived, once it is in your hands. Never
-              share it with the bank or custodian. You will sign a short challenge, then burn the
-              token from your wallet.
+              share it with the vault or delivery custodian. You will sign a short challenge, then
+              burn the token from your wallet.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">

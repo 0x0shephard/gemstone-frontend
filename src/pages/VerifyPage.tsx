@@ -339,8 +339,9 @@ export function RedemptionReview({
   const acceptance = useMutation({
     mutationFn: async () => {
       if (!approvalOrganizationId) throw new Error('This organization cannot accept requests.');
-      if (!bankOrganizationId) throw new Error('Choose the bank that stores this stone.');
-      if (!custodianOrganizationId) throw new Error('Choose the custodian that delivers it.');
+      if (!bankOrganizationId)
+        throw new Error('Choose the vault custodian that stores this stone.');
+      if (!custodianOrganizationId) throw new Error('Choose the delivery custodian.');
       const storageKey = `admin:redemption:${detail.id}:accept:${detail.version}`;
       const response = await acceptRedemption({
         requestId: detail.id,
@@ -401,24 +402,24 @@ export function RedemptionReview({
           {recordedBank ? (
             <div className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] px-3 py-2.5">
               <p className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-dim">
-                Storage bank
+                Vault custodian
               </p>
               <p className="mt-1 text-[13px] text-ink">{recordedBank.name}</p>
               <p className="mt-0.5 text-[11px] text-ink-muted">
-                From the bank receipt in the seller cycle.
+                From the vault receipt in the seller cycle.
               </p>
             </div>
           ) : (
             <Labeled
-              label="Storage bank"
-              hint="No bank receipt names an active bank for this stone"
+              label="Vault custodian"
+              hint="No seller-cycle receipt names an active vault for this stone"
             >
               <select
                 className={inputClass}
                 value={chosenBankId}
                 onChange={(event) => setChosenBankId(event.target.value)}
               >
-                <option value="">Choose the bank holding this stone</option>
+                <option value="">Choose the vault holding this stone</option>
                 {banks.map((entry) => (
                   <option key={entry.id} value={entry.id}>
                     {entry.name}
@@ -433,7 +434,7 @@ export function RedemptionReview({
               value={custodianOrganizationId}
               onChange={(event) => setCustodianOrganizationId(event.target.value)}
             >
-              <option value="">Choose the custodian that delivers it</option>
+              <option value="">Choose the delivery custodian</option>
               {custodians.map((entry) => (
                 <option key={entry.id} value={entry.id}>
                   {entry.name}
@@ -444,8 +445,8 @@ export function RedemptionReview({
           {(custodians.length === 0 || (!recordedBank && banks.length === 0)) && (
             <p role="alert" className="text-[11.5px] text-amber">
               {custodians.length === 0
-                ? 'No active custodian organization exists yet.'
-                : 'No active bank organization exists yet.'}
+                ? 'No active delivery custodian exists yet.'
+                : 'No active vault custodian exists yet.'}
             </p>
           )}
           {acceptance.error && (

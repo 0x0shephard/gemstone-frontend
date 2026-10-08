@@ -142,10 +142,10 @@ export function staffNavigation(access?: OperationsAccess | null): NavItem[] {
     items.push(staffRoute('Gem lab', 'Lab', '/gemlab', 'GL'));
   }
   if (capabilities.has('bank.receive')) {
-    items.push(staffRoute('Storage bank', 'Bank', '/bank', 'BK'));
+    items.push(staffRoute('Vault custodian', 'Vault', '/bank', 'VC'));
   }
   if (capabilities.has('custodian.fulfill')) {
-    items.push(staffRoute('Custodian', 'Custody', '/custodian', 'CU'));
+    items.push(staffRoute('Delivery custodian', 'Delivery', '/custodian', 'DC'));
   }
   if (capabilities.has('admin.read')) {
     items.push(staffRoute('Operations admin', 'Admin', '/verify', 'OP'));

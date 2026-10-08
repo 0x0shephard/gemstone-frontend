@@ -76,13 +76,13 @@ describe('redemption acceptance', () => {
 
     const submit = await screen.findByRole('button', { name: 'Accept request' });
     expect(await screen.findByText('Storage Bank')).toBeInTheDocument();
-    expect(screen.getByText('From the bank receipt in the seller cycle.')).toBeInTheDocument();
+    expect(screen.getByText('From the vault receipt in the seller cycle.')).toBeInTheDocument();
     expect(submit).toBeDisabled();
     const custodian = screen
       .getByText('Delivery custodian')
       .parentElement!.querySelector('select')!;
     const choices = [...custodian.querySelectorAll('option')].map((option) => option.textContent);
-    expect(choices).toEqual(['Choose the custodian that delivers it', 'Secure Custody']);
+    expect(choices).toEqual(['Choose the delivery custodian', 'Secure Custody']);
     fireEvent.change(custodian, { target: { value: 'custodian-1' } });
     fireEvent.click(submit);
 
@@ -100,7 +100,7 @@ describe('redemption acceptance', () => {
   it('asks for the bank when no seller-cycle receipt names one', async () => {
     renderReview(tracker('onchain_requested', ['accept_redemption']));
     const submit = await screen.findByRole('button', { name: 'Accept request' });
-    const bank = screen.getByText('Storage bank').parentElement!.querySelector('select')!;
+    const bank = screen.getByText('Vault custodian').parentElement!.querySelector('select')!;
     fireEvent.change(bank, { target: { value: 'bank-1' } });
     fireEvent.change(
       screen.getByText('Delivery custodian').parentElement!.querySelector('select')!,

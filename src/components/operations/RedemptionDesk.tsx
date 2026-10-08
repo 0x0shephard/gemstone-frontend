@@ -137,6 +137,7 @@ export function RedemptionDesk({
           <ErrorState message={detail.error instanceof Error ? detail.error.message : undefined} />
         ) : (
           <FulfillmentDetail
+            scope={scope}
             request={detail.data}
             organizationId={organizationId!}
             onReload={() => void detail.refetch()}
@@ -148,10 +149,12 @@ export function RedemptionDesk({
 }
 
 function FulfillmentDetail({
+  scope,
   request,
   organizationId,
   onReload,
 }: {
+  scope: 'bank' | 'custodian';
   request: RedemptionTracker;
   organizationId: string;
   onReload: () => void;
@@ -174,16 +177,29 @@ function FulfillmentDetail({
         stages={redemptionLifecycleStages(request)}
         events={eventPresentation(request.events ?? [])}
       />
-      <FulfillmentActions request={request} organizationId={organizationId} onReload={onReload} />
+      <FulfillmentActions
+        scope={scope}
+        request={request}
+        organizationId={organizationId}
+        onReload={onReload}
+      />
     </Card>
   );
 }
 
+/** The steps each desk performs. An admin holds every role but acts per desk. */
+const DESK_ACTIONS: Record<'bank' | 'custodian', readonly string[]> = {
+  bank: ['custodian_collect', 'custodian_dispatch'],
+  custodian: ['record_arrival', 'release_owner_code'],
+};
+
 function FulfillmentActions({
+  scope,
   request,
   organizationId,
   onReload,
 }: {
+  scope: 'bank' | 'custodian';
   request: RedemptionTracker;
   organizationId: string;
   onReload: () => void;
@@ -196,7 +212,9 @@ function FulfillmentActions({
   const [trackingReference, setTrackingReference] = useState('');
   const [arrivedAt, setArrivedAt] = useState('');
   const [location, setLocation] = useState('');
-  const capabilities = new Set(request.capabilities ?? []);
+  const capabilities = new Set(
+    (request.capabilities ?? []).filter((action) => DESK_ACTIONS[scope].includes(action)),
+  );
   const pickup = request.method === 'pickup';
 
   const reload = async () => {
@@ -290,7 +308,7 @@ function FulfillmentActions({
         <div>
           <h4 className="text-[13px] font-semibold text-ink">Confirm the stone is in storage</h4>
           <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-            Digital Carat accepted this redemption. Confirm that this bank holds the stone and will
+            Digital Carat accepted this redemption. Confirm that this vault holds the stone and will
             release it. The protocol records this on-chain for you; no wallet is needed.
           </p>
         </div>
@@ -310,7 +328,7 @@ function FulfillmentActions({
   if (capabilities.has('custodian_dispatch')) {
     return (
       <ActionForm
-        title="Record dispatch from the bank"
+        title="Record dispatch from the vault"
         category="custodian_dispatch"
         requestId={request.id}
         organizationId={organizationId}
@@ -407,7 +425,7 @@ function FulfillmentActions({
   if (request.status === 'custodian_dispatched' && !capabilities.has('record_arrival')) {
     return (
       <p className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] p-4 text-[12px] text-ink-muted">
-        Dispatched. The custodian records the delivery and the customer then confirms it.
+        Dispatched. The delivery custodian records the delivery and the customer then confirms it.
       </p>
     );
   }

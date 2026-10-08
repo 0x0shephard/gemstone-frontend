@@ -56,7 +56,7 @@ describe('seller lifecycle presentation', () => {
       expect(stages.find((stage) => stage.key === key)).toMatchObject({
         state: 'complete',
         occurredAt: '2026-10-03T00:00:00.000Z',
-        detail: 'Confirmed retroactively by the authoritative final storage-bank receipt.',
+        detail: 'Confirmed retroactively by the authoritative vault custodian receipt.',
       });
     }
   });

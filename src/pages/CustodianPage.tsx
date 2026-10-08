@@ -7,9 +7,9 @@ export default function CustodianPage() {
       <RedemptionDesk
         scope="custodian"
         capability="custodian.fulfill"
-        title="Custodian delivery"
-        description="Stones the bank has dispatched for redemption. Record the delivery at the pickup point or the customer's address; the customer then confirms the handover with their emailed code."
-        empty="No dispatched redemptions are assigned to this custodian."
+        title="Delivery custodian"
+        description="Stones the vault custodian has dispatched for redemption. Record the delivery at the pickup point or the customer's address; the customer then confirms the handover with their emailed code."
+        empty="No dispatched redemptions are assigned to this delivery custodian."
       />
     </OperationsAccessGate>
   );
