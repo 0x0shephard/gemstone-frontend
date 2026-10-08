@@ -583,6 +583,19 @@ function offerColumns(address?: string): Column<Offer>[] {
             </TxButton>
           );
         }
+        if (r.status === 'Pending' && isBidder) {
+          return (
+            <TxButton
+              size="sm"
+              variant="ghost"
+              action={() => dataService.cancelOffer({ offerId: r.offerId })}
+              pendingLabel="Withdrawing…"
+              telemetryFlow="offer_withdraw"
+            >
+              Withdraw bid
+            </TxButton>
+          );
+        }
         if (r.status === 'Pending' && isOwner && !r.automatic) {
           return (
             <TxButton

@@ -1066,11 +1066,15 @@ async function getOffers(): Promise<Offer[]> {
           : terminal?.eventName === 'OfferCancelled' ||
               terminal?.eventName === 'ListingAuctionRefunded'
             ? 'Refunded'
-            : expired && automatic
-              ? 'Awaiting settlement'
-              : expired
-                ? 'Expired'
-                : 'Pending';
+            : // Inactive on-chain but not yet in the event history: the offer was
+              // withdrawn or refunded moments ago and is no longer actionable.
+              !state[6] && state[0] === zeroAddress
+              ? 'Refunded'
+              : expired && automatic
+                ? 'Awaiting settlement'
+                : expired
+                  ? 'Expired'
+                  : 'Pending';
       const saleUsdValue = state[4] || (created.args.saleUsdValue as bigint);
       return {
         offerId,
@@ -2193,6 +2197,13 @@ export const chainService: IDataService = {
     };
     return runContractTransaction(call);
   },
+  /** Withdraws the caller's own live offer, or a leading listed-token bid before it ends. */
+  cancelOffer: (request: OfferRequest) =>
+    runContractTransaction({
+      ...contract('Marketplace'),
+      functionName: 'cancelOffer',
+      args: [request.offerId],
+    }),
   refundExpiredOffer: (request: OfferRequest) =>
     runContractTransaction({
       ...contract('Marketplace'),

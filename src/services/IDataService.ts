@@ -122,6 +122,7 @@ export interface IDataService {
   claimTreasuryPayout(request: ClaimTreasuryPayoutRequest): Promise<TxResult>;
   createOffer(request: CreateOfferRequest): Promise<TxResult>;
   acceptOffer(request: OfferRequest): Promise<TxResult>;
+  cancelOffer(request: OfferRequest): Promise<TxResult>;
   refundExpiredOffer(request: OfferRequest): Promise<TxResult>;
   createSwap(request: CreateSwapRequest): Promise<TxResult>;
   acceptSwap(request: SwapRequestAction): Promise<TxResult>;

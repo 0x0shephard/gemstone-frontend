@@ -646,6 +646,14 @@ describe('chain transaction construction', () => {
         args: [13n],
       }),
     );
+
+    await chainService.cancelOffer({ offerId: 14n });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        functionName: 'cancelOffer',
+        args: [14n],
+      }),
+    );
   });
 
   it('constructs both proposer-pays and accepter-pays swap paths', async () => {

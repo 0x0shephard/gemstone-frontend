@@ -206,6 +206,7 @@ export const mockService: IDataService = {
   claimTreasuryPayout: ok,
   createOffer: ok,
   acceptOffer: ok,
+  cancelOffer: ok,
   refundExpiredOffer: ok,
   createSwap: ok,
   acceptSwap: ok,
