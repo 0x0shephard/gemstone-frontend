@@ -276,7 +276,7 @@ async function reconcileRedemptionRows(
     .from('redemption_requests')
     .select('id,gem_id::text,status')
     .eq('deployment_id', protocolDeploymentId())
-    .in('status', ['committed', 'onchain_requested'])
+    .in('status', ['committed', 'onchain_requested', 'accepted'])
     .order('created_at', { ascending: true })
     .limit(REDEMPTION_RECONCILE_BATCH);
   if (error) throw error;
@@ -308,8 +308,9 @@ async function reconcileRedemptionRows(
       const currentStatus = String(row.status);
       let nextStatus: 'onchain_requested' | 'fulfilled' | 'cancelled' | undefined;
       if (chainStatus === 7) nextStatus = 'fulfilled';
-      else if (chainStatus === 6) nextStatus = 'onchain_requested';
-      else if (chainStatus === 5 && currentStatus === 'onchain_requested') nextStatus = 'cancelled';
+      // Only a committed row is promoted; an accepted one is already further on.
+      else if (chainStatus === 6 && currentStatus === 'committed') nextStatus = 'onchain_requested';
+      else if (chainStatus === 5 && currentStatus !== 'committed') nextStatus = 'cancelled';
       if (!nextStatus || nextStatus === currentStatus) return;
 
       const { error: updateError } = await admin

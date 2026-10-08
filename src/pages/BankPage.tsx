@@ -1,35 +1,20 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { OperationsAccessGate } from '@/components/operations/OperationsAccessGate';
-import { EvidenceUpload } from '@/components/operations/EvidenceUpload';
-import { LifecycleTracker } from '@/components/operations/LifecycleTracker';
-import {
-  eventPresentation,
-  redemptionLifecycleStages,
-} from '@/components/operations/lifecyclePresentation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Labeled, inputClass } from '@/components/ui/Field';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Tabs } from '@/components/ui/Tabs';
 import {
   clearOperationIdempotencyKey,
-  loadBankRedemptionQueue,
   loadBankSellerQueue,
-  loadRedemptionTracker,
   operationIdempotencyKey,
   recordBankReceipt,
-  recordBankRedemptionReceipt,
-  recordPickupHandover,
   type BankSellerQueueItem,
-  type RedemptionTracker,
-  type WorkflowEvidenceView,
 } from '@/services/offchain/operations';
-import { useOperationsAccess } from '@/hooks/useOperationsAccess';
 import { recordCustodyTerm } from '@/services/offchain/verification';
-
-type BankTab = 'seller' | 'redemption';
 
 export default function BankPage() {
   return (
@@ -40,20 +25,9 @@ export default function BankPage() {
 }
 
 function BankWorkspace() {
-  const [tab, setTab] = useState<BankTab>('seller');
-  const { data: access } = useOperationsAccess();
-  const organizationId = access?.memberships.find((entry) =>
-    entry.capabilities.includes('bank.receive'),
-  )?.organizationId;
   const sellerQuery = useQuery({
     queryKey: ['operations', 'bank', 'seller'],
     queryFn: loadBankSellerQueue,
-    placeholderData: (previous) => previous,
-  });
-  const redemptionQuery = useQuery({
-    queryKey: ['operations', 'bank', 'redemption'],
-    queryFn: () => loadBankRedemptionQueue(organizationId),
-    enabled: Boolean(organizationId),
     placeholderData: (previous) => previous,
   });
 
@@ -65,32 +39,30 @@ function BankWorkspace() {
             Physical storage desk
           </h2>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-muted">
-            Record only observed arrivals, assigned vault locations and custody dates. Listing and
-            redemption cannot advance from an inferred receipt.
+            Record only observed arrivals, assigned vault locations and custody dates. Listing
+            cannot advance from an inferred receipt.
           </p>
         </div>
         <StatusBadge tone="neutral" dot>
-          {sellerQuery.isFetching || redemptionQuery.isFetching
-            ? 'Refreshing'
-            : 'Authoritative receipts'}
+          {sellerQuery.isFetching ? 'Refreshing' : 'Authoritative receipts'}
         </StatusBadge>
       </header>
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { key: 'seller', label: 'Seller intake', count: sellerQuery.data?.length },
-          { key: 'redemption', label: 'Redemption arrivals', count: redemptionQuery.data?.length },
-        ]}
-      />
-      {tab === 'seller' ? (
-        <div className="space-y-5">
-          <SellerIntakeQueue query={sellerQuery} />
-          <LegacyCustodyTerm />
-        </div>
-      ) : (
-        <RedemptionArrivalQueue query={redemptionQuery} organizationId={organizationId!} />
-      )}
+      {/*
+       * The bank or storage vault holding a stone is also its custodian for
+       * redemption, and runs those steps from the custodian vault desk.
+       */}
+      <p className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] px-4 py-3 text-[12px] text-ink-muted">
+        Redemption requests assigned to this vault are confirmed, dispatched and handed over from
+        the{' '}
+        <Link to="/custodian" className="font-semibold text-ink underline underline-offset-2">
+          custodian vault desk
+        </Link>
+        .
+      </p>
+      <div className="space-y-5">
+        <SellerIntakeQueue query={sellerQuery} />
+        <LegacyCustodyTerm />
+      </div>
     </div>
   );
 }
@@ -329,303 +301,6 @@ function SellerIntakeQueue({ query }: { query: UseQueryResult<BankSellerQueueIte
         >
           {confirmed}
         </p>
-      )}
-    </div>
-  );
-}
-
-export function RedemptionArrivalQueue({
-  query,
-  organizationId,
-}: {
-  query: UseQueryResult<RedemptionTracker[], Error>;
-  organizationId: string;
-}) {
-  const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<RedemptionTracker>();
-  const [location, setLocation] = useState('');
-  const [receivedAt, setReceivedAt] = useState('');
-  const [evidenceId, setEvidenceId] = useState('');
-  const [uploadedReceiptEvidence, setUploadedReceiptEvidence] = useState<WorkflowEvidenceView>();
-  const [handoverEvidenceId, setHandoverEvidenceId] = useState('');
-  const [collectedAt, setCollectedAt] = useState('');
-  const [collectedByName, setCollectedByName] = useState('');
-  const [proxyUsed, setProxyUsed] = useState(false);
-  const [ownerIdentityEvidenceId, setOwnerIdentityEvidenceId] = useState('');
-  const detailQuery = useQuery({
-    queryKey: ['operations', 'redemption', 'detail', selected?.id, organizationId],
-    queryFn: () => loadRedemptionTracker(selected!.id, organizationId),
-    enabled: Boolean(selected),
-  });
-  const detail = detailQuery.data ?? selected;
-  const mutation = useMutation({
-    mutationFn: async (event: FormEvent) => {
-      event.preventDefault();
-      if (!selected) throw new Error('Select a redemption first.');
-      const intent = `bank:redemption:${selected.id}:receipt`;
-      const response = await recordBankRedemptionReceipt({
-        requestId: selected.id,
-        organizationId,
-        expectedVersion: detail?.version ?? selected.version,
-        location: location.trim(),
-        receivedAt: new Date(receivedAt).toISOString(),
-        evidenceId,
-        idempotencyKey: operationIdempotencyKey(intent),
-      });
-      clearOperationIdempotencyKey(intent);
-      return response;
-    },
-    onSuccess: async () => {
-      setSelected(undefined);
-      setEvidenceId('');
-      setUploadedReceiptEvidence(undefined);
-      await queryClient.invalidateQueries({ queryKey: ['operations', 'bank', 'redemption'] });
-    },
-  });
-  const handover = useMutation({
-    mutationFn: async (event: FormEvent) => {
-      event.preventDefault();
-      if (!selected || !detail) throw new Error('Reload the pickup request first.');
-      const intent = `bank:redemption:${selected.id}:pickup-handover`;
-      const result = await recordPickupHandover({
-        requestId: selected.id,
-        organizationId,
-        expectedVersion: detail.version,
-        evidenceId: handoverEvidenceId,
-        collectedAt: new Date(collectedAt).toISOString(),
-        collectedByName: collectedByName.trim(),
-        proxyUsed,
-        ...(proxyUsed
-          ? { collectorWallet: detail.proxyNomination?.proxyWallet }
-          : { ownerIdentityEvidenceId }),
-        idempotencyKey: operationIdempotencyKey(intent),
-      });
-      clearOperationIdempotencyKey(intent);
-      return result;
-    },
-    onSuccess: async () => {
-      setHandoverEvidenceId('');
-      setCollectedAt('');
-      setCollectedByName('');
-      setProxyUsed(false);
-      setOwnerIdentityEvidenceId('');
-      await queryClient.invalidateQueries({ queryKey: ['operations', 'redemption'] });
-    },
-  });
-  if (query.isLoading && !query.data) return <Skeleton className="h-72" />;
-  if (query.isError && !query.data)
-    return <ErrorState message={query.error instanceof Error ? query.error.message : undefined} />;
-  const items = query.data ?? [];
-  const receiptEvidence = [...(detail?.evidence ?? [])];
-  if (
-    uploadedReceiptEvidence &&
-    !receiptEvidence.some((entry) => entry.id === uploadedReceiptEvidence.id)
-  ) {
-    receiptEvidence.push(uploadedReceiptEvidence);
-  }
-  return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,.75fr)_minmax(0,1.25fr)]">
-      <QueueList
-        title="Arrivals and pickups"
-        empty="No redemption stones are assigned to this bank."
-        items={items.map((item) => ({
-          id: item.id,
-          title: item.gem?.name ?? `Token #${item.tokenId}`,
-          subtitle: `Token #${item.tokenId} · ${item.method === 'pickup' ? 'Pickup' : 'Courier'}`,
-          status: item.status,
-        }))}
-        selectedId={selected?.id}
-        onSelect={(id) => setSelected(items.find((item) => item.id === id))}
-      />
-      {!selected ? (
-        <EmptyState
-          title="Select a redemption"
-          hint="The canonical lifecycle and available receipt evidence will appear here."
-        />
-      ) : (
-        <Card className="space-y-5 p-5">
-          {detailQuery.isLoading ? (
-            <Skeleton className="h-64" />
-          ) : (
-            detail && (
-              <LifecycleTracker
-                title="Redemption lifecycle"
-                stages={redemptionLifecycleStages(detail)}
-                events={eventPresentation(detail.events ?? [])}
-              />
-            )
-          )}
-          {detail?.capabilities?.includes('bank_receive_redemption') && (
-            <form
-              onSubmit={(event) => mutation.mutate(event)}
-              className="space-y-3 border-t border-line/[0.07] pt-4"
-            >
-              <h3 className="text-[13px] font-semibold text-ink">
-                Record arrival for owner pickup
-              </h3>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field
-                  label="Bank location"
-                  value={location}
-                  onChange={(event) => setLocation(event.target.value)}
-                  required
-                />
-                <Field
-                  label="Received at"
-                  type="datetime-local"
-                  value={receivedAt}
-                  onChange={(event) => setReceivedAt(event.target.value)}
-                  required
-                />
-              </div>
-              <Labeled label="Receipt evidence">
-                <select
-                  className={inputClass}
-                  value={evidenceId}
-                  onChange={(event) => setEvidenceId(event.target.value)}
-                  required
-                >
-                  <option value="">Choose uploaded evidence</option>
-                  {receiptEvidence.map((evidence) => (
-                    <option key={evidence.id} value={evidence.id}>
-                      {evidence.category} · {evidence.sha256.slice(0, 12)}
-                    </option>
-                  ))}
-                </select>
-              </Labeled>
-              <EvidenceUpload
-                requestId={detail.id}
-                organizationId={organizationId}
-                category="bank_receipt"
-                label="Upload arrival evidence"
-                onUploaded={(uploaded) => {
-                  setUploadedReceiptEvidence(uploaded);
-                  setEvidenceId(uploaded.id);
-                }}
-              />
-              {mutation.error && (
-                <p role="alert" className="text-[12px] text-ruby">
-                  {mutation.error instanceof Error
-                    ? mutation.error.message
-                    : 'Arrival could not be recorded.'}
-                </p>
-              )}
-              <Button
-                type="submit"
-                disabled={mutation.isPending || !location.trim() || !receivedAt || !evidenceId}
-              >
-                {mutation.isPending ? 'Recording…' : 'Record bank arrival'}
-              </Button>
-            </form>
-          )}
-          {detail?.capabilities?.includes('record_pickup_handover') && (
-            <form
-              onSubmit={(event) => handover.mutate(event)}
-              className="space-y-3 border-t border-line/[0.07] pt-4"
-            >
-              <div>
-                <h3 className="text-[13px] font-semibold text-ink">Record witnessed pickup</h3>
-                <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-                  Record the actual handover. This does not authorize or burn the owner&apos;s
-                  token; a custodian proof and independent admin approval still follow.
-                </p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field
-                  label="Collected at"
-                  type="datetime-local"
-                  value={collectedAt}
-                  onChange={(event) => setCollectedAt(event.target.value)}
-                  required
-                />
-                <Field
-                  label="Name shown on handover evidence"
-                  value={collectedByName}
-                  onChange={(event) => setCollectedByName(event.target.value)}
-                  required
-                />
-              </div>
-              <label className="flex items-start gap-2 text-[12px] text-ink-muted">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={proxyUsed}
-                  onChange={(event) => setProxyUsed(event.target.checked)}
-                />
-                The stone was collected by the owner&apos;s named proxy. The server will require an
-                owner-authorized proxy commitment.
-              </label>
-              {proxyUsed ? (
-                detail.proxyNomination ? (
-                  <div className="space-y-2 rounded-[4px] border border-atelier/20 bg-atelier/[0.035] p-3 text-[11.5px]">
-                    <p className="font-semibold text-ink">Approved named proxy</p>
-                    <p className="text-ink-muted">{detail.proxyNomination.proxyName}</p>
-                    <p className="break-all font-mono text-[10.5px] text-ink-dim">
-                      {detail.proxyNomination.proxyWallet}
-                    </p>
-                    <a
-                      href={detail.proxyNomination.identityEvidence.downloadUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex text-atelier underline underline-offset-2"
-                    >
-                      Review owner-approved identity evidence ↗
-                    </a>
-                  </div>
-                ) : (
-                  <p role="alert" className="text-[11.5px] text-amber">
-                    No approved proxy nomination is bound to this request. Do not record a proxy
-                    handover.
-                  </p>
-                )
-              ) : (
-                <Labeled label="Owner identity evidence">
-                  <select
-                    className={inputClass}
-                    value={ownerIdentityEvidenceId}
-                    onChange={(event) => setOwnerIdentityEvidenceId(event.target.value)}
-                    required
-                  >
-                    <option value="">Choose owner-uploaded identity evidence</option>
-                    {(detail.evidence ?? [])
-                      .filter((entry) => entry.category === 'proxy_identity')
-                      .map((entry) => (
-                        <option key={entry.id} value={entry.id}>
-                          {entry.sha256.slice(0, 12)} · verified identity evidence
-                        </option>
-                      ))}
-                  </select>
-                </Labeled>
-              )}
-              <EvidenceUpload
-                requestId={detail.id}
-                organizationId={organizationId}
-                category="bank_handover"
-                label="Upload signed handover evidence"
-                onUploaded={(uploaded) => setHandoverEvidenceId(uploaded.id)}
-              />
-              {handover.error && (
-                <p role="alert" className="text-[12px] text-ruby">
-                  {handover.error instanceof Error
-                    ? handover.error.message
-                    : 'Pickup handover could not be recorded.'}
-                </p>
-              )}
-              <Button
-                type="submit"
-                disabled={
-                  handover.isPending ||
-                  !handoverEvidenceId ||
-                  !collectedAt ||
-                  collectedByName.trim().length < 2 ||
-                  (proxyUsed ? !detail.proxyNomination : !ownerIdentityEvidenceId)
-                }
-              >
-                {handover.isPending ? 'Recording…' : 'Record witnessed pickup'}
-              </Button>
-            </form>
-          )}
-        </Card>
       )}
     </div>
   );

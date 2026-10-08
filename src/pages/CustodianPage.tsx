@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { OperationsAccessGate } from '@/components/operations/OperationsAccessGate';
 import { EvidenceUpload } from '@/components/operations/EvidenceUpload';
@@ -12,25 +12,20 @@ import { Card } from '@/components/ui/Card';
 import { Field } from '@/components/ui/Field';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { TxButton } from '@/components/tx/TxButton';
-import { dataService } from '@/services';
 import { useOperationsAccess } from '@/hooks/useOperationsAccess';
 import {
   clearOperationIdempotencyKey,
+  confirmVaultCollection,
   listRedemptionTrackers,
   loadRedemptionTracker,
   operationIdempotencyKey,
-  prepareCustodianCollection,
-  prepareDeliveryProof,
-  preparePickupProof,
   recordCustodianDispatch,
-  resumeRedemptionActionIntent,
+  recordRedemptionArrival,
+  releaseRedemptionOwnerCode,
   type EvidenceCategory,
-  type RedemptionMutationResult,
   type RedemptionTracker,
   type WorkflowEvidenceView,
 } from '@/services/offchain/operations';
-import { useAccount } from 'wagmi';
 
 export default function CustodianPage() {
   return (
@@ -63,11 +58,11 @@ function CustodianWorkspace() {
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2 className="font-display text-[24px] font-medium tracking-[-0.03em] text-ink">
-            Custodian fulfillment
+            Custodian vault
           </h2>
           <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-ink-muted">
-            Record collection and dispatch evidence, then submit proof of physical handover for
-            independent admin approval.
+            Confirm accepted redemption requests, dispatch the stones and record their arrival. The
+            customer then confirms the handover with their emailed code.
           </p>
         </div>
         <Button
@@ -94,7 +89,7 @@ function CustodianWorkspace() {
             <ErrorState message={queue.error instanceof Error ? queue.error.message : undefined} />
           ) : (queue.data ?? []).length === 0 ? (
             <p className="px-4 py-8 text-[12px] text-ink-dim">
-              No fulfillment requests are assigned to this custodian.
+              No accepted redemption requests are assigned to this vault.
             </p>
           ) : (
             <ul className="divide-y divide-line/[0.06]">
@@ -111,7 +106,7 @@ function CustodianWorkspace() {
                         {request.gem?.name ?? `Token #${request.tokenId}`}
                       </span>
                       <span className="mt-1 block text-[11px] text-ink-muted">
-                        {request.method === 'pickup' ? 'Bank pickup' : 'Insured courier'} ·{' '}
+                        {request.method === 'pickup' ? 'Pickup' : 'Insured delivery'} ·{' '}
                         {request.requestedAt
                           ? new Date(request.requestedAt).toLocaleDateString()
                           : 'Requested'}
@@ -188,99 +183,42 @@ function FulfillmentActions({
   onReload: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { address } = useAccount();
   const [evidence, setEvidence] = useState<WorkflowEvidenceView>();
-  const [collectedAt, setCollectedAt] = useState('');
-  const [location, setLocation] = useState('');
+  const [note, setNote] = useState('');
   const [dispatchedAt, setDispatchedAt] = useState('');
   const [carrier, setCarrier] = useState('');
   const [trackingReference, setTrackingReference] = useState('');
-  const [deliveredAt, setDeliveredAt] = useState('');
-  const [recipientName, setRecipientName] = useState('');
-  const [prepared, setPrepared] = useState<{
-    kind: 'collect' | 'proof' | 'pickup-proof';
-    intent: string;
-    storageKey?: string;
-    result: RedemptionMutationResult;
-    payload: Record<string, unknown>;
-  }>();
+  const [arrivedAt, setArrivedAt] = useState('');
+  const [location, setLocation] = useState('');
   const capabilities = new Set(request.capabilities ?? []);
-  const resumableAction = capabilities.has('custodian_collect')
-    ? 'custodian_collect'
-    : capabilities.has('submit_delivery_proof')
-      ? 'submit_delivery_proof'
-      : capabilities.has('submit_pickup_proof')
-        ? 'submit_pickup_proof'
-        : undefined;
-  const pendingAction = useQuery({
-    queryKey: ['operations', 'redemption', request.id, 'pending-action', resumableAction],
-    queryFn: () =>
-      resumeRedemptionActionIntent({
-        requestId: request.id,
-        intentAction: resumableAction!,
-        organizationId,
-      }),
-    enabled: Boolean(resumableAction),
-  });
-
-  useEffect(() => {
-    const pending = pendingAction.data;
-    if (!pending || prepared) return;
-    const kind =
-      pending.action === 'custodian_collect'
-        ? 'collect'
-        : pending.action === 'submit_pickup_proof'
-          ? 'pickup-proof'
-          : 'proof';
-    setPrepared({
-      kind,
-      intent: pending.idempotencyKey,
-      payload: pending.payload,
-      result: {
-        request,
-        chainAction: kind === 'collect' ? 'startFulfillment' : 'submitFulfillmentProof',
-        args: pending.chainArguments,
-      },
-    });
-  }, [pendingAction.data, prepared, request]);
+  const pickup = request.method === 'pickup';
 
   const reload = async () => {
     setEvidence(undefined);
-    setPrepared(undefined);
     await queryClient.invalidateQueries({ queryKey: ['operations', 'redemption'] });
     onReload();
   };
 
+  /*
+   * Each step keeps its idempotency key until the server confirms it, so a
+   * retry after a timeout resumes the same server-signed transaction instead of
+   * sending a second one.
+   */
   const collect = useMutation({
     mutationFn: async (event: FormEvent) => {
       event.preventDefault();
-      if (!evidence) throw new Error('Upload collection evidence first.');
-      if (!address) throw new Error('Connect the verified custodian wallet.');
       const intent = `custodian:${request.id}:collect`;
-      const idempotencyKey = operationIdempotencyKey(intent);
-      return prepareCustodianCollection({
+      const result = await confirmVaultCollection({
         requestId: request.id,
         organizationId,
         expectedVersion: request.version,
-        evidenceId: evidence.id,
-        collectedAt: new Date(collectedAt).toISOString(),
-        location: location.trim(),
-        idempotencyKey,
-        actorWallet: address,
-      }).then((result) => ({ result, idempotencyKey, storageKey: intent }));
+        note: note.trim() || undefined,
+        idempotencyKey: operationIdempotencyKey(intent),
+      });
+      clearOperationIdempotencyKey(intent);
+      return result;
     },
-    onSuccess: ({ result, idempotencyKey, storageKey }) =>
-      setPrepared({
-        kind: 'collect',
-        intent: idempotencyKey,
-        storageKey,
-        result,
-        payload: {
-          evidenceId: evidence!.id,
-          collectedAt: new Date(collectedAt).toISOString(),
-          location: location.trim(),
-        },
-      }),
+    onSuccess: reload,
   });
   const dispatch = useMutation({
     mutationFn: async (event: FormEvent) => {
@@ -302,186 +240,71 @@ function FulfillmentActions({
     },
     onSuccess: reload,
   });
-  const proof = useMutation({
+  const releaseCode = useMutation({
+    mutationFn: async (expectedVersion: number) => {
+      const intent = `custodian:${request.id}:release-code`;
+      const result = await releaseRedemptionOwnerCode({
+        requestId: request.id,
+        organizationId,
+        expectedVersion,
+        idempotencyKey: operationIdempotencyKey(intent),
+      });
+      clearOperationIdempotencyKey(intent);
+      return result;
+    },
+    onSettled: reload,
+  });
+  const arrival = useMutation({
     mutationFn: async (event: FormEvent) => {
       event.preventDefault();
-      if (!evidence) throw new Error('Upload delivery proof first.');
-      if (!address) throw new Error('Connect the verified custodian wallet.');
-      const intent = `custodian:${request.id}:proof`;
-      const idempotencyKey = operationIdempotencyKey(intent);
-      return prepareDeliveryProof({
+      if (!evidence) throw new Error('Upload arrival evidence first.');
+      const intent = `custodian:${request.id}:arrival`;
+      const result = await recordRedemptionArrival({
         requestId: request.id,
         organizationId,
         expectedVersion: request.version,
         evidenceId: evidence.id,
-        deliveredAt: new Date(deliveredAt).toISOString(),
-        recipientName: recipientName.trim(),
-        idempotencyKey,
-        actorWallet: address,
-      }).then((result) => ({ result, idempotencyKey, storageKey: intent }));
+        arrivedAt: new Date(arrivedAt).toISOString(),
+        location: location.trim(),
+        idempotencyKey: operationIdempotencyKey(intent),
+      });
+      clearOperationIdempotencyKey(intent);
+      return result;
     },
-    onSuccess: ({ result, idempotencyKey, storageKey }) =>
-      setPrepared({
-        kind: 'proof',
-        intent: idempotencyKey,
-        storageKey,
-        result,
-        payload: {
-          evidenceId: evidence!.id,
-          deliveredAt: new Date(deliveredAt).toISOString(),
-          recipientName: recipientName.trim(),
-        },
-      }),
+    // The holder's code goes out as soon as the arrival proof is on-chain.
+    onSuccess: (result) => releaseCode.mutate(result.request.version),
   });
-  const pickupProof = useMutation({
-    mutationFn: async () => {
-      if (!address) throw new Error('Connect the verified custodian wallet.');
-      const intent = `custodian:${request.id}:pickup-proof`;
-      const idempotencyKey = operationIdempotencyKey(intent);
-      return preparePickupProof({
-        requestId: request.id,
-        organizationId,
-        expectedVersion: request.version,
-        actorWallet: address,
-        idempotencyKey,
-      }).then((result) => ({ result, idempotencyKey, storageKey: intent }));
-    },
-    onSuccess: ({ result, idempotencyKey, storageKey }) =>
-      setPrepared({
-        kind: 'pickup-proof',
-        intent: idempotencyKey,
-        storageKey,
-        result,
-        payload: {},
-      }),
-  });
-
-  if (prepared?.result.chainAction) {
-    const args = prepared.result.args;
-    const tokenId = args?.tokenId ? BigInt(args.tokenId) : undefined;
-    const isValid =
-      tokenId !== undefined &&
-      ((prepared.kind === 'collect' && prepared.result.chainAction === 'startFulfillment') ||
-        ((prepared.kind === 'proof' || prepared.kind === 'pickup-proof') &&
-          prepared.result.chainAction === 'submitFulfillmentProof' &&
-          Boolean(args?.proofDigest)));
-    return (
-      <div role="status" className="rounded-[4px] border border-sapphire/25 bg-sapphire/[0.05] p-4">
-        <h4 className="text-[13px] font-semibold text-sapphire">Wallet confirmation required</h4>
-        <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">
-          The server verified the evidence and prepared {prepared.result.chainAction}. The workflow
-          has not advanced and no success is shown until the contract transaction is confirmed and
-          recorded by the lifecycle service.
-        </p>
-        {!isValid ? (
-          <p role="alert" className="mt-3 text-[12px] text-ruby">
-            The prepared transaction is incomplete. Reload the request instead of signing it.
-          </p>
-        ) : (
-          <div className="mt-3">
-            <TxButton
-              telemetryFlow={`redemption_${prepared.kind}`}
-              action={() =>
-                prepared.kind === 'collect'
-                  ? dataService.startRedemptionFulfillment({ tokenId: tokenId! })
-                  : dataService.submitFulfillmentProof({
-                      tokenId: tokenId!,
-                      proofDigest: args!.proofDigest!,
-                    })
-              }
-              onConfirmed={async ({ hash }) => {
-                if (!address) throw new Error('Reconnect the verified custodian wallet.');
-                if (prepared.kind === 'collect') {
-                  await prepareCustodianCollection({
-                    requestId: request.id,
-                    organizationId,
-                    expectedVersion: request.version,
-                    evidenceId: String(prepared.payload.evidenceId),
-                    collectedAt: String(prepared.payload.collectedAt),
-                    location: String(prepared.payload.location),
-                    idempotencyKey: prepared.intent,
-                    actorWallet: address,
-                    transactionHash: hash,
-                  });
-                } else if (prepared.kind === 'pickup-proof') {
-                  await preparePickupProof({
-                    requestId: request.id,
-                    organizationId,
-                    expectedVersion: request.version,
-                    idempotencyKey: prepared.intent,
-                    actorWallet: address,
-                    transactionHash: hash,
-                  });
-                } else {
-                  await prepareDeliveryProof({
-                    requestId: request.id,
-                    organizationId,
-                    expectedVersion: request.version,
-                    evidenceId: String(prepared.payload.evidenceId),
-                    deliveredAt: String(prepared.payload.deliveredAt),
-                    recipientName: String(prepared.payload.recipientName),
-                    idempotencyKey: prepared.intent,
-                    actorWallet: address,
-                    transactionHash: hash,
-                  });
-                }
-                if (prepared.storageKey) clearOperationIdempotencyKey(prepared.storageKey);
-              }}
-              doneLabel="Return to request"
-              onDone={() => void reload()}
-            >
-              Confirm in wallet
-            </TxButton>
-          </div>
-        )}
-        <Button className="mt-3" size="sm" variant="ghost" onClick={() => setPrepared(undefined)}>
-          Review preparation again
-        </Button>
-      </div>
-    );
-  }
 
   if (capabilities.has('custodian_collect')) {
     return (
-      <ActionForm
-        title="Record physical collection"
-        category="custodian_collection"
-        requestId={request.id}
-        organizationId={organizationId}
-        evidence={evidence}
-        onEvidence={setEvidence}
-        error={collect.error}
-        pending={collect.isPending}
+      <form
         onSubmit={(event) => collect.mutate(event)}
+        className="space-y-4 border-t border-line/[0.07] pt-4"
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field
-            label="Collected at"
-            type="datetime-local"
-            value={collectedAt}
-            onChange={(event) => setCollectedAt(event.target.value)}
-            required
-          />
-          <Field
-            label="Collection location"
-            value={location}
-            onChange={(event) => setLocation(event.target.value)}
-            required
-          />
+        <div>
+          <h4 className="text-[13px] font-semibold text-ink">Confirm the redemption request</h4>
+          <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+            Digital Carat accepted this request. Confirm that the vault has it and will prepare the
+            stone. The protocol records this on-chain for you; no wallet is needed.
+          </p>
         </div>
-        <Button
-          type="submit"
-          disabled={collect.isPending || !evidence || !collectedAt || !location.trim()}
-        >
-          {collect.isPending ? 'Preparing…' : 'Prepare collection transaction'}
+        <Field
+          label="Note, optional"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          maxLength={500}
+        />
+        <ActionError error={collect.error} />
+        <Button type="submit" disabled={collect.isPending}>
+          {collect.isPending ? 'Recording on-chain…' : 'Confirm request receipt'}
         </Button>
-      </ActionForm>
+      </form>
     );
   }
   if (capabilities.has('custodian_dispatch')) {
     return (
       <ActionForm
-        title="Record secure dispatch"
+        title="Record dispatch from the vault"
         category="custodian_dispatch"
         requestId={request.id}
         organizationId={organizationId}
@@ -516,68 +339,84 @@ function FulfillmentActions({
       </ActionForm>
     );
   }
-  if (capabilities.has('submit_delivery_proof')) {
+  if (capabilities.has('record_arrival')) {
     return (
       <ActionForm
-        title="Submit proof of handover"
-        category="courier_delivery"
+        title={pickup ? 'Record arrival at the pickup point' : 'Record arrival with the customer'}
+        category="redemption_arrival"
         requestId={request.id}
         organizationId={organizationId}
         evidence={evidence}
         onEvidence={setEvidence}
-        error={proof.error}
-        pending={proof.isPending}
-        onSubmit={(event) => proof.mutate(event)}
+        error={arrival.error}
+        pending={arrival.isPending}
+        onSubmit={(event) => arrival.mutate(event)}
       >
+        <p className="text-[11.5px] leading-relaxed text-ink-muted">
+          Recording the arrival submits it on-chain as the fulfillment proof and emails the customer
+          a one-time code. They enter it in their portal when the stone is handed over.
+        </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field
-            label="Delivered at"
+            label="Arrived at"
             type="datetime-local"
-            value={deliveredAt}
-            onChange={(event) => setDeliveredAt(event.target.value)}
+            value={arrivedAt}
+            onChange={(event) => setArrivedAt(event.target.value)}
             required
           />
           <Field
-            label="Recipient name on proof"
-            value={recipientName}
-            onChange={(event) => setRecipientName(event.target.value)}
+            label={pickup ? 'Pickup point' : 'Delivery address'}
+            value={location}
+            onChange={(event) => setLocation(event.target.value)}
             required
           />
         </div>
         <Button
           type="submit"
-          disabled={proof.isPending || !evidence || !deliveredAt || !recipientName.trim()}
+          disabled={arrival.isPending || !evidence || !arrivedAt || location.trim().length < 2}
         >
-          {proof.isPending ? 'Preparing…' : 'Prepare proof transaction'}
+          {arrival.isPending ? 'Recording on-chain…' : 'Record arrival'}
         </Button>
       </ActionForm>
     );
   }
-  if (capabilities.has('submit_pickup_proof')) {
+  if (capabilities.has('release_owner_code')) {
     return (
       <div className="space-y-3 border-t border-line/[0.07] pt-4">
-        <h4 className="text-[13px] font-semibold text-ink">Submit verified pickup proof</h4>
+        <h4 className="text-[13px] font-semibold text-ink">Send the customer their code</h4>
         <p className="text-[11.5px] leading-relaxed text-ink-muted">
-          The bank recorded the witnessed handover. Submit its request-bound proof digest on-chain;
-          this still requires independent admin approval before the owner receives a code.
+          The arrival is recorded. Approving it on-chain emails the customer the code they enter
+          when the stone is handed over.
         </p>
-        {pickupProof.error && (
-          <p role="alert" className="text-[12px] text-ruby">
-            {pickupProof.error instanceof Error
-              ? pickupProof.error.message
-              : 'Pickup proof could not be prepared.'}
-          </p>
-        )}
-        <Button onClick={() => pickupProof.mutate()} disabled={pickupProof.isPending || !address}>
-          {pickupProof.isPending ? 'Preparing…' : 'Prepare pickup proof transaction'}
+        <ActionError error={releaseCode.error} />
+        <Button
+          onClick={() => releaseCode.mutate(request.version)}
+          disabled={releaseCode.isPending}
+        >
+          {releaseCode.isPending ? 'Sending…' : 'Approve arrival and send code'}
         </Button>
       </div>
     );
   }
+  if (request.status === 'proof_approved') {
+    return (
+      <p className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] p-4 text-[12px] text-ink-muted">
+        The customer has their code. Hand the stone over once they confirm it in their portal.
+      </p>
+    );
+  }
   return (
     <p className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] p-4 text-[12px] text-ink-muted">
-      No custodian action is legal in the current state. Refresh after another party completes the
-      next step.
+      No vault action is needed in the current state. Refresh after the next step is completed.
+    </p>
+  );
+}
+
+function ActionError({ error }: { error: unknown }) {
+  if (!error) return null;
+  return (
+    <p role="alert" className="text-[12px] text-ruby">
+      {error instanceof Error ? error.message : 'The action could not be completed.'}
     </p>
   );
 }

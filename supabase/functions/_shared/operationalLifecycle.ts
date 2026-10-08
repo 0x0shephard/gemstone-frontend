@@ -1,74 +1,15 @@
 import { canonicalize } from './canonicalJson.ts';
 import { keccak256, toBytes, type Address, type Hash } from 'npm:viem@2';
 
-export type RedemptionLifecycleState =
-  | 'onchain_requested'
-  | 'custodian_collected'
-  | 'custodian_dispatched'
-  | 'bank_received'
-  | 'pickup_handover_recorded'
-  | 'pickup_proof_submitted'
-  | 'delivery_proof_submitted'
-  | 'proof_approved'
-  | 'owner_authorized'
-  | 'chain_burned'
-  | 'cancelled';
-
-export type FulfillmentMethod = 'pickup' | 'insured_delivery';
-
-const transitionGraph: Record<RedemptionLifecycleState, readonly RedemptionLifecycleState[]> = {
-  onchain_requested: ['custodian_collected', 'cancelled'],
-  custodian_collected: ['custodian_dispatched'],
-  custodian_dispatched: ['bank_received', 'delivery_proof_submitted'],
-  bank_received: ['pickup_handover_recorded'],
-  pickup_handover_recorded: ['pickup_proof_submitted'],
-  pickup_proof_submitted: ['proof_approved'],
-  delivery_proof_submitted: ['proof_approved'],
-  proof_approved: ['owner_authorized'],
-  owner_authorized: ['chain_burned'],
-  chain_burned: [],
-  cancelled: [],
-};
-
-export function assertRedemptionTransition(
-  from: RedemptionLifecycleState,
-  to: RedemptionLifecycleState,
-  method: FulfillmentMethod,
-): void {
-  if (!transitionGraph[from]?.includes(to)) throw new Error(`Cannot move from ${from} to ${to}`);
-  if (to === 'bank_received' && method !== 'pickup') {
-    throw new Error('Bank receipt is only valid for pickup redemption');
-  }
-  if (to === 'delivery_proof_submitted' && method !== 'insured_delivery') {
-    throw new Error('Courier delivery proof is only valid for insured delivery');
-  }
-}
-
-export function redemptionSteps(method: FulfillmentMethod, state: RedemptionLifecycleState) {
-  const path: RedemptionLifecycleState[] = [
-    'onchain_requested',
-    'custodian_collected',
-    'custodian_dispatched',
-    ...(method === 'pickup'
-      ? (['bank_received', 'pickup_handover_recorded', 'pickup_proof_submitted'] as const)
-      : (['delivery_proof_submitted'] as const)),
-    'proof_approved',
-    'owner_authorized',
-    'chain_burned',
-  ];
-  const current = path.indexOf(state);
-  return path.map((key, index) => ({
-    key,
-    state:
-      state === 'cancelled'
-        ? 'blocked'
-        : index < current
-          ? 'complete'
-          : index === current
-            ? 'current'
-            : 'upcoming',
-  }));
-}
+export {
+  APPROVAL_PENDING_STATES,
+  ARRIVAL_FROM_STATES,
+  OWNER_CANCELLABLE_STATES,
+  assertRedemptionTransition,
+  redemptionSteps,
+  type FulfillmentMethod,
+  type RedemptionLifecycleState,
+} from './redemptionFlow.ts';
 
 export interface ProxyCommitmentInput {
   deploymentId: string;

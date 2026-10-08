@@ -51,7 +51,13 @@ Deno.serve(async (request) => {
        * and its address should stop being readable when it stops being needed
        * rather than remaining available to anyone with a custody role forever.
        */
-      .in('status', ['committed', 'onchain_requested'])
+      .in('status', [
+        'committed',
+        'onchain_requested',
+        'accepted',
+        'custodian_collected',
+        'custodian_dispatched',
+      ])
       .not('request_hash', 'is', null);
     if (error) throw error;
     if (!records?.length) {

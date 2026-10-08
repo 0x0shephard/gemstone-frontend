@@ -346,28 +346,6 @@ export async function recordBankReceipt(input: {
   return invokeEdgeFunction('v1-bank-workflow', { action: 'record_receipt', ...input });
 }
 
-export async function loadBankRedemptionQueue(
-  organizationId?: string,
-): Promise<RedemptionTracker[]> {
-  return listRedemptionTrackers('bank', organizationId);
-}
-
-export async function recordBankRedemptionReceipt(input: {
-  requestId: string;
-  organizationId: string;
-  expectedVersion: number;
-  location: string;
-  receivedAt: string;
-  evidenceId: string;
-  idempotencyKey: string;
-  transactionHash?: `0x${string}`;
-}): Promise<RedemptionMutationResult> {
-  return invokeEdgeFunction('v1-redemption-lifecycle', {
-    action: 'bank_receive_redemption',
-    ...input,
-  });
-}
-
 export async function loadAdminOverview(): Promise<OperationsOverview> {
   return invokeEdgeFunction<OperationsOverview>('v1-admin-operations', { action: 'overview' });
 }
@@ -390,47 +368,36 @@ export async function startSellerActivation(input: {
   );
 }
 
-export async function assignRedemption(input: {
-  organizationId: string;
+/** Step 1: Digital Carat accepts an on-chain request and names the vault that fulfils it. */
+export async function acceptRedemption(input: {
   requestId: string;
+  organizationId: string;
   expectedVersion: number;
-  custodianOrganizationId: string;
-  bankOrganizationId?: string | null;
+  vaultOrganizationId: string;
   idempotencyKey: string;
-}): Promise<{
-  assignment: { custodianOrganizationId: string; bankOrganizationId: string | null };
-  event: WorkflowEventView;
-}> {
-  return invokeEdgeFunction('v1-admin-operations', { action: 'assign_redemption', ...input });
+}): Promise<RedemptionMutationResult> {
+  return mutateRedemptionLifecycle('accept_redemption', input);
 }
 
-export async function approveRedemptionProof(input: {
+/**
+ * Approves the vault's arrival proof on-chain (server-signed) and emails the
+ * holder the code they enter to confirm the handover.
+ */
+export async function releaseRedemptionOwnerCode(input: {
   requestId: string;
   organizationId: string;
   expectedVersion: number;
   idempotencyKey: string;
-  approverWallet: string;
-  transactionHash?: `0x${string}`;
-}): Promise<RedemptionMutationResult> {
-  return invokeEdgeFunction('v1-redemption-lifecycle', {
-    action: 'approve_fulfillment_proof',
-    ...input,
-  });
-}
-
-export async function rejectRedemptionProof(input: {
-  requestId: string;
-  organizationId: string;
-  expectedVersion: number;
-  idempotencyKey: string;
-  approverWallet: string;
-  reason: string;
-  transactionHash?: `0x${string}`;
-}): Promise<RedemptionMutationResult> {
-  return invokeEdgeFunction('v1-redemption-lifecycle', {
-    action: 'reject_fulfillment_proof',
-    ...input,
-  });
+}): Promise<
+  RedemptionMutationResult & {
+    ownerCodeDelivery?: { status: 'sent' | 'retry_required'; expiresAt?: string; error?: string };
+  }
+> {
+  return invokeEdgeFunction(
+    'v1-redemption-lifecycle',
+    { action: 'release_owner_code', ...input },
+    SERVER_SIGNED_DEADLINE_MS,
+  );
 }
 
 export async function correctWorkflow(input: {
@@ -530,21 +497,30 @@ export async function mutateRedemptionRecovery(
 export async function mutateRedemptionLifecycle(
   action:
     | 'mark_onchain_requested'
+    | 'discard_redemption'
+    | 'accept_redemption'
     | 'custodian_collect'
     | 'custodian_dispatch'
-    | 'submit_delivery_proof'
-    | 'submit_pickup_proof'
-    | 'record_pickup_handover'
+    | 'record_arrival'
     | 'cancel_redemption'
-    | 'reject_fulfillment_proof'
     | 'nominate_proxy'
     | 'resend_owner_code'
     | 'authorize_owner'
     | 'mark_chain_burned',
   input: Record<string, unknown>,
+  deadlineMs?: number,
 ): Promise<RedemptionMutationResult & { authorization?: RedemptionAuthorization }> {
-  return invokeEdgeFunction('v1-redemption-lifecycle', { action, ...input });
+  const body = { action, ...input };
+  return deadlineMs
+    ? invokeEdgeFunction('v1-redemption-lifecycle', body, deadlineMs)
+    : invokeEdgeFunction('v1-redemption-lifecycle', body);
 }
+
+/**
+ * The vault's confirm and arrival steps wait for a Sepolia transaction the
+ * server signs, so they get the Edge Function wall-clock limit.
+ */
+export const SERVER_SIGNED_DEADLINE_MS = 150_000;
 
 export async function markRedemptionOnchainRequested(input: {
   requestId: string;
@@ -562,6 +538,15 @@ export async function prepareRedemptionCancellation(input: {
   transactionHash?: `0x${string}`;
 }): Promise<RedemptionMutationResult> {
   return mutateRedemptionLifecycle('cancel_redemption', input);
+}
+
+/** Abandons a request that never opened on-chain (draft or committed). */
+export async function discardRedemption(input: {
+  requestId: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+}): Promise<RedemptionMutationResult> {
+  return mutateRedemptionLifecycle('discard_redemption', input);
 }
 
 export async function prepareOwnerAuthorization(input: {
@@ -622,20 +607,18 @@ export async function markRedemptionChainBurned(input: {
   return mutateRedemptionLifecycle('mark_chain_burned', input);
 }
 
-export async function prepareCustodianCollection(input: {
+/** Step 2: the vault confirms the request; the server starts fulfillment on-chain. */
+export async function confirmVaultCollection(input: {
   requestId: string;
   organizationId: string;
   expectedVersion: number;
-  evidenceId: string;
-  collectedAt: string;
-  location: string;
+  note?: string;
   idempotencyKey: string;
-  actorWallet: string;
-  transactionHash?: `0x${string}`;
 }): Promise<RedemptionMutationResult> {
-  return mutateRedemptionLifecycle('custodian_collect', input);
+  return mutateRedemptionLifecycle('custodian_collect', input, SERVER_SIGNED_DEADLINE_MS);
 }
 
+/** Step 3: the vault records dispatch with evidence. */
 export async function recordCustodianDispatch(input: {
   requestId: string;
   organizationId: string;
@@ -649,44 +632,17 @@ export async function recordCustodianDispatch(input: {
   return mutateRedemptionLifecycle('custodian_dispatch', input);
 }
 
-export async function prepareDeliveryProof(input: {
+/** Step 4: the vault records arrival; the server submits it as the on-chain proof. */
+export async function recordRedemptionArrival(input: {
   requestId: string;
   organizationId: string;
   expectedVersion: number;
   evidenceId: string;
-  deliveredAt: string;
-  recipientName: string;
+  arrivedAt: string;
+  location: string;
   idempotencyKey: string;
-  actorWallet: string;
-  transactionHash?: `0x${string}`;
 }): Promise<RedemptionMutationResult> {
-  return mutateRedemptionLifecycle('submit_delivery_proof', input);
-}
-
-export async function preparePickupProof(input: {
-  requestId: string;
-  organizationId: string;
-  expectedVersion: number;
-  idempotencyKey: string;
-  actorWallet: string;
-  transactionHash?: `0x${string}`;
-}): Promise<RedemptionMutationResult> {
-  return mutateRedemptionLifecycle('submit_pickup_proof', input);
-}
-
-export async function recordPickupHandover(input: {
-  requestId: string;
-  organizationId: string;
-  expectedVersion: number;
-  idempotencyKey: string;
-  evidenceId: string;
-  collectedAt: string;
-  collectedByName: string;
-  proxyUsed: boolean;
-  ownerIdentityEvidenceId?: string;
-  collectorWallet?: string;
-}): Promise<RedemptionMutationResult> {
-  return mutateRedemptionLifecycle('record_pickup_handover', input);
+  return mutateRedemptionLifecycle('record_arrival', input, SERVER_SIGNED_DEADLINE_MS);
 }
 
 export interface PendingRedemptionAction {
@@ -703,11 +659,6 @@ export async function resumeRedemptionActionIntent(input: {
   requestId: string;
   intentAction:
     | 'nominate_proxy'
-    | 'custodian_collect'
-    | 'submit_delivery_proof'
-    | 'submit_pickup_proof'
-    | 'approve_fulfillment_proof'
-    | 'reject_fulfillment_proof'
     | 'cancel_redemption'
     | 'propose_recovery'
     | 'approve_recovery'
@@ -756,6 +707,7 @@ export type EvidenceCategory =
   | 'bank_receipt'
   | 'bank_handover'
   | 'courier_delivery'
+  | 'redemption_arrival'
   | 'proxy_identity'
   | 'recovery_evidence'
   | 'admin_correction';

@@ -6,7 +6,7 @@ import type { RedemptionWorkflow, RedemptionWorkflowStatus } from '@/services/of
 const STATUS_TEXT: Record<RedemptionWorkflowStatus, string> = {
   draft: 'Fulfillment record incomplete',
   committed: 'Details saved · awaiting chain reconciliation',
-  onchain_requested: 'Request open · awaiting custodian fulfillment',
+  onchain_requested: 'Request open · awaiting Digital Carat acceptance',
   cancelled: 'Request cancelled',
   fulfilled: 'Fulfillment confirmed',
 };
@@ -18,7 +18,9 @@ export function redemptionWorkflowStatusText(
   if (chainConfirmed && status === 'committed') {
     return 'Chain confirmed · backend indexing in progress';
   }
-  return STATUS_TEXT[status];
+  // Rows past acceptance carry the vault lifecycle's states; the tracker
+  // above shows their detail, so the receipt only says the request is moving.
+  return STATUS_TEXT[status] ?? 'Request open · with the custodian vault';
 }
 
 export function redemptionWorkflowTitle(

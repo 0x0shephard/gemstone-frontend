@@ -239,14 +239,28 @@ someone who signs up in order to act on an emailed offer does not arrive at an
 empty list. A wallet nobody has linked still gets a row; it simply cannot be
 emailed.
 
-Redemption is on this list because it is the one flow that **cannot** finish on
-its own. `RedemptionManager.confirmRedemption` checks `msg.sender != gem.custodian`
-— an exact address, not a role — so a request stays open until that one wallet
-acts. Before the sweep covered it nothing told the custodian anything, and the
-redeem portal reported "Custodian fulfillment, 60%" indefinitely; the 60 is a
-constant, not a measurement. The custodian's action lives in Portfolio →
-Redemption, which now lists a request to **both** parties rather than only the
-owner.
+Redemption is on this list because it cannot finish on its own: each of its
+six steps waits on a person. It runs through the custodian vault — the bank or
+storage vault that holds the stone — and every gem's on-chain custodian is the
+operator wallet that activated it, so the server signs the contract steps for
+the vault's staff:
+
+| Step                    | Who                        | What is recorded                                                                                           | On-chain                                                     |
+| ----------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 1. On-chain request     | Holder, then Digital Carat | `onchain_requested` → `accepted` (admin picks the vault in `/verify`)                                      | `requestRedemption` (holder)                                 |
+| 2. Custodian collected  | Vault, `/custodian`        | `custodian_collected`                                                                                      | `startFulfillment` (server)                                  |
+| 3. Custodian dispatched | Vault                      | `custodian_dispatched`, with evidence                                                                      | —                                                            |
+| 4. Arrived              | Vault                      | `arrived` at the pickup point or the delivery address, then `proof_approved`; the holder is emailed a code | `submitFulfillmentProof`, `approveFulfillmentProof` (server) |
+| 5. Handed to customer   | Holder, `/redeem`          | `owner_authorized` once the holder enters the code                                                         | — (authorizer signs)                                         |
+| 6. Token burned         | Holder                     | `chain_burned`                                                                                             | `finalizeRedemption` (holder)                                |
+
+The holder can cancel until the vault confirms (steps 1 and the acceptance
+after it; `RedemptionManager` allows it only before fulfillment starts), and can
+discard a request that never reached the chain. Approvals use
+`REDEMPTION_PROOF_APPROVER_PRIVATE_KEY` when set, otherwise the operator, which
+holds `PROOF_APPROVER_ROLE` on Sepolia. The state machine is
+`supabase/functions/_shared/redemptionFlow.ts`; rows left in the retired bank and
+proof-review states finish through the same arrival and approval steps.
 
 **Not covered.** A listing selling (`Purchased`) notifies nobody: the sale pays
 the seller automatically, so nothing is stranded, and the event carries only the
@@ -308,24 +322,25 @@ Then: balance check → ERC-20 `approve` / ERC-721 `setApprovalForAll` if needed
 `simulateContract` → `writeContract` → receipt. A revert is decoded to a named
 custom error rather than surfaced raw.
 
-| User action                     | Page        | Contract call                                             |
-| ------------------------------- | ----------- | --------------------------------------------------------- |
-| Buy at fixed price              | GemDetail   | `PrimarySaleAuction.buyNow`                               |
-| Bid                             | Auctions    | `PrimarySaleAuction.bid`                                  |
-| Settle a closed lot             | Auctions    | `PrimarySaleAuction.settleAuction`                        |
-| Claim an outbid refund          | Profile     | `PrimarySaleAuction.claimRefund`                          |
-| List an owned gem               | Profile     | `Marketplace.list` (needs `DGENFT` approval)              |
-| Buy a listing                   | Marketplace | `Marketplace.buy`                                         |
-| Bid on a listed token           | GemDetail   | `Marketplace.createOffer` / `settleListingAuction`        |
-| Make / accept / cancel an offer | GemDetail   | `Marketplace.createOffer` / `acceptOffer` / `cancelOffer` |
-| Swap two gems                   | Swaps       | `SwapEscrow.createOffer` / `acceptOffer`                  |
-| Fund the reserve                | GemDetail   | `ReserveManager.fundNative` / `fundToken`                 |
-| Request redemption              | Redeem      | `RedemptionManager.requestRedemption`                     |
-| Cancel a redemption             | Redeem      | `RedemptionManager.cancelRedemption`                      |
-| Send a token to an address      | Portfolio   | `DGENFT.safeTransferFrom`                                 |
-| Issue a gift card               | Portfolio   | `DGENFT.safeTransferFrom` (sender → gift escrow)          |
-| Cancel an escrowed gift         | Portfolio   | Operator returns the token to the sender                  |
-| Clear a legacy gift approval    | Portfolio   | `DGENFT.approve(0x0, tokenId)`                            |
+| User action                       | Page                  | Contract call                                             |
+| --------------------------------- | --------------------- | --------------------------------------------------------- |
+| Buy at fixed price                | GemDetail             | `PrimarySaleAuction.buyNow`                               |
+| Bid                               | Auctions              | `PrimarySaleAuction.bid`                                  |
+| Settle a closed lot               | Auctions              | `PrimarySaleAuction.settleAuction`                        |
+| Claim an outbid refund            | Profile               | `PrimarySaleAuction.claimRefund`                          |
+| List an owned gem                 | Profile               | `Marketplace.list` (needs `DGENFT` approval)              |
+| Buy a listing                     | Marketplace           | `Marketplace.buy`                                         |
+| Bid on a listed token             | GemDetail             | `Marketplace.createOffer` / `settleListingAuction`        |
+| Make / accept / withdraw an offer | GemDetail / Portfolio | `Marketplace.createOffer` / `acceptOffer` / `cancelOffer` |
+| Swap two gems                     | Swaps                 | `SwapEscrow.createOffer` / `acceptOffer`                  |
+| Fund the reserve                  | GemDetail             | `ReserveManager.fundNative` / `fundToken`                 |
+| Request redemption                | Redeem                | `RedemptionManager.requestRedemption`                     |
+| Cancel a redemption               | Redeem                | `RedemptionManager.cancelRedemption`                      |
+| Withdraw a seller submission      | Seller                | none: `v1-seller-submit` `withdraw`, before activation    |
+| Send a token to an address        | Portfolio             | `DGENFT.safeTransferFrom`                                 |
+| Issue a gift card                 | Portfolio             | `DGENFT.safeTransferFrom` (sender → gift escrow)          |
+| Cancel an escrowed gift           | Portfolio             | Operator returns the token to the sender                  |
+| Clear a legacy gift approval      | Portfolio             | `DGENFT.approve(0x0, tokenId)`                            |
 
 **Solvency couples all of these.** `requireSolvent()` guards seven entry points —
 `buyNow`, `bid`, `Marketplace.buy`/`createOffer`/`acceptOffer`,

@@ -1,14 +1,14 @@
 # Testing
 
-| Layer       | Command                                                    | What it proves                                                                                |
-| ----------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Contracts   | `npm run test:contracts`                                   | 126 Forge tests incl. invariants, in `../gemstone`                                            |
-| Unit        | `npm test`                                                 | Components, services and edge-function logic with mocks                                       |
-| Full stack  | `npm run test:e2e:full`                                    | Real UI on a local chain + local Supabase (below)                                             |
-| Live canary | `npx playwright test -c playwright.canary.config.ts`       | The deployed site and Sepolia are wired together                                              |
-| Upgrades    | `SEPOLIA_RPC_URL=… npm run rehearse:upgrade -- UpgradeX …` | An upgrade keeps every token, escrow record and transfer working, on a fork, before broadcast |
-| Lifecycle SQL | `scripts/verify-operational-lifecycle-migration.sh`       | Replays all migrations on disposable PG16 and checks RLS, RPC grants, immutability and retry atomics |
-| Phones      | [phone-testing-runbook.md](phone-testing-runbook.md)       | The MetaMask handoff on real devices                                                          |
+| Layer         | Command                                                    | What it proves                                                                                       |
+| ------------- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Contracts     | `npm run test:contracts`                                   | 126 Forge tests incl. invariants, in `../gemstone`                                                   |
+| Unit          | `npm test`                                                 | Components, services and edge-function logic with mocks                                              |
+| Full stack    | `npm run test:e2e:full`                                    | Real UI on a local chain + local Supabase (below)                                                    |
+| Live canary   | `npx playwright test -c playwright.canary.config.ts`       | The deployed site and Sepolia are wired together                                                     |
+| Upgrades      | `SEPOLIA_RPC_URL=… npm run rehearse:upgrade -- UpgradeX …` | An upgrade keeps every token, escrow record and transfer working, on a fork, before broadcast        |
+| Lifecycle SQL | `scripts/verify-operational-lifecycle-migration.sh`        | Replays all migrations on disposable PG16 and checks RLS, RPC grants, immutability and retry atomics |
+| Phones        | [phone-testing-runbook.md](phone-testing-runbook.md)       | The MetaMask handoff on real devices                                                                 |
 
 ## Full-stack suite
 
@@ -35,17 +35,18 @@ its web servers before global setup, so a fresh clone needs `up` first).
 
 ## Journeys
 
-| File                       | Covers                                                                       |
-| -------------------------- | ---------------------------------------------------------------------------- |
-| `buy.e2e.ts`               | list, then purchase by another collector                                     |
-| `swap.e2e.ts`              | propose and accept; own tokens never offered                                 |
-| `gift.e2e.ts`              | escrow, sender copy, recipient email, claim                                  |
-| `gift-recovery.e2e.ts`     | abandoned setup replaced; interrupted gift finished from a new tab           |
-| `faults.e2e.ts`            | wallet rejection; lost reply after broadcast (no second send)                |
-| `redemption.e2e.ts`        | request, custodian hand-over in the verify portal, holder claims the reserve |
-| `auction.e2e.ts`           | bid, 24 h time travel, settlement by the real `v1-auction-refresh` sweep     |
-| `offer.e2e.ts`             | offer on an unlisted token, accepted by the holder                           |
-| `redemption-cancel.e2e.ts` | custodian cancels a redemption from the verify portal                        |
+| File                           | Covers                                                                                                                                              |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `buy.e2e.ts`                   | list, then purchase by another collector                                                                                                            |
+| `swap.e2e.ts`                  | propose and accept; own tokens never offered                                                                                                        |
+| `gift.e2e.ts`                  | escrow, sender copy, recipient email, claim                                                                                                         |
+| `gift-recovery.e2e.ts`         | abandoned setup replaced; interrupted gift finished from a new tab                                                                                  |
+| `faults.e2e.ts`                | wallet rejection; lost reply after broadcast (no second send)                                                                                       |
+| `redemption.e2e.ts`            | request, custodian hand-over in the verify portal, holder claims the reserve                                                                        |
+| `auction.e2e.ts`               | bid, 24 h time travel, settlement by the real `v1-auction-refresh` sweep                                                                            |
+| `offer.e2e.ts`                 | offer on an unlisted token, accepted by the holder                                                                                                  |
+| `redemption-cancel.e2e.ts`     | custodian cancels a redemption from the verify portal                                                                                               |
+| `operations-redemption.e2e.ts` | six-step redemption: admin accepts, vault confirms, dispatches and records arrival (server-signed), holder confirms with the emailed code and burns |
 
 Not yet covered: notifications.
 

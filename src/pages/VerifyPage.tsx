@@ -15,9 +15,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Tabs } from '@/components/ui/Tabs';
 import { EvidenceUpload } from '@/components/operations/EvidenceUpload';
 import {
+  acceptRedemption,
   activateMatrix,
-  approveRedemptionProof,
-  assignRedemption,
   clearOperationIdempotencyKey,
   correctWorkflow,
   loadAdminOverview,
@@ -25,8 +24,8 @@ import {
   loadRedemptionTracker,
   operationIdempotencyKey,
   startSellerActivation,
+  releaseRedemptionOwnerCode,
   resumeRedemptionActionIntent,
-  rejectRedemptionProof,
   mutateRedemptionRecovery,
   type RedemptionTracker,
   type OperationsOrganization,
@@ -164,7 +163,7 @@ function AdminWorkspace() {
           ) : (
             <EmptyState
               title="Select a redemption workflow"
-              hint="Review delivery proof, owner authorization and chain finalization."
+              hint="Accept new requests and follow the vault, handover and burn steps."
             />
           )}
         </WorkflowSplit>
@@ -322,145 +321,48 @@ export function RedemptionReview({
     enabled: Boolean(organizationId),
   });
   const detail = detailQuery.data ?? workflow;
-  const [prepared, setPrepared] = useState<{
-    intent: string;
-    storageKey?: string;
-    result: RedemptionMutationResult;
-  }>();
-  const [rejectionReason, setRejectionReason] = useState('');
-  const [preparedRejection, setPreparedRejection] = useState<{
-    intent: string;
-    storageKey?: string;
-    reason: string;
-    result: RedemptionMutationResult;
-  }>();
-  const [custodianOrganizationId, setCustodianOrganizationId] = useState(
+  const [vaultOrganizationId, setVaultOrganizationId] = useState(
     workflow.assignment?.custodianOrganizationId ?? '',
   );
-  const [bankOrganizationId, setBankOrganizationId] = useState(
-    workflow.assignment?.bankOrganizationId ?? '',
-  );
   useEffect(() => {
-    setCustodianOrganizationId(detail.assignment?.custodianOrganizationId ?? '');
-    setBankOrganizationId(detail.assignment?.bankOrganizationId ?? '');
-  }, [detail.assignment?.bankOrganizationId, detail.assignment?.custodianOrganizationId]);
-  const assignment = useMutation({
+    setVaultOrganizationId(detail.assignment?.custodianOrganizationId ?? '');
+  }, [detail.assignment?.custodianOrganizationId]);
+  // Banks and storage vaults (both organization kinds offered here) hold stones
+  // and act as their custodian for redemption.
+  const vaults = organizations;
+  const refresh = () => queryClient.invalidateQueries({ queryKey: ['operations'] });
+  const acceptance = useMutation({
     mutationFn: async () => {
-      if (!organizationId) throw new Error('Admin organization is unavailable.');
-      if (!custodianOrganizationId) throw new Error('Choose an active custodian.');
-      if (detail.method === 'pickup' && !bankOrganizationId) {
-        throw new Error('Pickup redemptions require an active storage bank.');
-      }
-      const storageKey = `admin:redemption:${detail.id}:assignment:${detail.version}`;
-      const response = await assignRedemption({
-        organizationId,
+      if (!approvalOrganizationId) throw new Error('This organization cannot accept requests.');
+      if (!vaultOrganizationId) throw new Error('Choose the vault that holds this stone.');
+      const storageKey = `admin:redemption:${detail.id}:accept:${detail.version}`;
+      const response = await acceptRedemption({
         requestId: detail.id,
+        organizationId: approvalOrganizationId,
         expectedVersion: detail.version,
-        custodianOrganizationId,
-        bankOrganizationId: bankOrganizationId || null,
+        vaultOrganizationId,
         idempotencyKey: operationIdempotencyKey(storageKey),
       });
       clearOperationIdempotencyKey(storageKey);
       return response;
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['operations'] }),
+    onSuccess: refresh,
   });
-  const pendingApproval = useQuery({
-    queryKey: ['operations', 'redemption', workflow.id, 'pending-action', 'approval'],
-    queryFn: () =>
-      resumeRedemptionActionIntent({
-        requestId: workflow.id,
-        intentAction: 'approve_fulfillment_proof',
-        organizationId: approvalOrganizationId,
-      }),
-    enabled: Boolean(
-      approvalOrganizationId && detail.capabilities?.includes('approve_fulfillment_proof'),
-    ),
-  });
-  useEffect(() => {
-    if (!pendingApproval.data || prepared) return;
-    setPrepared({
-      intent: pendingApproval.data.idempotencyKey,
-      result: {
-        request: detail,
-        chainAction: 'approveFulfillmentProof',
-        args: pendingApproval.data.chainArguments,
-      },
-    });
-  }, [detail, pendingApproval.data, prepared]);
-  const pendingRejection = useQuery({
-    queryKey: ['operations', 'redemption', workflow.id, 'pending-action', 'rejection'],
-    queryFn: () =>
-      resumeRedemptionActionIntent({
-        requestId: workflow.id,
-        intentAction: 'reject_fulfillment_proof',
-        organizationId: approvalOrganizationId,
-      }),
-    enabled: Boolean(
-      approvalOrganizationId && detail.capabilities?.includes('reject_fulfillment_proof'),
-    ),
-  });
-  useEffect(() => {
-    if (!pendingRejection.data || preparedRejection) return;
-    setPreparedRejection({
-      intent: pendingRejection.data.idempotencyKey,
-      reason: String(pendingRejection.data.payload.reason ?? ''),
-      result: {
-        request: detail,
-        chainAction: 'rejectFulfillmentProof',
-        args: pendingRejection.data.chainArguments,
-      },
-    });
-  }, [detail, pendingRejection.data, preparedRejection]);
-  const approval = useMutation({
+  const releaseCode = useMutation({
     mutationFn: async () => {
-      if (!approvalOrganizationId) {
-        throw new Error('This organization cannot approve redemption proof.');
-      }
-      if (!address) throw new Error('Connect the verified proof-approver wallet.');
-      const intent = `admin:redemption:${workflow.id}:proof:${detail.version}`;
-      const idempotencyKey = operationIdempotencyKey(intent);
-      const response = await approveRedemptionProof({
-        requestId: workflow.id,
+      if (!approvalOrganizationId) throw new Error('This organization cannot release codes.');
+      const storageKey = `admin:redemption:${detail.id}:release-code`;
+      const response = await releaseRedemptionOwnerCode({
+        requestId: detail.id,
         organizationId: approvalOrganizationId,
         expectedVersion: detail.version,
-        idempotencyKey,
-        approverWallet: address,
+        idempotencyKey: operationIdempotencyKey(storageKey),
       });
-      return { intent: idempotencyKey, storageKey: intent, result: response };
+      clearOperationIdempotencyKey(storageKey);
+      return response;
     },
-    onSuccess: setPrepared,
+    onSettled: refresh,
   });
-  const preparedArgs = prepared?.result.args;
-  const preparedValid =
-    prepared?.result.chainAction === 'approveFulfillmentProof' &&
-    Boolean(preparedArgs?.tokenId && preparedArgs.approvalId && preparedArgs.approvalVersion);
-  const rejection = useMutation({
-    mutationFn: async () => {
-      if (!approvalOrganizationId || !address) {
-        throw new Error('Connect the verified proof-approver wallet.');
-      }
-      const reason = rejectionReason.trim();
-      if (reason.length < 10)
-        throw new Error('Enter a rejection reason of at least 10 characters.');
-      const storageKey = `admin:redemption:${workflow.id}:reject:${detail.version}`;
-      const intent = operationIdempotencyKey(storageKey);
-      const result = await rejectRedemptionProof({
-        requestId: workflow.id,
-        organizationId: approvalOrganizationId,
-        expectedVersion: detail.version,
-        idempotencyKey: intent,
-        approverWallet: address,
-        reason,
-      });
-      return { intent, storageKey, reason, result };
-    },
-    onSuccess: setPreparedRejection,
-  });
-  const rejectionArgs = preparedRejection?.result.args;
-  const rejectionValid =
-    preparedRejection?.result.chainAction === 'rejectFulfillmentProof' &&
-    Boolean(rejectionArgs?.tokenId && rejectionArgs.reasonHash);
   return (
     <Card className="space-y-5 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -479,224 +381,67 @@ export function RedemptionReview({
         stages={redemptionLifecycleStages(detail)}
         events={eventPresentation(detail.events ?? [])}
       />
-      {canCorrect && (
+      {detail.capabilities?.includes('accept_redemption') && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">
           <div>
-            <h4 className="text-[13px] font-semibold text-ink">Fulfillment assignment</h4>
+            <h4 className="text-[13px] font-semibold text-ink">Accept redemption request</h4>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              Only active organizations returned by the operations service can be assigned. Pickup
-              requires both a custodian and the receiving storage bank.
+              The holder opened this request on-chain. Accepting it hands it to the bank or storage
+              vault that holds the stone; the vault then confirms, dispatches and records arrival.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Labeled label="Assigned custodian">
-              <select
-                className={inputClass}
-                value={custodianOrganizationId}
-                onChange={(event) => setCustodianOrganizationId(event.target.value)}
-              >
-                <option value="">Choose active custodian</option>
-                {organizations
-                  .filter((entry) => entry.kind === 'custodian')
-                  .map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </option>
-                  ))}
-              </select>
-            </Labeled>
-            <Labeled
-              label="Assigned storage bank"
-              hint={detail.method === 'pickup' ? 'Required for pickup' : 'Optional for courier'}
+          <Labeled label="Custodian vault">
+            <select
+              className={inputClass}
+              value={vaultOrganizationId}
+              onChange={(event) => setVaultOrganizationId(event.target.value)}
             >
-              <select
-                className={inputClass}
-                value={bankOrganizationId}
-                onChange={(event) => setBankOrganizationId(event.target.value)}
-              >
-                <option value="">
-                  {detail.method === 'pickup' ? 'Choose active bank' : 'No bank'}
+              <option value="">Choose the vault holding this stone</option>
+              {vaults.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.name}
                 </option>
-                {organizations
-                  .filter((entry) => entry.kind === 'bank')
-                  .map((entry) => (
-                    <option key={entry.id} value={entry.id}>
-                      {entry.name}
-                    </option>
-                  ))}
-              </select>
-            </Labeled>
-          </div>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={
-              assignment.isPending ||
-              !custodianOrganizationId ||
-              (detail.method === 'pickup' && !bankOrganizationId)
-            }
-            onClick={() => assignment.mutate()}
-          >
-            {assignment.isPending
-              ? 'Saving assignment…'
-              : detail.assignment
-                ? 'Update assignment'
-                : 'Assign fulfillment teams'}
-          </Button>
-          {organizations.length === 0 && (
+              ))}
+            </select>
+          </Labeled>
+          {vaults.length === 0 && (
             <p role="alert" className="text-[11.5px] text-amber">
-              No active custodian or bank choices are available. Assignment remains disabled.
+              No active bank or custodian vault is available to accept this request.
             </p>
           )}
-          {assignment.error && (
+          {acceptance.error && (
             <p role="alert" className="text-[12px] text-ruby">
-              {assignment.error instanceof Error
-                ? assignment.error.message
-                : 'Assignment could not be saved.'}
+              {acceptance.error instanceof Error
+                ? acceptance.error.message
+                : 'The request could not be accepted.'}
             </p>
           )}
+          <Button
+            onClick={() => acceptance.mutate()}
+            disabled={acceptance.isPending || !vaultOrganizationId}
+          >
+            {acceptance.isPending ? 'Accepting…' : 'Accept request'}
+          </Button>
         </div>
       )}
-      {detail.capabilities?.includes('approve_fulfillment_proof') && (
+      {detail.capabilities?.includes('release_owner_code') && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">
-          <div className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] p-3">
-            <p className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-dim">
-              Proof digest
-            </p>
-            <p className="mt-1 break-all font-mono text-[11px] text-ink">
-              {detail.proofDigest ?? 'Proof digest unavailable'}
-            </p>
-          </div>
-          <p className="text-[11.5px] text-ink-muted">
-            Approval permits the server to issue a request-bound owner code. It does not burn the
-            token.
+          <h4 className="text-[13px] font-semibold text-ink">Send the customer their code</h4>
+          <p className="text-[11.5px] leading-relaxed text-ink-muted">
+            The vault recorded the arrival but the customer code has not gone out. This approves the
+            arrival proof on-chain from the protocol wallet and emails the code.
           </p>
-          {!prepared ? (
-            <Button onClick={() => approval.mutate()} disabled={approval.isPending}>
-              {approval.isPending ? 'Preparing approval…' : 'Prepare delivery proof approval'}
-            </Button>
-          ) : !preparedValid ? (
+          {releaseCode.error && (
             <p role="alert" className="text-[12px] text-ruby">
-              The prepared approval is incomplete. Reload instead of signing it.
+              {releaseCode.error instanceof Error
+                ? releaseCode.error.message
+                : 'The code could not be sent.'}
             </p>
-          ) : (
-            <TxButton
-              telemetryFlow="redemption_proof_approval"
-              action={() =>
-                dataService.approveFulfillmentProof({
-                  tokenId: BigInt(preparedArgs!.tokenId),
-                  approvalId: preparedArgs!.approvalId!,
-                  approvalVersion: BigInt(preparedArgs!.approvalVersion!),
-                })
-              }
-              onConfirmed={async ({ hash }) => {
-                if (!address) throw new Error('Reconnect the verified proof-approver wallet.');
-                await approveRedemptionProof({
-                  requestId: workflow.id,
-                  organizationId: approvalOrganizationId!,
-                  expectedVersion: detail.version,
-                  idempotencyKey: prepared.intent,
-                  approverWallet: address,
-                  transactionHash: hash,
-                });
-                if (prepared.storageKey) clearOperationIdempotencyKey(prepared.storageKey);
-              }}
-              doneLabel="Return to tracker"
-              onDone={() => {
-                setPrepared(undefined);
-                void queryClient.invalidateQueries({ queryKey: ['operations'] });
-              }}
-            >
-              Approve proof in wallet
-            </TxButton>
           )}
+          <Button onClick={() => releaseCode.mutate()} disabled={releaseCode.isPending}>
+            {releaseCode.isPending ? 'Sending…' : 'Approve arrival and send code'}
+          </Button>
         </div>
-      )}
-      {detail.capabilities?.includes('reject_fulfillment_proof') && (
-        <div className="space-y-3 border-t border-line/[0.07] pt-4">
-          <div>
-            <h4 className="text-[13px] font-semibold text-ink">Reject submitted proof</h4>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              Rejection is written on-chain, keeps the reason in the audit trail and returns the
-              request to the custodian for a new pickup or courier proof.
-            </p>
-          </div>
-          {!preparedRejection ? (
-            <>
-              <Labeled label="Rejection reason" hint="10–2000 characters; retained internally">
-                <textarea
-                  className={`${inputClass} min-h-24 py-3`}
-                  value={rejectionReason}
-                  onChange={(event) => setRejectionReason(event.target.value)}
-                  minLength={10}
-                  maxLength={2_000}
-                />
-              </Labeled>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={() => rejection.mutate()}
-                disabled={rejection.isPending || rejectionReason.trim().length < 10}
-              >
-                {rejection.isPending ? 'Preparing rejection…' : 'Prepare proof rejection'}
-              </Button>
-            </>
-          ) : rejectionValid ? (
-            <TxButton
-              variant="danger"
-              telemetryFlow="redemption_proof_rejection"
-              action={() =>
-                dataService.rejectFulfillmentProof({
-                  tokenId: BigInt(rejectionArgs!.tokenId),
-                  reasonHash: rejectionArgs!.reasonHash!,
-                })
-              }
-              onConfirmed={async ({ hash }) => {
-                if (!approvalOrganizationId || !address) {
-                  throw new Error('Reconnect the verified proof-approver wallet.');
-                }
-                await rejectRedemptionProof({
-                  requestId: workflow.id,
-                  organizationId: approvalOrganizationId,
-                  expectedVersion: detail.version,
-                  idempotencyKey: preparedRejection.intent,
-                  approverWallet: address,
-                  reason: preparedRejection.reason,
-                  transactionHash: hash,
-                });
-                if (preparedRejection.storageKey) {
-                  clearOperationIdempotencyKey(preparedRejection.storageKey);
-                }
-              }}
-              doneLabel="Return to tracker"
-              onDone={() => {
-                setPreparedRejection(undefined);
-                setRejectionReason('');
-                void queryClient.invalidateQueries({ queryKey: ['operations'] });
-              }}
-            >
-              Reject proof in wallet
-            </TxButton>
-          ) : (
-            <p role="alert" className="text-[12px] text-ruby">
-              The rejection preparation is incomplete. Reload instead of signing it.
-            </p>
-          )}
-          {rejection.error && (
-            <p role="alert" className="text-[12px] text-ruby">
-              {rejection.error instanceof Error
-                ? rejection.error.message
-                : 'Proof rejection could not be prepared.'}
-            </p>
-          )}
-        </div>
-      )}
-      {approval.error && (
-        <p role="alert" className="text-[12px] text-ruby">
-          {approval.error instanceof Error
-            ? approval.error.message
-            : 'Proof could not be approved.'}
-        </p>
       )}
       {(detail.recovery ||
         detail.capabilities?.some((capability) =>

@@ -211,9 +211,13 @@ export interface OperatorChain {
   deploymentBlock: bigint;
 }
 
-export function operatorChain(): OperatorChain {
+/**
+ * The deployment's signing chain. `privateKey` selects a different signer on the
+ * same RPC (the redemption proof approver); by default it is the operator.
+ */
+export function operatorChain(privateKey?: `0x${string}`): OperatorChain {
   const rpcUrl = deploymentEnv('RPC_URL', 'SEPOLIA_RPC_URL');
-  const privateKey = deploymentEnv(
+  privateKey ??= deploymentEnv(
     'OPERATOR_PRIVATE_KEY',
     'SEPOLIA_OPERATOR_PRIVATE_KEY',
   ) as `0x${string}`;

@@ -15,6 +15,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   authorizeRedemptionOwner,
   clearOperationIdempotencyKey,
+  discardRedemption,
   loadOwnerRedemptionTrackers,
   loadRedemptionTracker,
   markRedemptionChainBurned,
@@ -43,29 +44,59 @@ import { useAccount, useSignMessage } from 'wagmi';
 import { isAddress, isAddressEqual } from 'viem';
 import { assertActiveDeploymentRelease } from '@/services/chain/deploymentReleaseGuard';
 
+/** The six redemption steps, in the order the tracker below records them. */
 const STEPS = [
   {
     n: '01',
-    title: 'Verify ownership',
-    body: 'Confirm you hold the token and at least 20% of its reserve is funded.',
+    title: 'On-chain request',
+    body: 'You open the request from your wallet and the token locks. Digital Carat accepts it.',
   },
   {
     n: '02',
-    title: 'Compliance check',
-    body: 'Your address must not be blocked. No identity verification is required to redeem.',
+    title: 'Custodian collected',
+    body: 'The custodian vault holding your stone confirms it has received the request.',
   },
   {
     n: '03',
-    title: 'Request and lock',
-    body: 'Your NFT locks while collection, dispatch and arrival evidence are recorded.',
+    title: 'Custodian dispatched',
+    body: 'The vault dispatches your stone to the pickup point or your delivery address.',
   },
   {
     n: '04',
-    title: 'Authorize and burn',
-    body: 'After proven handover, enter the request-bound code and finalize from the owner wallet.',
+    title: 'Arrived',
+    body: 'The stone reaches the pickup point or your hands, and you are emailed a one-time code.',
+  },
+  {
+    n: '05',
+    title: 'Handed to you',
+    body: 'When you receive the stone, enter the code in this portal to confirm the handover.',
+  },
+  {
+    n: '06',
+    title: 'Token burned',
+    body: 'You burn the token from your wallet and the reserve is credited to you.',
     danger: true,
   },
 ];
+
+/** What each tracker state means to the holder, in place of the internal state name. */
+const STATUS_LABEL: Record<string, string> = {
+  draft: 'Not submitted',
+  committed: 'Awaiting wallet transaction',
+  onchain_requested: 'Awaiting Digital Carat acceptance',
+  accepted: 'Accepted · with the custodian vault',
+  custodian_collected: 'Vault preparing your stone',
+  custodian_dispatched: 'On its way',
+  bank_received: 'On its way',
+  pickup_handover_recorded: 'Arrived',
+  arrived: 'Arrived · code on its way',
+  pickup_proof_submitted: 'Arrived · code on its way',
+  delivery_proof_submitted: 'Arrived · code on its way',
+  proof_approved: 'Arrived · confirm with your code',
+  owner_authorized: 'Confirmed · burn the token',
+  chain_burned: 'Redeemed',
+  cancelled: 'Cancelled',
+};
 
 export default function RedeemPage() {
   const { user } = useAuth();
@@ -97,11 +128,11 @@ export default function RedeemPage() {
             Redemption follows a verifiable custody path.
           </h2>
           <p className="mt-2 text-[13px] leading-relaxed text-ink-muted">
-            Your token is locked before the custodian releases the stone, then permanently burned
-            when fulfillment is confirmed.
+            Your token stays locked while the custodian vault sends the stone to you, and is burned
+            only after you confirm the handover with your code.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {STEPS.map((s) => (
             <Card
               key={s.n}
@@ -243,7 +274,6 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
   const [proxyName, setProxyName] = useState('');
   const [proxyWallet, setProxyWallet] = useState('');
   const [identityEvidence, setIdentityEvidence] = useState<WorkflowEvidenceView>();
-  const [directPickupIdentity, setDirectPickupIdentity] = useState<WorkflowEvidenceView>();
   const [preparedProxy, setPreparedProxy] = useState<{
     intent: string;
     result: RedemptionMutationResult;
@@ -386,6 +416,19 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
     },
     onSuccess: setPreparedCancellation,
   });
+  const discardMutation = useMutation({
+    mutationFn: async () => {
+      const storageKey = `redemption:${request.id}:discard`;
+      const result = await discardRedemption({
+        requestId: request.id,
+        expectedVersion: request.version,
+        idempotencyKey: operationIdempotencyKey(storageKey),
+      });
+      clearOperationIdempotencyKey(storageKey);
+      return result;
+    },
+    onSuccess: reload,
+  });
   const pendingCancellation = useQuery({
     queryKey: ['operations', 'redemption', request.id, 'pending-action', 'cancel'],
     queryFn: () =>
@@ -423,8 +466,16 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
           </h4>
           <p className="mt-1 font-mono text-[10.5px] text-ink-dim">Request {request.id}</p>
         </div>
-        <StatusBadge tone={request.status === 'chain_burned' ? 'success' : 'info'}>
-          {request.status.replaceAll('_', ' ')}
+        <StatusBadge
+          tone={
+            request.status === 'chain_burned'
+              ? 'success'
+              : request.status === 'cancelled'
+                ? 'neutral'
+                : 'info'
+          }
+        >
+          {STATUS_LABEL[request.status] ?? request.status.replaceAll('_', ' ')}
         </StatusBadge>
       </div>
       <LifecycleTracker
@@ -471,25 +522,28 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
         </p>
       )}
 
-      {request.method === 'pickup' && capabilities.has('request_evidence_upload') && (
+      {capabilities.has('discard_redemption') && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">
           <div>
-            <h5 className="text-[13px] font-semibold text-ink">Identity evidence for pickup</h5>
+            <h5 className="text-[13px] font-semibold text-ink">Discard this request</h5>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              If you will collect personally, upload the identity evidence the bank must match to
-              your profile. It remains private and does not nominate a proxy.
+              This request never opened on-chain, so your token is not locked. Discard it if you no
+              longer want to redeem, or start again from your holdings.
             </p>
           </div>
-          <EvidenceUpload
-            requestId={request.id}
-            category="proxy_identity"
-            label="Owner pickup identity evidence"
-            onUploaded={setDirectPickupIdentity}
-          />
-          {(directPickupIdentity ||
-            request.evidence?.some((entry) => entry.category === 'proxy_identity')) && (
-            <p role="status" className="text-[11.5px] text-emerald">
-              Verified identity evidence is available to the assigned bank for witnessed pickup.
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => discardMutation.mutate()}
+            disabled={discardMutation.isPending}
+          >
+            {discardMutation.isPending ? 'Discarding…' : 'Discard request'}
+          </Button>
+          {discardMutation.error && (
+            <p role="alert" className="text-[12px] text-ruby">
+              {discardMutation.error instanceof Error
+                ? discardMutation.error.message
+                : 'The request could not be discarded.'}
             </p>
           )}
         </div>
@@ -498,10 +552,10 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
       {capabilities.has('cancel_redemption') && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">
           <div>
-            <h5 className="text-[13px] font-semibold text-ink">Cancel before fulfillment starts</h5>
+            <h5 className="text-[13px] font-semibold text-ink">Cancel redemption</h5>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              Cancellation unlocks the token and closes this physical request. It is unavailable
-              after the custodian starts fulfillment.
+              Cancelling unlocks your token and closes this request. It is available until the
+              custodian vault confirms the request.
             </p>
           </div>
           {!preparedCancellation ? (
@@ -654,15 +708,16 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
       {capabilities.has('authorize_owner') && !finalAuthorization && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">
           <div>
-            <h5 className="text-[13px] font-semibold text-ink">Authorize final owner burn</h5>
+            <h5 className="text-[13px] font-semibold text-ink">Confirm you received the stone</h5>
             <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              Enter the request-bound code emailed after approved handover. You will sign a
-              five-minute challenge, then review the irreversible burn in your owner wallet.
+              Enter the code we emailed when your stone arrived, once it is in your hands. Never
+              share it with the vault or courier. You will sign a short challenge, then burn the
+              token from your wallet.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
             <Field
-              label="Owner authorization code"
+              label="Handover code"
               value={code}
               onChange={(event) => setCode(event.target.value)}
               autoComplete="one-time-code"
@@ -673,7 +728,7 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
               onClick={() => authorizationMutation.mutate()}
               disabled={authorizationMutation.isPending || !code.trim()}
             >
-              {authorizationMutation.isPending ? 'Verifying…' : 'Verify code and sign'}
+              {authorizationMutation.isPending ? 'Verifying…' : 'Confirm handover'}
             </Button>
             {capabilities.has('resend_owner_code') && (
               <Button

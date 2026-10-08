@@ -10,6 +10,9 @@ import {
   type OperationalMembership,
 } from '../_shared/operations.ts';
 import {
+  APPROVAL_PENDING_STATES,
+  ARRIVAL_FROM_STATES,
+  OWNER_CANCELLABLE_STATES,
   approvalBinding,
   assertRedemptionTransition,
   proxyCollectorCommitment,
@@ -18,7 +21,15 @@ import {
   type RedemptionLifecycleState,
 } from '../_shared/operationalLifecycle.ts';
 import { stableRecoveryEligibleAt } from '../_shared/approvalIntent.ts';
-import { assertPickupCollector } from '../_shared/pickupIdentity.ts';
+import { operatorChain, type OperatorChain } from '../_shared/chain.ts';
+import {
+  ChainPhase,
+  OperatorBusyError,
+  assertOperatorIsCustodian,
+  proofApproverChain,
+  readRedemptionRecord,
+  sendRedemptionWrite,
+} from '../_shared/redemptionOperator.ts';
 import {
   deriveOwnerCode,
   ownerAuthorizationChallenge,
@@ -172,51 +183,25 @@ function currentActions(
   owner: boolean,
   capabilities: Set<OperationalCapability>,
 ): string[] {
+  const status = row.status as RedemptionLifecycleState;
+  const vault = capabilities.has('custodian.fulfill');
   const actions = ['request_evidence_upload', 'confirm_evidence_upload'];
+  if (owner && ['draft', 'committed'].includes(row.status)) actions.push('discard_redemption');
   if (owner && row.status === 'committed') actions.push('mark_onchain_requested');
-  if (owner && row.status === 'onchain_requested') {
+  if (owner && OWNER_CANCELLABLE_STATES.includes(status)) {
     actions.push('prepare_proxy_nomination', 'nominate_proxy', 'cancel_redemption');
   }
-  if (capabilities.has('custodian.fulfill') && row.status === 'onchain_requested') {
-    actions.push('custodian_collect');
+  if (capabilities.has('redemption.approve') && status === 'onchain_requested') {
+    actions.push('accept_redemption');
   }
-  if (capabilities.has('custodian.fulfill') && row.status === 'custodian_collected') {
-    actions.push('custodian_dispatch');
-  }
+  if (vault && status === 'accepted') actions.push('custodian_collect');
+  if (vault && status === 'custodian_collected') actions.push('custodian_dispatch');
+  if (vault && ARRIVAL_FROM_STATES.includes(status)) actions.push('record_arrival');
   if (
-    capabilities.has('custodian.fulfill') &&
-    row.status === 'custodian_dispatched' &&
-    row.fulfillment_method === 'insured_delivery'
+    (vault || capabilities.has('redemption.approve')) &&
+    APPROVAL_PENDING_STATES.includes(status)
   ) {
-    actions.push('submit_delivery_proof');
-  }
-  if (
-    capabilities.has('bank.receive') &&
-    row.status === 'custodian_dispatched' &&
-    row.fulfillment_method === 'pickup'
-  ) {
-    actions.push('bank_receive_redemption');
-  }
-  if (
-    capabilities.has('bank.receive') &&
-    row.status === 'bank_received' &&
-    row.fulfillment_method === 'pickup'
-  ) {
-    actions.push('record_pickup_handover');
-  }
-  if (
-    capabilities.has('custodian.fulfill') &&
-    row.status === 'pickup_handover_recorded' &&
-    row.fulfillment_method === 'pickup'
-  ) {
-    actions.push('submit_pickup_proof');
-  }
-  if (
-    capabilities.has('redemption.approve') &&
-    ['pickup_proof_submitted', 'delivery_proof_submitted'].includes(row.status)
-  ) {
-    actions.push('approve_fulfillment_proof');
-    actions.push('reject_fulfillment_proof');
+    actions.push('release_owner_code');
   }
   if (owner && ['proof_approved', 'owner_authorized'].includes(row.status)) {
     actions.push('resend_owner_code', 'prepare_owner_authorization', 'authorize_owner');
@@ -269,11 +254,10 @@ function tracker(row: RedemptionRow, version: number, events: Array<Record<strin
     updatedAt: row.updated_at,
     requestedAt: row.created_at,
     steps: redemptionSteps(row.fulfillment_method, row.status as RedemptionLifecycleState).map(
-      (step) => {
-        const event = eventByState.get(step.key);
+      ({ completedBy, ...step }) => {
+        const event = eventByState.get(completedBy);
         return {
           ...step,
-          label: step.key.replaceAll('_', ' '),
           ...(event ? { occurredAt: event.occurred_at, eventId: event.id } : {}),
         };
       },
@@ -566,8 +550,9 @@ async function receiptEvents(
   });
 }
 
-const PROOF_APPROVER_ROLE = keccak256(toBytes('PROOF_APPROVER_ROLE'));
 const AUTHORIZER_ROLE = keccak256(toBytes('AUTHORIZER_ROLE'));
+/** Covers block-time lag and server clock skew; see the owner authorization. */
+const AUTHORIZATION_BACKDATE_SECONDS = 120n;
 const RECOVERY_APPROVER_ROLE = keccak256(toBytes('RECOVERY_APPROVER_ROLE'));
 
 async function configuredAuthorizer(deployment: ProtocolDeployment) {
@@ -608,6 +593,84 @@ async function assertRecoveryApprover(deployment: ProtocolDeployment, wallet: Ad
   }
 }
 
+function manager(deployment: ProtocolDeployment): Address {
+  return getAddress(deployment.redemption_manager_address);
+}
+
+/** The operator chain, refusing an RPC that points at a different network. */
+function serverChain(deployment: ProtocolDeployment): OperatorChain {
+  const chain = operatorChain();
+  if (String(chain.chainId) !== String(deployment.chain_id)) {
+    throw new Error('Operator RPC chain does not match the protocol deployment');
+  }
+  return chain;
+}
+
+/**
+ * Sends one server-signed RedemptionManager write for an action intent, or
+ * recognises that an earlier attempt already landed it.
+ *
+ * The contract phase is the source of truth: at `fromPhase` the write is still
+ * owed; past it, a previous attempt succeeded (its hash, when it was recorded,
+ * is reused for the event). Anything else means the workflow and the chain
+ * disagree and nothing is sent.
+ */
+async function runServerStep(input: {
+  admin: ReturnType<typeof adminClient>;
+  deployment: ProtocolDeployment;
+  requestId: string;
+  idempotencyKey: string;
+  tokenId: bigint;
+  signer: OperatorChain;
+  operator: OperatorChain;
+  functionName: 'startFulfillment' | 'submitFulfillmentProof' | 'approveFulfillmentProof';
+  args: readonly unknown[];
+  fromPhase: number;
+  expectedEvent: string;
+}): Promise<Hash | null> {
+  const record = await readRedemptionRecord(
+    input.operator,
+    manager(input.deployment),
+    input.tokenId,
+  );
+  if (record.workflowIdHash.toLowerCase() !== workflowIdHash(input.requestId).toLowerCase()) {
+    throw new Error('The on-chain redemption belongs to a different workflow');
+  }
+  if (record.phase > input.fromPhase && record.phase !== ChainPhase.Completed) {
+    const intent = await loadIntent(
+      input.admin,
+      input.deployment.id,
+      input.requestId,
+      input.idempotencyKey,
+    );
+    return (intent?.transaction_hash as Hash | null | undefined) ?? null;
+  }
+  if (record.phase !== input.fromPhase) {
+    throw new Error(`The on-chain redemption is not ready for ${input.functionName}`);
+  }
+  const hash = await sendRedemptionWrite({
+    admin: input.admin,
+    chain: input.signer,
+    operator: input.operator,
+    manager: manager(input.deployment),
+    functionName: input.functionName,
+    args: input.args,
+    onSubmitted: async (submitted) => {
+      const { error } = await input.admin
+        .from('redemption_action_intents')
+        .update({ transaction_hash: submitted.toLowerCase() })
+        .eq('deployment_id', input.deployment.id)
+        .eq('redemption_request_id', input.requestId)
+        .eq('idempotency_key', input.idempotencyKey);
+      if (error) throw error;
+    },
+  });
+  const chain = await receiptEvents(input.deployment, hash, input.signer.account.address);
+  const emitted = findEvent(chain.logs, input.expectedEvent);
+  assertEventValue(emitted.args.tokenId, input.tokenId.toString(), 'token');
+  return hash.toLowerCase() as Hash;
+}
+
 Deno.serve(async (request) => {
   const early = preflight(request);
   if (early) return early;
@@ -642,14 +705,16 @@ Deno.serve(async (request) => {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
         query = query.in('status', [
-          'onchain_requested',
+          'accepted',
           'custodian_collected',
           'custodian_dispatched',
+          'arrived',
           'bank_received',
           'pickup_handover_recorded',
           'pickup_proof_submitted',
           'delivery_proof_submitted',
           'proof_approved',
+          'owner_authorized',
         ]);
         if (!isGlobalOperationalAdmin(membership)) {
           const { data: assignments, error: assignmentError } = await admin
@@ -807,6 +872,7 @@ Deno.serve(async (request) => {
                 'custodian_collection',
                 'custodian_dispatch',
                 'courier_delivery',
+                'redemption_arrival',
                 'bank_handover',
               ].includes(item.category);
             return (
@@ -945,29 +1011,17 @@ Deno.serve(async (request) => {
       const allowed =
         (owner && ['nominate_proxy', 'cancel_redemption'].includes(requestedAction)) ||
         (abstract.has('custodian.fulfill') &&
-          ['custodian_collect', 'submit_delivery_proof', 'submit_pickup_proof'].includes(
+          ['custodian_collect', 'record_arrival', 'release_owner_code'].includes(
             requestedAction,
           )) ||
-        (abstract.has('bank.receive') &&
-          ['bank_receive_redemption', 'record_pickup_handover'].includes(requestedAction)) ||
-        (abstract.has('redemption.approve') &&
-          ['approve_fulfillment_proof', 'reject_fulfillment_proof'].includes(requestedAction)) ||
+        (abstract.has('redemption.approve') && requestedAction === 'release_owner_code') ||
         (abstract.has('redemption.recover') &&
           ['propose_recovery', 'approve_recovery', 'execute_recovery'].includes(requestedAction));
       if (!allowed) return json({ error: 'Not found' }, 404);
-      if (
-        ['custodian_collect', 'submit_delivery_proof', 'submit_pickup_proof'].includes(
-          requestedAction,
-        )
-      ) {
+      if (['custodian_collect', 'record_arrival'].includes(requestedAction)) {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
         await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
-      }
-      if (['bank_receive_redemption', 'record_pickup_handover'].includes(requestedAction)) {
-        const membership = membershipFor(memberships, 'bank.receive', organizationId);
-        if (!membership) return json({ error: 'Not found' }, 404);
-        await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
       }
       const { data: intent, error } = await admin
         .from('redemption_action_intents')
@@ -1001,14 +1055,16 @@ Deno.serve(async (request) => {
       const allowed =
         (owner && category === 'proxy_identity') ||
         (abstract.has('custodian.fulfill') &&
-          ['custodian_collection', 'custodian_dispatch', 'courier_delivery'].includes(category)) ||
+          ['custodian_collection', 'custodian_dispatch', 'redemption_arrival'].includes(
+            category,
+          )) ||
         (abstract.has('bank.receive') && category === 'bank_receipt') ||
         (abstract.has('admin.correct') &&
           ['admin_correction', 'recovery_evidence'].includes(category)) ||
         (abstract.has('bank.receive') && category === 'bank_handover');
       if (!allowed) return json({ error: 'Not found' }, 404);
       let uploadOrganizationId: string | null = null;
-      if (['custodian_collection', 'custodian_dispatch', 'courier_delivery'].includes(category)) {
+      if (['custodian_collection', 'custodian_dispatch', 'redemption_arrival'].includes(category)) {
         const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
         if (!membership) return json({ error: 'Not found' }, 404);
         await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
@@ -1292,8 +1348,44 @@ Deno.serve(async (request) => {
       return json({ request: tracker(row, expectedVersion + 1) });
     }
 
+    if (action === 'discard_redemption') {
+      // A draft or committed request never reached the contract, or its
+      // transaction is still unrecorded. Refuse while the chain shows this
+      // workflow open: that request must be cancelled on-chain instead.
+      if (!owner || !['draft', 'committed'].includes(row.status)) {
+        return json({ error: 'Not found' }, 404);
+      }
+      const chain = serverChain(deployment);
+      const record = await readRedemptionRecord(chain, manager(deployment), BigInt(row.token_id));
+      if (
+        record.phase !== ChainPhase.None &&
+        record.workflowIdHash.toLowerCase() === workflowIdHash(requestId).toLowerCase()
+      ) {
+        return json(
+          { error: 'This request is already open on-chain. Reload and cancel it instead.' },
+          409,
+        );
+      }
+      row = await complete({
+        admin,
+        deploymentId: deployment.id,
+        row,
+        expectedVersion,
+        expectedState: row.status,
+        eventType: 'redemption_discarded',
+        toState: 'cancelled',
+        userId: user.id,
+        capability: 'owner',
+        payload: {},
+        idempotencyKey,
+      });
+      return json({ request: tracker(row, expectedVersion + 1) });
+    }
+
     if (action === 'cancel_redemption') {
-      if (!owner || row.status !== 'onchain_requested') return json({ error: 'Not found' }, 404);
+      if (!owner || !OWNER_CANCELLABLE_STATES.includes(row.status as RedemptionLifecycleState)) {
+        return json({ error: 'Not found' }, 404);
+      }
       const transactionHash = body.transactionHash ? requiredHash(body.transactionHash) : null;
       await storeIntent({
         admin,
@@ -1325,7 +1417,7 @@ Deno.serve(async (request) => {
         deploymentId: deployment.id,
         row,
         expectedVersion,
-        expectedState: 'onchain_requested',
+        expectedState: row.status,
         eventType: 'redemption_cancelled',
         toState: 'cancelled',
         userId: user.id,
@@ -1343,31 +1435,80 @@ Deno.serve(async (request) => {
       return json({ request: tracker(row, expectedVersion + 1) });
     }
 
+    if (action === 'accept_redemption') {
+      // Step 1: Digital Carat accepts the on-chain request and names the vault
+      // (a bank or storage vault) that holds the stone and will fulfil it.
+      const membership = membershipFor(memberships, 'redemption.approve', organizationId);
+      if (!membership) return json({ error: 'Not found' }, 404);
+      assertRedemptionTransition(row.status as RedemptionLifecycleState, 'accepted');
+      const vaultOrganizationId = requiredUuid(body.vaultOrganizationId, 'vaultOrganizationId');
+      const { data: vault, error: vaultError } = await admin
+        .from('verifier_organizations')
+        .select('id,name,kind,active')
+        .eq('id', vaultOrganizationId)
+        .maybeSingle();
+      if (vaultError) throw vaultError;
+      if (!vault?.active || !['bank', 'custodian'].includes(vault.kind)) {
+        return json({ error: 'Choose an active bank or custodian vault' }, 400);
+      }
+      const chain = serverChain(deployment);
+      const record = await readRedemptionRecord(chain, manager(deployment), BigInt(row.token_id));
+      if (
+        record.phase !== ChainPhase.Requested ||
+        record.workflowIdHash.toLowerCase() !== workflowIdHash(requestId).toLowerCase()
+      ) {
+        return json({ error: 'The on-chain request is not open for this workflow' }, 409);
+      }
+      const { data: existing, error: existingError } = await admin
+        .from('redemption_workflow_assignments')
+        .select('organization_id')
+        .eq('deployment_id', deployment.id)
+        .eq('redemption_request_id', requestId)
+        .eq('assignment_role', 'custodian')
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (existing && existing.organization_id !== vaultOrganizationId) {
+        return json({ error: 'A different vault is already assigned to this request' }, 409);
+      }
+      if (!existing) {
+        const { error: assignError } = await admin.from('redemption_workflow_assignments').insert({
+          deployment_id: deployment.id,
+          redemption_request_id: requestId,
+          assignment_role: 'custodian',
+          organization_id: vaultOrganizationId,
+          assigned_by: user.id,
+        });
+        if (assignError && assignError.code !== '23505') throw assignError;
+      }
+      row = await complete({
+        admin,
+        deploymentId: deployment.id,
+        row,
+        expectedVersion,
+        expectedState: row.status,
+        eventType: 'redemption_accepted',
+        toState: 'accepted',
+        userId: user.id,
+        membership,
+        capability: 'redemption.approve',
+        payload: { vaultOrganizationId, vaultName: vault.name },
+        idempotencyKey,
+      });
+      return json({ request: tracker(row, expectedVersion + 1) });
+    }
+
     if (action === 'custodian_collect') {
+      // Step 2: the vault confirms it has the request. The server, which is the
+      // gem's on-chain custodian, starts fulfillment; vault staff sign nothing.
       const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
       await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'custodian_collected',
-        row.fulfillment_method,
-      );
-      const proof = await evidence(
-        admin,
-        deployment.id,
-        requestId,
-        requiredUuid(body.evidenceId, 'evidenceId'),
-        'custodian_collection',
-      );
+      assertRedemptionTransition(row.status as RedemptionLifecycleState, 'custodian_collected');
       const payload = {
-        evidenceId: proof.id,
-        evidenceSha256: proof.sha256,
-        collectedAt: requiredInstant(body.collectedAt, 'collectedAt'),
-        location: String(body.location ?? '').trim(),
+        note: String(body.note ?? '')
+          .trim()
+          .slice(0, 500),
       };
-      const transactionHash = body.transactionHash ? requiredHash(body.transactionHash) : null;
-      const actorWallet = await verifiedActingWallet(admin, user.id, body.actorWallet);
-      const intentPayload = { ...payload, actorWallet };
       await storeIntent({
         admin,
         deploymentId: deployment.id,
@@ -1375,32 +1516,40 @@ Deno.serve(async (request) => {
         action,
         idempotencyKey,
         expectedVersion,
-        payload: intentPayload,
+        payload,
         chainArguments: { tokenId: String(row.token_id) },
       });
-      if (!transactionHash)
-        return json({
-          request: tracker(row, expectedVersion),
-          chainAction: 'startFulfillment',
-          args: { tokenId: String(row.token_id) },
-        });
-      const chain = await receiptEvents(deployment, transactionHash, actorWallet);
-      const started = findEvent(chain.logs, 'FulfillmentStarted');
-      assertEventValue(started.args.tokenId, String(row.token_id), 'token');
-      assertEventValue(started.args.gemId, String(row.gem_id), 'gem');
-      assertEventValue(started.args.custodian, actorWallet, 'custodian');
+      const chain = serverChain(deployment);
+      await assertOperatorIsCustodian(
+        chain,
+        getAddress(deployment.gem_registry_address),
+        BigInt(row.gem_id),
+      );
+      const transactionHash = await runServerStep({
+        admin,
+        deployment,
+        requestId,
+        idempotencyKey,
+        tokenId: BigInt(row.token_id),
+        signer: chain,
+        operator: chain,
+        functionName: 'startFulfillment',
+        args: [BigInt(row.token_id)],
+        fromPhase: ChainPhase.Requested,
+        expectedEvent: 'FulfillmentStarted',
+      });
       row = await complete({
         admin,
         deploymentId: deployment.id,
         row,
         expectedVersion,
-        expectedState: 'onchain_requested',
+        expectedState: row.status,
         eventType: 'custodian_collected',
         toState: 'custodian_collected',
         userId: user.id,
         membership,
         capability: 'custodian.fulfill',
-        payload: intentPayload,
+        payload,
         transactionHash,
         idempotencyKey,
       });
@@ -1408,14 +1557,11 @@ Deno.serve(async (request) => {
     }
 
     if (action === 'custodian_dispatch') {
+      // Step 3: the vault sends the stone to the pickup point or the holder.
       const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
       await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'custodian_dispatched',
-        row.fulfillment_method,
-      );
+      assertRedemptionTransition(row.status as RedemptionLifecycleState, 'custodian_dispatched');
       const proof = await evidence(
         admin,
         deployment.id,
@@ -1447,276 +1593,45 @@ Deno.serve(async (request) => {
       return json({ request: tracker(row, expectedVersion + 1) });
     }
 
-    if (action === 'bank_receive_redemption') {
-      const membership = membershipFor(memberships, 'bank.receive', organizationId);
-      if (!membership) return json({ error: 'Not found' }, 404);
-      await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'bank_received',
-        row.fulfillment_method,
-      );
-      const proof = await evidence(
-        admin,
-        deployment.id,
-        requestId,
-        requiredUuid(body.evidenceId, 'evidenceId'),
-        'bank_receipt',
-      );
-      const payload = {
-        evidenceId: proof.id,
-        evidenceSha256: proof.sha256,
-        receivedAt: requiredInstant(body.receivedAt, 'receivedAt'),
-        location: String(body.location ?? '').trim(),
-      };
-      row = await complete({
-        admin,
-        deploymentId: deployment.id,
-        row,
-        expectedVersion,
-        expectedState: 'custodian_dispatched',
-        eventType: 'bank_received',
-        toState: 'bank_received',
-        userId: user.id,
-        membership,
-        capability: 'bank.receive',
-        payload,
-        idempotencyKey,
-      });
-      return json({ request: tracker(row, expectedVersion + 1) });
-    }
-
-    if (action === 'record_pickup_handover') {
-      const membership = membershipFor(memberships, 'bank.receive', organizationId);
-      if (!membership) return json({ error: 'Not found' }, 404);
-      await requireAssignment(admin, deployment.id, requestId, 'bank', membership);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'pickup_handover_recorded',
-        row.fulfillment_method,
-      );
-      const proof = await evidence(
-        admin,
-        deployment.id,
-        requestId,
-        requiredUuid(body.evidenceId, 'evidenceId'),
-        'bank_handover',
-      );
-      const collectedByName = String(body.collectedByName ?? '').trim();
-      if (collectedByName.length < 2 || collectedByName.length > 200) {
-        throw new Error('Collector name is required');
-      }
-      const proxyUsed = body.proxyUsed === true;
-      let nominationId: string | null = null;
-      let nominationEvidenceSha256: string | null = null;
-      if (proxyUsed) {
-        const { data: nomination, error: nominationError } = await admin
-          .from('redemption_proxy_nominations')
-          .select('id,proxy_name,proxy_wallet,collector_commitment,identity_evidence_id,state')
-          .eq('deployment_id', deployment.id)
-          .eq('redemption_request_id', requestId)
-          .eq('state', 'approved')
-          .maybeSingle();
-        if (nominationError) throw nominationError;
-        assertPickupCollector({
-          collectedByName,
-          proxyUsed: true,
-          collectorWallet: String(body.collectorWallet ?? ''),
-          collectorCommitment: row.collector_commitment,
-          nomination: nomination
-            ? {
-                state: nomination.state,
-                proxyName: nomination.proxy_name,
-                proxyWallet: nomination.proxy_wallet,
-                collectorCommitment: nomination.collector_commitment,
-              }
-            : null,
-        });
-        const identity = await evidence(
-          admin,
-          deployment.id,
-          requestId,
-          nomination.identity_evidence_id,
-          'proxy_identity',
-        );
-        nominationId = nomination.id;
-        nominationEvidenceSha256 = identity.sha256;
-      } else {
-        const ownerIdentity = await evidence(
-          admin,
-          deployment.id,
-          requestId,
-          requiredUuid(body.ownerIdentityEvidenceId, 'ownerIdentityEvidenceId'),
-          'proxy_identity',
-        );
-        if (ownerIdentity.uploaded_by !== row.requester_id) {
-          throw new Error('Direct collection identity evidence must be supplied by the owner');
-        }
-        const { data: ownerProfile, error: ownerProfileError } = await admin
-          .from('profiles')
-          .select('full_name')
-          .eq('id', row.requester_id)
-          .maybeSingle();
-        if (ownerProfileError) throw ownerProfileError;
-        assertPickupCollector({
-          collectedByName,
-          proxyUsed: false,
-          ownerProfileName: ownerProfile?.full_name,
-          ownerIdentityEvidenceOwned: ownerIdentity.uploaded_by === row.requester_id,
-        });
-        nominationEvidenceSha256 = ownerIdentity.sha256;
-      }
-      const payload = {
-        evidenceId: proof.id,
-        evidenceSha256: proof.sha256,
-        collectedAt: requiredInstant(body.collectedAt, 'collectedAt'),
-        collectedByName,
-        proxyUsed,
-        collectorCommitment: row.collector_commitment ?? zeroHash,
-        nominationId,
-        nominationEvidenceSha256,
-        collectorWallet: proxyUsed ? String(body.collectorWallet).toLowerCase() : null,
-      };
-      row = await complete({
-        admin,
-        deploymentId: deployment.id,
-        row,
-        expectedVersion,
-        expectedState: 'bank_received',
-        eventType: 'pickup_handover_recorded',
-        toState: 'pickup_handover_recorded',
-        userId: user.id,
-        membership,
-        capability: 'bank.receive',
-        payload,
-        idempotencyKey,
-      });
-      return json({ request: tracker(row, expectedVersion + 1) });
-    }
-
-    if (action === 'submit_pickup_proof') {
+    if (action === 'record_arrival') {
+      // Step 4: the stone is at the pickup point or in hand at the delivery
+      // address. The arrival evidence becomes the on-chain fulfillment proof.
       const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
       if (!membership) return json({ error: 'Not found' }, 404);
       await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'pickup_proof_submitted',
-        row.fulfillment_method,
-      );
-      const { data: handoverEvent, error: handoverError } = await admin
-        .from('workflow_events')
-        .select('payload')
-        .eq('deployment_id', deployment.id)
-        .eq('workflow_kind', 'redemption')
-        .eq('workflow_id', requestId)
-        .eq('event_type', 'pickup_handover_recorded')
-        .order('sequence', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (handoverError) throw handoverError;
-      if (!handoverEvent) throw new Error('Bank handover evidence is required');
-      const handover = handoverEvent.payload as Record<string, unknown>;
-      const proofVersion = Number(row.proof_version ?? 0) + 1;
-      const proofDigest = keccak256(
-        toBytes(
-          canonicalize({
-            schema: 'digital-carat-pickup-proof/v1',
-            deploymentId: deployment.id,
-            requestId,
-            requestHash: row.request_hash,
-            evidenceSha256: handover.evidenceSha256,
-            collectedAt: handover.collectedAt,
-            proxyUsed: handover.proxyUsed,
-            collectorCommitment: row.collector_commitment ?? zeroHash,
-            proofVersion,
-          }),
-        ),
-      );
-      const actorWallet = await verifiedActingWallet(admin, user.id, body.actorWallet);
-      const payload = {
-        ...handover,
-        actorWallet,
-        proofDigest,
-        proofVersion,
-      };
-      const transactionHash = body.transactionHash ? requiredHash(body.transactionHash) : null;
-      await storeIntent({
-        admin,
-        deploymentId: deployment.id,
-        requestId,
-        action,
-        idempotencyKey,
-        expectedVersion,
-        payload,
-        chainArguments: { tokenId: String(row.token_id), proofDigest },
-      });
-      if (!transactionHash) {
-        return json({
-          request: tracker(row, expectedVersion),
-          chainAction: 'submitFulfillmentProof',
-          args: { tokenId: String(row.token_id), proofDigest },
-        });
-      }
-      const chain = await receiptEvents(deployment, transactionHash, actorWallet);
-      const submitted = findEvent(chain.logs, 'FulfillmentProofSubmitted');
-      assertEventValue(submitted.args.tokenId, String(row.token_id), 'token');
-      assertEventValue(submitted.args.proofDigest, proofDigest, 'proof digest');
-      assertEventValue(submitted.args.proofVersion, BigInt(proofVersion), 'proof version');
-      row = await complete({
-        admin,
-        deploymentId: deployment.id,
-        row,
-        expectedVersion,
-        expectedState: 'pickup_handover_recorded',
-        eventType: 'pickup_proof_submitted',
-        toState: 'pickup_proof_submitted',
-        userId: user.id,
-        membership,
-        capability: 'custodian.fulfill',
-        payload,
-        transactionHash,
-        idempotencyKey,
-      });
-      return json({ request: tracker(row, expectedVersion + 1) });
-    }
-
-    if (action === 'submit_delivery_proof') {
-      const membership = membershipFor(memberships, 'custodian.fulfill', organizationId);
-      if (!membership) return json({ error: 'Not found' }, 404);
-      await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'delivery_proof_submitted',
-        row.fulfillment_method,
-      );
+      assertRedemptionTransition(row.status as RedemptionLifecycleState, 'arrived');
       const proof = await evidence(
         admin,
         deployment.id,
         requestId,
         requiredUuid(body.evidenceId, 'evidenceId'),
-        'courier_delivery',
+        'redemption_arrival',
       );
-      const deliveredAt = requiredInstant(body.deliveredAt, 'deliveredAt');
-      const recipientName = String(body.recipientName ?? '').trim();
-      if (recipientName.length < 2 || recipientName.length > 200)
-        throw new Error('Recipient name is required');
-      const committedRecipient = String(row.fulfillment_details.recipientName ?? '').trim();
-      if (!committedRecipient || committedRecipient.toLowerCase() !== recipientName.toLowerCase()) {
-        throw new Error('Delivery recipient does not match the owner-committed recipient');
+      const arrivedAt = requiredInstant(body.arrivedAt, 'arrivedAt');
+      const location = String(body.location ?? '').trim();
+      if (location.length < 2 || location.length > 300) {
+        return json({ error: 'Arrival location is required' }, 400);
       }
-      const destinationCommitment = keccak256(toBytes(canonicalize(row.fulfillment_details)));
-      const proofVersion = Number(row.proof_version ?? 0) + 1;
+      const chain = serverChain(deployment);
+      const tokenId = BigInt(row.token_id);
+      // A retry reuses the digest it committed to; the on-chain proof version
+      // has already moved on if the first attempt's transaction landed.
+      const prior = await loadIntent(admin, deployment.id, requestId, idempotencyKey);
+      const proofVersion = prior
+        ? Number((prior.payload as Record<string, unknown>).proofVersion)
+        : Number((await readRedemptionRecord(chain, manager(deployment), tokenId)).proofVersion) +
+          1;
       const proofDigest = keccak256(
         toBytes(
           canonicalize({
-            schema: 'digital-carat-fulfillment-proof/v1',
+            schema: 'digital-carat-arrival-proof/v1',
             deploymentId: deployment.id,
             requestId,
             requestHash: row.request_hash,
+            method: row.fulfillment_method,
             evidenceSha256: proof.sha256,
-            deliveredAt,
-            recipientName: committedRecipient,
-            destinationCommitment,
+            arrivedAt,
+            location,
             proofVersion,
           }),
         ),
@@ -1724,100 +1639,11 @@ Deno.serve(async (request) => {
       const payload = {
         evidenceId: proof.id,
         evidenceSha256: proof.sha256,
-        deliveredAt,
-        recipientName: committedRecipient,
-        destinationCommitment,
+        arrivedAt,
+        location,
         proofDigest,
         proofVersion,
       };
-      const transactionHash = body.transactionHash ? requiredHash(body.transactionHash) : null;
-      const actorWallet = await verifiedActingWallet(admin, user.id, body.actorWallet);
-      const intentPayload = { ...payload, actorWallet };
-      await storeIntent({
-        admin,
-        deploymentId: deployment.id,
-        requestId,
-        action,
-        idempotencyKey,
-        expectedVersion,
-        payload: intentPayload,
-        chainArguments: { tokenId: String(row.token_id), proofDigest },
-      });
-      if (!transactionHash)
-        return json({
-          request: tracker(row, expectedVersion),
-          chainAction: 'submitFulfillmentProof',
-          args: { tokenId: String(row.token_id), proofDigest },
-        });
-      const chain = await receiptEvents(deployment, transactionHash, actorWallet);
-      const submitted = findEvent(chain.logs, 'FulfillmentProofSubmitted');
-      assertEventValue(submitted.args.tokenId, String(row.token_id), 'token');
-      assertEventValue(submitted.args.proofDigest, proofDigest, 'proof digest');
-      assertEventValue(submitted.args.proofVersion, BigInt(proofVersion), 'proof version');
-      row = await complete({
-        admin,
-        deploymentId: deployment.id,
-        row,
-        expectedVersion,
-        expectedState: 'custodian_dispatched',
-        eventType: 'delivery_proof_submitted',
-        toState: 'delivery_proof_submitted',
-        userId: user.id,
-        membership,
-        capability: 'custodian.fulfill',
-        payload: intentPayload,
-        transactionHash,
-        idempotencyKey,
-      });
-      return json({ request: tracker(row, expectedVersion + 1) });
-    }
-
-    if (action === 'reject_fulfillment_proof') {
-      const membership = membershipFor(memberships, 'redemption.approve', organizationId);
-      if (!membership || !row.proof_digest || row.proof_version === null) {
-        return json({ error: 'Not found' }, 404);
-      }
-      if (!['pickup_proof_submitted', 'delivery_proof_submitted'].includes(row.status)) {
-        return json({ error: 'Only a submitted proof can be rejected' }, 409);
-      }
-      const reason = String(body.reason ?? '').trim();
-      if (reason.length < 10 || reason.length > 2_000) {
-        return json({ error: 'Rejection reason must be 10 to 2000 characters' }, 400);
-      }
-      const reasonHash = keccak256(
-        toBytes(
-          canonicalize({
-            schema: 'digital-carat-proof-rejection/v1',
-            deploymentId: deployment.id,
-            requestId,
-            proofDigest: row.proof_digest,
-            proofVersion: String(row.proof_version),
-            reason,
-          }),
-        ),
-      );
-      const approverWallet = await verifiedActingWallet(admin, user.id, body.approverWallet);
-      const authorizer = await configuredAuthorizer(deployment);
-      if (approverWallet.toLowerCase() === authorizer.address.toLowerCase()) {
-        throw new Error('Proof approver and authorization signer must be distinct');
-      }
-      if (
-        !(await hasRedemptionRole(
-          getAddress(deployment.redemption_manager_address),
-          PROOF_APPROVER_ROLE,
-          approverWallet,
-        ))
-      ) {
-        throw new Error('Acting wallet does not have PROOF_APPROVER_ROLE');
-      }
-      const payload = {
-        rejectedProofDigest: row.proof_digest,
-        proofVersion: String(row.proof_version),
-        reasonHash,
-        reason,
-        approverWallet,
-      };
-      const transactionHash = body.transactionHash ? requiredHash(body.transactionHash) : null;
       await storeIntent({
         admin,
         deploymentId: deployment.id,
@@ -1826,34 +1652,37 @@ Deno.serve(async (request) => {
         idempotencyKey,
         expectedVersion,
         payload,
-        chainArguments: { tokenId: String(row.token_id), reasonHash },
+        chainArguments: { tokenId: String(row.token_id), proofDigest },
       });
-      if (!transactionHash) {
-        return json({
-          request: tracker(row, expectedVersion),
-          chainAction: 'rejectFulfillmentProof',
-          args: { tokenId: String(row.token_id), reasonHash },
-        });
-      }
-      const chain = await receiptEvents(deployment, transactionHash, approverWallet);
-      const rejected = findEvent(chain.logs, 'FulfillmentProofRejected');
-      assertEventValue(rejected.args.tokenId, String(row.token_id), 'token');
-      assertEventValue(rejected.args.proofDigest, row.proof_digest, 'proof digest');
-      assertEventValue(rejected.args.proofVersion, BigInt(row.proof_version), 'proof version');
-      assertEventValue(rejected.args.reasonHash, reasonHash, 'rejection reason');
-      const returnState =
-        row.fulfillment_method === 'pickup' ? 'pickup_handover_recorded' : 'custodian_dispatched';
+      await assertOperatorIsCustodian(
+        chain,
+        getAddress(deployment.gem_registry_address),
+        BigInt(row.gem_id),
+      );
+      const transactionHash = await runServerStep({
+        admin,
+        deployment,
+        requestId,
+        idempotencyKey,
+        tokenId,
+        signer: chain,
+        operator: chain,
+        functionName: 'submitFulfillmentProof',
+        args: [tokenId, proofDigest],
+        fromPhase: ChainPhase.FulfillmentStarted,
+        expectedEvent: 'FulfillmentProofSubmitted',
+      });
       row = await complete({
         admin,
         deploymentId: deployment.id,
         row,
         expectedVersion,
         expectedState: row.status,
-        eventType: 'fulfillment_proof_rejected',
-        toState: returnState,
+        eventType: 'arrival_recorded',
+        toState: 'arrived',
         userId: user.id,
         membership,
-        capability: 'redemption.approve',
+        capability: 'custodian.fulfill',
         payload,
         transactionHash,
         idempotencyKey,
@@ -1861,49 +1690,51 @@ Deno.serve(async (request) => {
       return json({ request: tracker(row, expectedVersion + 1) });
     }
 
-    if (action === 'approve_fulfillment_proof') {
-      const membership = membershipFor(memberships, 'redemption.approve', organizationId);
-      if (!membership || !row.request_hash || !row.proof_digest || row.proof_version === null)
+    if (action === 'release_owner_code') {
+      // The arrival proof is approved on-chain by the server and the holder is
+      // emailed the code they enter to confirm the handover (step 5).
+      const membership =
+        membershipFor(memberships, 'custodian.fulfill', organizationId) ??
+        membershipFor(memberships, 'redemption.approve', organizationId);
+      if (!membership || !row.request_hash || !row.proof_digest || row.proof_version === null) {
         return json({ error: 'Not found' }, 404);
-      assertRedemptionTransition(
-        row.status as RedemptionLifecycleState,
-        'proof_approved',
-        row.fulfillment_method,
-      );
-      const binding = approvalBinding({
-        deploymentId: deployment.id,
-        requestId,
-        requestHash: row.request_hash,
-        proofDigest: row.proof_digest,
-        proofVersion: BigInt(row.proof_version),
-        projectionVersion: expectedVersion,
-        organizationId: membership.organizationId,
-      });
+      }
+      if (membership.capabilities.includes('custodian.fulfill')) {
+        await requireAssignment(admin, deployment.id, requestId, 'custodian', membership);
+      }
+      assertRedemptionTransition(row.status as RedemptionLifecycleState, 'proof_approved');
+      const operator = serverChain(deployment);
+      const tokenId = BigInt(row.token_id);
+      const record = await readRedemptionRecord(operator, manager(deployment), tokenId);
+      if (record.proofDigest.toLowerCase() !== row.proof_digest.toLowerCase()) {
+        throw new Error('The on-chain fulfillment proof does not match this workflow');
+      }
+      // Once approved on-chain, the chain's approval is the one the holder's
+      // authorization must bind to, whoever triggered it.
+      const binding =
+        record.phase >= ChainPhase.ProofApproved
+          ? { approvalId: record.approvalId, approvalVersion: record.approvalVersion }
+          : approvalBinding({
+              deploymentId: deployment.id,
+              requestId,
+              requestHash: row.request_hash,
+              proofDigest: row.proof_digest,
+              proofVersion: BigInt(row.proof_version),
+              projectionVersion: expectedVersion,
+              organizationId: membership.organizationId,
+            });
+      const authorizer = await configuredAuthorizer(deployment);
+      const approver = await proofApproverChain(operator, manager(deployment), authorizer.address);
       const settings = await codeSettings(admin);
       const preparedIntent = await loadIntent(admin, deployment.id, requestId, idempotencyKey);
-      const recoveryEligibleAt = stableRecoveryEligibleAt(preparedIntent?.payload, settings.grace);
       const payload = {
         proofDigest: row.proof_digest,
         proofVersion: String(row.proof_version),
         approvalId: binding.approvalId,
         approvalVersion: binding.approvalVersion.toString(),
-        recoveryEligibleAt,
+        recoveryEligibleAt: stableRecoveryEligibleAt(preparedIntent?.payload, settings.grace),
+        approverWallet: approver.account.address,
       };
-      const transactionHash = body.transactionHash ? requiredHash(body.transactionHash) : null;
-      const approverWallet = await verifiedActingWallet(admin, user.id, body.approverWallet);
-      const authorizer = await configuredAuthorizer(deployment);
-      if (approverWallet.toLowerCase() === authorizer.address.toLowerCase())
-        throw new Error('Proof approver and authorization signer must be distinct');
-      if (
-        !(await hasRedemptionRole(
-          getAddress(deployment.redemption_manager_address),
-          PROOF_APPROVER_ROLE,
-          approverWallet,
-        ))
-      ) {
-        throw new Error('Acting wallet does not have PROOF_APPROVER_ROLE');
-      }
-      const intentPayload = { ...payload, approverWallet };
       await storeIntent({
         admin,
         deploymentId: deployment.id,
@@ -1911,30 +1742,26 @@ Deno.serve(async (request) => {
         action,
         idempotencyKey,
         expectedVersion,
-        payload: intentPayload,
+        payload,
         chainArguments: {
           tokenId: String(row.token_id),
           approvalId: binding.approvalId,
           approvalVersion: binding.approvalVersion.toString(),
         },
       });
-      if (!transactionHash)
-        return json({
-          request: tracker(row, expectedVersion),
-          chainAction: 'approveFulfillmentProof',
-          args: {
-            tokenId: String(row.token_id),
-            approvalId: binding.approvalId,
-            approvalVersion: binding.approvalVersion.toString(),
-          },
-        });
-      const chain = await receiptEvents(deployment, transactionHash, approverWallet);
-      const approved = findEvent(chain.logs, 'FulfillmentProofApproved');
-      assertEventValue(approved.args.tokenId, String(row.token_id), 'token');
-      assertEventValue(approved.args.proofDigest, row.proof_digest, 'proof digest');
-      assertEventValue(approved.args.approvalId, binding.approvalId, 'approval ID');
-      assertEventValue(approved.args.approvalVersion, binding.approvalVersion, 'approval version');
-      assertEventValue(approved.args.approver, approverWallet, 'proof approver');
+      const transactionHash = await runServerStep({
+        admin,
+        deployment,
+        requestId,
+        idempotencyKey,
+        tokenId,
+        signer: approver,
+        operator,
+        functionName: 'approveFulfillmentProof',
+        args: [tokenId, binding.approvalId, binding.approvalVersion],
+        fromPhase: ChainPhase.ProofSubmitted,
+        expectedEvent: 'FulfillmentProofApproved',
+      });
       row = await complete({
         admin,
         deploymentId: deployment.id,
@@ -1945,8 +1772,10 @@ Deno.serve(async (request) => {
         toState: 'proof_approved',
         userId: user.id,
         membership,
-        capability: 'redemption.approve',
-        payload: intentPayload,
+        capability: membership.capabilities.includes('custodian.fulfill')
+          ? 'custodian.fulfill'
+          : 'redemption.approve',
+        payload,
         transactionHash,
         idempotencyKey,
       });
@@ -2340,7 +2169,11 @@ Deno.serve(async (request) => {
       )
         throw new Error('Approved proof binding is incomplete');
       const account = await configuredAuthorizer(deployment);
-      const issuedAt = BigInt(Math.floor(Date.now() / 1_000));
+      // RedemptionManager rejects an issuedAt later than block.timestamp, and the
+      // wallet simulates against the latest block, which is always some seconds
+      // old. Backdating keeps an immediate burn valid; the window stays within
+      // MAX_AUTHORIZATION_LIFETIME (15 minutes) and still ends 13 minutes out.
+      const issuedAt = BigInt(Math.floor(Date.now() / 1_000)) - AUTHORIZATION_BACKDATE_SECONDS;
       const deadline = issuedAt + 15n * 60n;
       const nonce = randomHex(32);
       const collectorCommitment = row.collector_commitment ?? zeroHash;
@@ -2470,6 +2303,7 @@ Deno.serve(async (request) => {
 
     return json({ error: 'Unknown action' }, 400);
   } catch (error) {
+    if (error instanceof OperatorBusyError) return json({ error: error.message }, 409);
     const message = safeErrorMessage(error, 'Redemption lifecycle operation failed');
     return json({ error: message }, /authorization|session/i.test(message) ? 401 : 400);
   }

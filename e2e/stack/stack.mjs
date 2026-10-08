@@ -79,6 +79,10 @@ async function startChain() {
     if (running !== '0xaa36a7') throw new Error(`Port 8545 is a different chain (${running})`);
     // A fresh chain every run: deterministic addresses, no state from a previous run.
     await rpc('anvil_reset');
+    // A long-lived anvil's clock falls behind across laptop sleeps, and a reset
+    // keeps that offset. Contracts that check server-issued timestamps (the
+    // redemption authorization window) then revert, so resync to wall time.
+    await rpc('evm_setTime', [Math.floor(Date.now() / 1000)]);
     log('reset anvil on :8545');
     return;
   }
@@ -121,6 +125,7 @@ function deployProtocol() {
         ...process.env,
         PRIVATE_KEY: accounts.admin.key,
         GIFT_OPERATOR_ADDRESS: accounts.operator.address,
+        E2E_OPERATOR_KEY: accounts.operator.key,
         E2E_CUSTODIAN_KEY: accounts.custodian.key,
         E2E_SELLER: accounts.seller.address,
         E2E_ALICE_KEY: accounts.alice.key,
@@ -409,6 +414,9 @@ function writeOutputs(deployment, db, users) {
     SWAP_ESCROW_ADDRESS: deployment.SwapEscrow,
     REDEMPTION_MANAGER_ADDRESS: deployment.RedemptionManager,
     REDEMPTION_AUTHORIZER_PRIVATE_KEY: accounts.authorizer.key,
+    // A dedicated proof-approver key, as production can configure. The admin
+    // account holds PROOF_APPROVER_ROLE in the local deployment.
+    REDEMPTION_PROOF_APPROVER_PRIVATE_KEY: accounts.admin.key,
     REDEMPTION_AUTHORIZER_ADDRESS: accounts.authorizer.address,
     // Disposable local HMAC input only. Production must provision an unrelated secret.
     REDEMPTION_CODE_SECRET: 'digital-carat-local-e2e-code-secret-not-for-production',
