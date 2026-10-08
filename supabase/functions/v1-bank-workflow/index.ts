@@ -41,6 +41,7 @@ Deno.serve(async (request) => {
         .eq('deployment_id', deployment.id)
         .not('current_appraisal_id', 'is', null)
         .is('bank_received_at', null)
+        .neq('status', 'withdrawn')
         .order('created_at')
         .limit(100);
       if (error) throw error;
@@ -103,6 +104,9 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (lookupError) throw lookupError;
     if (!submission) return json({ error: 'Submission not found' }, 404);
+    if (submission.status === 'withdrawn') {
+      return json({ error: 'The seller withdrew this submission' }, 409);
+    }
     const projection = await loadProjection(admin, deployment.id, 'seller', submissionId);
     const currentVersion = projection ? Number(projection.version) : 0;
     const { data: priorEvent, error: priorEventError } = await admin

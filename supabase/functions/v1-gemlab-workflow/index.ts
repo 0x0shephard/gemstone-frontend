@@ -86,6 +86,9 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (submissionError) throw submissionError;
     if (!submission) return json({ error: 'Submission not found' }, 404);
+    if (action !== 'detail' && submission.status === 'withdrawn') {
+      return json({ error: 'The seller withdrew this submission' }, 409);
+    }
 
     if (action === 'detail') {
       const { data: evidence, error } = await admin

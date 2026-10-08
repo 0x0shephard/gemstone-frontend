@@ -197,7 +197,9 @@ export interface SellerSubmissionSummary {
     | 'changes_requested'
     | 'approved'
     | 'rejected'
-    | 'registered';
+    | 'registered'
+    /** The seller took the stone back before it reached the chain. */
+    | 'withdrawn';
   saleMode: 'buy_now' | 'auction';
   verificationProvider?: string;
   metadataUri?: string;
@@ -247,6 +249,23 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
     rejectionReason: submission.rejection_reason ?? undefined,
     createdAt: submission.created_at,
   }));
+}
+
+/**
+ * Whether the seller may still withdraw a submission: nothing has been
+ * registered on-chain and no activation is running. The server re-checks this,
+ * including a registration transaction the client cannot see.
+ */
+export function sellerCanWithdraw(submission: SellerSubmissionSummary): boolean {
+  return (
+    !['withdrawn', 'rejected', 'registered'].includes(submission.status) &&
+    !submission.onchainGemId &&
+    ['pending', 'prepared', 'failed'].includes(submission.activationState ?? 'pending')
+  );
+}
+
+export async function withdrawSellerSubmission(submissionId: string): Promise<void> {
+  await invokeEdgeFunction('v1-seller-submit', { action: 'withdraw', submissionId });
 }
 
 export async function activateSellerGem(submissionId: string): Promise<void> {

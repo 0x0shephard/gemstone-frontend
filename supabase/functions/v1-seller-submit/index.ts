@@ -6,6 +6,8 @@ import { canonicalDocument } from '../_shared/ipfs.ts';
 import { dataUri } from '../_shared/metadataDocument.ts';
 import { verificationMode } from '../_shared/settings.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { sellerWithdrawalBlocker } from '../_shared/sellerWithdrawal.ts';
+import { appendWorkflowEvent, loadProjection } from '../_shared/workflowEvents.ts';
 
 const walletPattern = /^0x[0-9a-f]{40}$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -152,6 +154,60 @@ Deno.serve(async (request) => {
   try {
     const user = await requireUser(request);
     const body = (await request.json()) as SellerSubmitBody;
+
+    if (body.action === 'withdraw') {
+      // The seller takes the stone back before it reaches the chain. The gem
+      // lab and bank queues stop showing it, and activation refuses it.
+      const admin = adminClient();
+      const deployment = await requireProtocolDeployment(admin, request);
+      const submissionId = String(body.submissionId ?? '');
+      if (!uuidPattern.test(submissionId)) return json({ error: 'Submission is invalid' }, 400);
+      const { data: submission, error: lookupError } = await admin
+        .from('seller_submissions')
+        .select('id,status,activation_state,onchain_gem_id,registration_tx_hash,bank_received_at')
+        .eq('deployment_id', deployment.id)
+        .eq('seller_id', user.id)
+        .eq('id', submissionId)
+        .maybeSingle();
+      if (lookupError) throw lookupError;
+      if (!submission) return json({ error: 'Submission not found' }, 404);
+      const blocker = sellerWithdrawalBlocker(submission);
+      if (blocker) return json({ error: blocker }, 409);
+      const { data: withdrawn, error: withdrawError } = await admin
+        .from('seller_submissions')
+        .update({ status: 'withdrawn', updated_at: new Date().toISOString() })
+        .eq('deployment_id', deployment.id)
+        .eq('id', submissionId)
+        .eq('status', submission.status)
+        .is('onchain_gem_id', null)
+        .is('registration_tx_hash', null)
+        .in('activation_state', ['pending', 'prepared', 'failed'])
+        .select('id,status')
+        .maybeSingle();
+      if (withdrawError) throw withdrawError;
+      if (!withdrawn) return json({ error: 'The submission changed; reload and try again' }, 409);
+      const projection = await loadProjection(admin, deployment.id, 'seller', submissionId);
+      await appendWorkflowEvent({
+        admin,
+        deploymentId: deployment.id,
+        kind: 'seller',
+        workflowId: submissionId,
+        expectedVersion: projection ? Number(projection.version) : 0,
+        expectedState: projection?.current_state ?? submission.status,
+        eventType: 'seller_withdrawn',
+        toState: 'withdrawn',
+        actor: { profileId: user.id },
+        capability: 'seller',
+        payload: { stoneAtBank: Boolean(submission.bank_received_at) },
+        idempotencyKey: crypto.randomUUID(),
+        legacyBaseline: !projection,
+      });
+      await audit(user.id, 'seller.submission_withdrawn', 'seller_submission', submissionId, {
+        previousStatus: submission.status,
+      });
+      return json({ submissionId, status: 'withdrawn' });
+    }
+
     const sellerWallet = requiredText(body.sellerWallet, 'Seller wallet', 42).toLowerCase();
     if (!walletPattern.test(sellerWallet)) {
       return json({ error: 'Seller wallet is invalid' }, 400);

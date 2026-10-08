@@ -15,7 +15,9 @@ import { ensureUploadableImage } from '@/lib/imageTranscode';
 import {
   activateSellerGem,
   getSellerSubmissions,
+  sellerCanWithdraw,
   submitSellerGem,
+  withdrawSellerSubmission,
   type SellerAttributes,
   type SellerSubmissionSummary,
 } from '@/services/offchain/workflows';
@@ -37,6 +39,7 @@ const SUBMIT_OUTCOME: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   awaiting_custody: 'Awaiting arrival',
   awaiting_grading: 'Awaiting lab review',
+  withdrawn: 'Withdrawn',
 };
 
 const EMPTY_ATTRIBUTES: SellerAttributes = {
@@ -76,6 +79,7 @@ export default function SellerPage() {
   const [result, setResult] = useState<{ ok: boolean; message: string }>();
   const [submissions, setSubmissions] = useState<SellerSubmissionSummary[]>([]);
   const [activationId, setActivationId] = useState<string>();
+  const [withdrawingId, setWithdrawingId] = useState<string>();
   const walletVerified = Boolean(address && linkedWallet?.toLowerCase() === address.toLowerCase());
   const registryAddress = getContractAddress('GemRegistry');
   const sellerApproval = useReadContract({
@@ -190,6 +194,30 @@ export default function SellerPage() {
     submissions.map((submission) => submission.onchainGemId).filter(Boolean),
   );
   const consignedGems = gems.filter((gem) => consignedGemIds.has(gem.gemId.toString()));
+
+  async function withdraw(submissionId: string) {
+    if (
+      !window.confirm(
+        'Withdraw this submission? It leaves the grading and activation queues. If the vault already holds the stone, Digital Carat will arrange its return.',
+      )
+    ) {
+      return;
+    }
+    setWithdrawingId(submissionId);
+    setResult(undefined);
+    try {
+      await withdrawSellerSubmission(submissionId);
+      setResult({ ok: true, message: 'Submission withdrawn.' });
+    } catch (error) {
+      setResult({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The submission could not be withdrawn',
+      });
+    } finally {
+      setWithdrawingId(undefined);
+      await reloadSubmissions();
+    }
+  }
 
   async function retryActivation(submissionId: string) {
     setActivationId(submissionId);
@@ -484,7 +512,9 @@ export default function SellerPage() {
                             ? 'info'
                             : submission.status === 'rejected'
                               ? 'danger'
-                              : 'warning'
+                              : submission.status === 'withdrawn'
+                                ? 'neutral'
+                                : 'warning'
                       }
                     >
                       {activated
@@ -492,6 +522,17 @@ export default function SellerPage() {
                         : (STATUS_LABEL[submission.status] ??
                           submission.status.replaceAll('_', ' '))}
                     </StatusBadge>
+                    {sellerCanWithdraw(submission) && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={withdrawingId === submission.id}
+                        onClick={() => void withdraw(submission.id)}
+                      >
+                        {withdrawingId === submission.id ? 'Withdrawing…' : 'Withdraw'}
+                      </Button>
+                    )}
                     {resumable && (
                       <Button
                         type="button"
