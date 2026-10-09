@@ -3,7 +3,11 @@ import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
-import { MissingCapabilityError, operationalMembership } from '../_shared/operations.ts';
+import {
+  MissingCapabilityError,
+  isGlobalOperationalAdmin,
+  operationalMembership,
+} from '../_shared/operations.ts';
 import { loadProjection, workflowTimeline } from '../_shared/workflowEvents.ts';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -76,6 +80,120 @@ Deno.serve(async (request) => {
           }),
         ),
       });
+    }
+
+    if (action === 'custody_terms') {
+      // The stones this vault custodian holds, with their current agreement
+      // and amendment history. An admin sees every stone.
+      const global = isGlobalOperationalAdmin(membership);
+      let receipts = admin
+        .from('seller_submissions')
+        .select('onchain_gem_id::text,gem_name,bank_organization_id')
+        .eq('deployment_id', deployment.id)
+        .not('onchain_gem_id', 'is', null)
+        .not('reserve_escrow_ends_at', 'is', null);
+      if (!global) receipts = receipts.eq('bank_organization_id', membership.organizationId);
+      let attested = admin
+        .from('gem_custody_terms')
+        .select('gem_id::text,organization_id')
+        .eq('deployment_id', deployment.id);
+      if (!global) attested = attested.eq('organization_id', membership.organizationId);
+      const [receiptRows, attestedRows] = await Promise.all([receipts, attested]);
+      if (receiptRows.error) throw receiptRows.error;
+      if (attestedRows.error) throw attestedRows.error;
+      const names = new Map<string, string>();
+      for (const row of (receiptRows.data ?? []) as Array<Record<string, string>>) {
+        names.set(row.onchain_gem_id, row.gem_name);
+      }
+      for (const row of (attestedRows.data ?? []) as Array<Record<string, string>>) {
+        if (!names.has(row.gem_id)) names.set(row.gem_id, `Gemstone #${row.gem_id}`);
+      }
+      const terms = await Promise.all(
+        [...names.entries()].map(async ([gemId, stoneName]) => {
+          const [effective, amendments] = await Promise.all([
+            admin.rpc('effective_gem_custody', {
+              p_deployment_id: deployment.id,
+              p_gem_id: gemId,
+            }),
+            admin
+              .from('gem_custody_amendments')
+              .select('previous_ends_at,new_ends_at,reference,amended_at')
+              .eq('deployment_id', deployment.id)
+              .eq('gem_id', gemId)
+              .order('amended_at', { ascending: false }),
+          ]);
+          if (effective.error) throw effective.error;
+          if (amendments.error) throw amendments.error;
+          const current = (effective.data ?? [])[0] as
+            { ends_at: string; source: string } | undefined;
+          return {
+            gemId,
+            stoneName,
+            endsAt: current?.ends_at ?? null,
+            source: current?.source ?? null,
+            amendments: (amendments.data ?? []).map((row) => ({
+              previousEndsAt: row.previous_ends_at,
+              newEndsAt: row.new_ends_at,
+              reference: row.reference,
+              amendedAt: row.amended_at,
+            })),
+          };
+        }),
+      );
+      terms.sort((left, right) => Number(BigInt(left.gemId) - BigInt(right.gemId)));
+      return json({ terms });
+    }
+
+    if (action === 'amend_custody_term') {
+      // A signed renewal extends the agreement; the original record stays.
+      const gemId = String(body.gemId ?? '').trim();
+      if (!/^\d+$/.test(gemId) || BigInt(gemId) <= 0n) {
+        return json({ error: 'A positive numeric gemstone id is required' }, 400);
+      }
+      const reference = String(body.reference ?? '').trim();
+      if (reference.length < 10 || reference.length > 2_000) {
+        return json({ error: 'Reference the signed amendment in 10 to 2000 characters' }, 400);
+      }
+      if (body.attestAccurate !== true) {
+        return json({ error: 'Confirm the new date comes from a signed amendment' }, 400);
+      }
+      const expectedEndsAt = instant(body.expectedEndsAt, 'expectedEndsAt');
+      const newEndsAt = instant(body.newEndsAt, 'newEndsAt');
+      const { data: current, error: currentError } = await admin.rpc('effective_gem_custody', {
+        p_deployment_id: deployment.id,
+        p_gem_id: gemId,
+      });
+      if (currentError) throw currentError;
+      const term = (current ?? [])[0] as { organization_id: string | null } | undefined;
+      if (!term) return json({ error: 'This gemstone has no recorded custody agreement' }, 404);
+      if (
+        !isGlobalOperationalAdmin(membership) &&
+        term.organization_id !== membership.organizationId
+      ) {
+        return json(
+          { error: 'Only the vault custodian holding this stone may amend its agreement' },
+          403,
+        );
+      }
+      const { data: amendment, error: amendError } = await admin.rpc('amend_gem_custody', {
+        p_deployment_id: deployment.id,
+        p_gem_id: gemId,
+        p_expected_ends_at: expectedEndsAt,
+        p_new_ends_at: newEndsAt,
+        p_reference: reference,
+        p_amended_by: user.id,
+        p_organization_id: membership.organizationId,
+      });
+      if (amendError) {
+        const status = amendError.code === 'DC409' ? 409 : amendError.code === 'DC404' ? 404 : 400;
+        return json({ error: amendError.message }, status);
+      }
+      await audit(user.id, 'custody.agreement_amended', 'gem', gemId, {
+        previousEndsAt: expectedEndsAt,
+        newEndsAt,
+        organizationId: membership.organizationId,
+      });
+      return json({ amendment });
     }
 
     if (action !== 'record_receipt') return json({ error: 'Unknown action' }, 400);

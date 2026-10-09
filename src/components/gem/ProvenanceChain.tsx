@@ -1,3 +1,4 @@
+import { custodyDescription } from '@/lib/gem';
 import type { DecoratedGem } from '@/services/types';
 import { cn } from '@/lib/cn';
 
@@ -37,7 +38,7 @@ export function ProvenanceChain({ gem, className }: ProvenanceChainProps) {
     },
     {
       title: 'Custody confirmed',
-      detail: `${gem.custodyProvider}, ${gem.custodyCountry}`,
+      detail: custodyDescription(gem),
       actor: 'Custodian',
       done: true,
     },

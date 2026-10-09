@@ -530,32 +530,14 @@ Deno.serve(async (request) => {
       return json({ error: 'This token is locked while its redemption is in progress' }, 409);
     }
 
-    /*
-     * Latest recorded term, not `maybeSingle()` alone: a gem with more than one
-     * dated submission row made PostgREST return an error, the error was
-     * dropped, and the sender was told no date existed at all.
-     */
-    const [submissionTerm, attestedTerm] = await Promise.all([
-      admin
-        .from('seller_submissions')
-        .select('reserve_escrow_ends_at')
-        .eq('deployment_id', deployment.id)
-        .eq('onchain_gem_id', gemId.toString())
-        .not('reserve_escrow_ends_at', 'is', null)
-        .order('reserve_escrow_ends_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      admin
-        .from('gem_custody_terms')
-        .select('reserve_escrow_ends_at')
-        .eq('deployment_id', deployment.id)
-        .eq('gem_id', gemId.toString())
-        .maybeSingle(),
-    ]);
-    if (submissionTerm.error) throw submissionTerm.error;
-    if (attestedTerm.error) throw attestedTerm.error;
-    const reserveEscrowEndsAt =
-      submissionTerm.data?.reserve_escrow_ends_at ?? attestedTerm.data?.reserve_escrow_ends_at;
+    // The effective custody term: the latest signed amendment, else the vault
+    // custodian receipt, else a one-time attestation for a stone without one.
+    const { data: custody, error: custodyError } = await admin.rpc('effective_gem_custody', {
+      p_deployment_id: deployment.id,
+      p_gem_id: gemId.toString(),
+    });
+    if (custodyError) throw custodyError;
+    const reserveEscrowEndsAt = ((custody ?? [])[0] as { ends_at?: string } | undefined)?.ends_at;
     if (!reserveEscrowEndsAt) {
       return json(
         {
@@ -568,7 +550,13 @@ Deno.serve(async (request) => {
     }
     const expiresAt = new Date(reserveEscrowEndsAt as string);
     if (expiresAt.getTime() <= Date.now()) {
-      return json({ error: 'This gemstone’s reserve escrow has already ended' }, 409);
+      return json(
+        {
+          error:
+            'This gemstone’s custody agreement has ended. The vault custodian can record a signed extension under Vault custodian → Custody agreements.',
+        },
+        409,
+      );
     }
 
     /*

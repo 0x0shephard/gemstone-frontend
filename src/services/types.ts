@@ -61,6 +61,10 @@ export interface Gem {
   feePct: number;
   custodyProvider: string;
   custodyCountry: string;
+  /** Current custody agreement end (ISO), when the vault custodian recorded one. */
+  custodyAgreementEndsAt?: string;
+  /** Whether that end date comes from a signed extension. */
+  custodyAgreementAmended?: boolean;
   redeem: RedeemStatus;
   metadataUri?: string;
   /** First gateway-resolved `image` from the token metadata, when it declares one. */

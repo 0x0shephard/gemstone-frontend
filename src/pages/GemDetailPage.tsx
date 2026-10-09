@@ -73,6 +73,16 @@ export default function GemDetailPage() {
     ['Type', gem.typeLabel],
     ['Carat', gem.caratsFmt],
     ['Custody', gem.custodyLabel],
+    ...(gem.custodyAgreementEndsAt
+      ? ([
+          [
+            'Custody agreement ends',
+            `${new Date(gem.custodyAgreementEndsAt).toLocaleDateString()}${
+              gem.custodyAgreementAmended ? ' · extended' : ''
+            }`,
+          ],
+        ] as [string, React.ReactNode][])
+      : []),
     ['Market fee', gem.feeLabel],
     ['Redemption', gem.redeem],
   ];
@@ -95,8 +105,8 @@ export default function GemDetailPage() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <StatTile label="Carat" value={gem.carats.toFixed(2)} />
             <StatTile
-              label="Custody"
-              value={<span className="text-[15px]">{gem.custodyCountry}</span>}
+              label="Custodian"
+              value={<span className="text-[15px]">{gem.custodyProvider}</span>}
             />
             <StatTile label="Secondary fee" value={`${gem.feePct.toFixed(1)}%`} />
           </div>

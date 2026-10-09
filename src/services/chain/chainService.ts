@@ -1,3 +1,4 @@
+import { publicGemCustody } from '@/services/offchain/custody';
 import { getAccount, getPublicClient } from '@wagmi/core';
 import {
   BaseError,
@@ -333,6 +334,8 @@ function settledEvents(): ProjectionSnapshot['events'] {
 
 /** GemRegistry.GemStatus.RedemptionRequested. */
 const GEM_STATUS_REDEMPTION_REQUESTED = 6;
+/** A slow custody disclosure must not hold up gem reads; the custodian is just unnamed. */
+const CUSTODY_LOOKUP_TIMEOUT_MS = 3_000;
 const GEM_PROBE_WINDOW = 25;
 const GEM_PROBE_LIMIT = 5_000;
 
@@ -574,6 +577,14 @@ async function readGemUncached(
     }
   }
 
+  // A failed lookup only means the custodian is not named on this read.
+  const custody = (
+    await Promise.race([
+      publicGemCustody([gemId]),
+      new Promise<undefined>((resolve) => setTimeout(resolve, CUSTODY_LOOKUP_TIMEOUT_MS)),
+    ]).catch(() => undefined)
+  )?.get(gemId.toString());
+
   const gem: Gem = {
     gemId,
     tokenId: registryGem.tokenId > 0n ? registryGem.tokenId : undefined,
@@ -612,16 +623,22 @@ async function readGemUncached(
     reserveShortfallUsd,
     feeTier: 'Secondary marketplace',
     feePct,
+    // The vault custodian on record is disclosed from its receipt; metadata
+    // only names one for stones minted before that record existed.
     custodyProvider:
+      custody?.custodianName ??
       trait(details, 'Custodian') ??
       details.custodian?.provider ??
       details.custodyProvider ??
       'Verified custodian',
     custodyCountry:
+      custody?.vaultLocation ??
       trait(details, 'Custody Country') ??
       details.custodian?.country ??
       details.custodyCountry ??
       'Undisclosed',
+    custodyAgreementEndsAt: custody?.agreementEndsAt,
+    custodyAgreementAmended: custody?.amended,
     /*
      * `canRedeem` is false for exactly one reason once redemption approval mode
      * is off: the address is on the compliance block list. Labelling that "KYC

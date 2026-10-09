@@ -9,8 +9,10 @@ import { EmptyState, ErrorState, Skeleton } from '@/components/ui/States';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Tabs } from '@/components/ui/Tabs';
 import {
+  amendCustodyAgreement,
   clearOperationIdempotencyKey,
   loadBankSellerQueue,
+  loadCustodyAgreements,
   operationIdempotencyKey,
   recordBankReceipt,
   type BankSellerQueueItem,
@@ -26,7 +28,7 @@ export default function BankPage() {
   );
 }
 
-type BankTab = 'seller' | 'redemption';
+type BankTab = 'seller' | 'agreements' | 'redemption';
 
 function BankWorkspace() {
   const [tab, setTab] = useState<BankTab>('seller');
@@ -57,6 +59,7 @@ function BankWorkspace() {
         onChange={setTab}
         tabs={[
           { key: 'seller', label: 'Seller intake', count: sellerQuery.data?.length },
+          { key: 'agreements', label: 'Custody agreements' },
           { key: 'redemption', label: 'Redemptions' },
         ]}
       />
@@ -65,6 +68,8 @@ function BankWorkspace() {
           <SellerIntakeQueue query={sellerQuery} />
           <LegacyCustodyTerm />
         </div>
+      ) : tab === 'agreements' ? (
+        <CustodyAgreements />
       ) : (
         // The bank that stored a stone in the seller cycle sends it back out.
         <RedemptionDesk
@@ -74,6 +79,193 @@ function BankWorkspace() {
           description="Accepted redemptions of stones this vault stores. Confirm the stone is with you, then record its dispatch to the delivery custodian."
           empty="No accepted redemptions are assigned to this vault."
         />
+      )}
+    </div>
+  );
+}
+
+const AGREEMENT_SOURCE: Record<string, string> = {
+  amendment: 'Extended by signed amendment',
+  receipt: 'From the vault custodian receipt',
+  attestation: 'From a one-time attestation',
+};
+
+/** Custody agreements for this vault's stones, and their signed extensions. */
+export function CustodyAgreements() {
+  const queryClient = useQueryClient();
+  const query = useQuery({
+    queryKey: ['operations', 'bank', 'custody-agreements'],
+    queryFn: () => loadCustodyAgreements(),
+  });
+  const [selectedId, setSelectedId] = useState<string>();
+  const [newEndsAt, setNewEndsAt] = useState('');
+  const [reference, setReference] = useState('');
+  const [attested, setAttested] = useState(false);
+  const [now] = useState(() => Date.now());
+  const selected = query.data?.find((term) => term.gemId === selectedId);
+  const currentEnd = selected?.endsAt ? new Date(selected.endsAt) : undefined;
+  const proposedEnd = newEndsAt ? new Date(`${newEndsAt}T23:59:59.000Z`) : undefined;
+  const problem =
+    proposedEnd && currentEnd && proposedEnd.getTime() <= currentEnd.getTime()
+      ? 'The new end date must be later than the current one. An amendment can only extend the agreement.'
+      : proposedEnd && proposedEnd.getTime() <= now
+        ? 'The new end date must be in the future.'
+        : undefined;
+  const amend = useMutation({
+    mutationFn: async (event: FormEvent) => {
+      event.preventDefault();
+      if (!selected?.endsAt || !proposedEnd) throw new Error('Choose a stone and a new end date.');
+      await amendCustodyAgreement({
+        gemId: selected.gemId,
+        expectedEndsAt: selected.endsAt,
+        newEndsAt: proposedEnd.toISOString(),
+        reference: reference.trim(),
+        attestAccurate: attested,
+      });
+    },
+    onSuccess: async () => {
+      setNewEndsAt('');
+      setReference('');
+      setAttested(false);
+      await queryClient.invalidateQueries({
+        queryKey: ['operations', 'bank', 'custody-agreements'],
+      });
+    },
+  });
+
+  if (query.isLoading && !query.data) return <Skeleton className="h-72" />;
+  if (query.isError && !query.data) {
+    return <ErrorState message={query.error instanceof Error ? query.error.message : undefined} />;
+  }
+  const terms = query.data ?? [];
+  return (
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,.8fr)_minmax(0,1.2fr)]">
+      <QueueList
+        title="Stones in custody"
+        empty="No stones with a recorded custody agreement are held by this vault."
+        items={terms.map((term) => ({
+          id: term.gemId,
+          title: term.stoneName,
+          subtitle: `Gemstone #${term.gemId}`,
+          status: term.endsAt
+            ? new Date(term.endsAt).getTime() <= now
+              ? 'ended'
+              : `ends ${new Date(term.endsAt).toLocaleDateString()}`
+            : 'no term',
+        }))}
+        selectedId={selectedId}
+        onSelect={(id) => {
+          setSelectedId(id);
+          amend.reset();
+        }}
+      />
+      {!selected ? (
+        <EmptyState
+          title="Select a stone"
+          hint="Its current agreement, history and the extension form appear here."
+        />
+      ) : (
+        <Card className="space-y-5 p-5">
+          <div>
+            <h3 className="text-[15px] font-semibold text-ink">{selected.stoneName}</h3>
+            <p className="mt-1 text-[12px] text-ink-muted">
+              Agreement ends{' '}
+              <span className="font-semibold text-ink">
+                {selected.endsAt ? new Date(selected.endsAt).toLocaleString() : '—'}
+              </span>
+              {selected.source && ` · ${AGREEMENT_SOURCE[selected.source] ?? selected.source}`}
+            </p>
+          </div>
+          {selected.amendments.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-dim">
+                Extensions
+              </h4>
+              <ul className="space-y-2">
+                {selected.amendments.map((amendment) => (
+                  <li
+                    key={amendment.amendedAt}
+                    className="rounded-[4px] border border-line/[0.08] bg-line/[0.02] px-3 py-2 text-[12px]"
+                  >
+                    <span className="text-ink">
+                      {new Date(amendment.previousEndsAt).toLocaleDateString()} →{' '}
+                      {new Date(amendment.newEndsAt).toLocaleDateString()}
+                    </span>
+                    <span className="text-ink-dim">
+                      {' '}
+                      · recorded {new Date(amendment.amendedAt).toLocaleDateString()}
+                    </span>
+                    <p className="mt-1 text-ink-muted">{amendment.reference}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <form
+            onSubmit={(event) => amend.mutate(event)}
+            className="space-y-4 border-t border-line/[0.07] pt-4"
+          >
+            <div>
+              <h4 className="text-[13px] font-semibold text-ink">Extend agreement</h4>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+                Record a signed renewal or amendment. The new date must be later than the current
+                one; the original agreement and every extension stay on record.
+              </p>
+            </div>
+            <Field
+              label="New agreement end date"
+              type="date"
+              value={newEndsAt}
+              onChange={(event) => setNewEndsAt(event.target.value)}
+              required
+            />
+            <Labeled label="Signed amendment reference" hint="At least 10 characters">
+              <textarea
+                className={`${inputClass} min-h-[68px] py-3`}
+                value={reference}
+                onChange={(event) => setReference(event.target.value)}
+                maxLength={2000}
+                required
+              />
+            </Labeled>
+            <label className="flex items-start gap-2 text-[12px] leading-relaxed text-ink-muted">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={attested}
+                onChange={(event) => setAttested(event.target.checked)}
+              />
+              This date comes from a signed amendment to the custody agreement.
+            </label>
+            {problem && (
+              <p role="alert" className="text-[12px] text-ruby">
+                {problem}
+              </p>
+            )}
+            {amend.error && !problem && (
+              <p role="alert" className="text-[12px] text-ruby">
+                {amend.error instanceof Error ? amend.error.message : 'The extension failed.'}
+              </p>
+            )}
+            {amend.isSuccess && (
+              <p role="status" className="text-[12px] text-emerald">
+                Extension recorded.
+              </p>
+            )}
+            <Button
+              type="submit"
+              disabled={
+                amend.isPending ||
+                !newEndsAt ||
+                Boolean(problem) ||
+                reference.trim().length < 10 ||
+                !attested
+              }
+            >
+              {amend.isPending ? 'Recording…' : 'Record extension'}
+            </Button>
+          </form>
+        </Card>
       )}
     </div>
   );

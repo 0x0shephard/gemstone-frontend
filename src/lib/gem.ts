@@ -63,8 +63,15 @@ export function decorate(g: Gem): DecoratedGem {
     reserveColor: funded ? 'var(--dc-emerald)' : 'var(--dc-amber)',
     funded,
     feeLabel: `${g.feeTier} · ${g.feePct.toFixed(1)}%`,
-    custodyLabel: `Verified · ${g.custodyProvider}, ${g.custodyCountry}`,
+    custodyLabel: `Verified · ${custodyDescription(g)}`,
   };
+}
+
+/** The custodian and, when disclosed, where it holds the stone. */
+export function custodyDescription(gem: Pick<Gem, 'custodyProvider' | 'custodyCountry'>): string {
+  return gem.custodyCountry && gem.custodyCountry !== 'Undisclosed'
+    ? `${gem.custodyProvider}, ${gem.custodyCountry}`
+    : gem.custodyProvider;
 }
 
 /**

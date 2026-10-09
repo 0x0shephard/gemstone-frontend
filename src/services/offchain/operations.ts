@@ -348,6 +348,43 @@ export async function recordBankReceipt(input: {
   return invokeEdgeFunction('v1-bank-workflow', { action: 'record_receipt', ...input });
 }
 
+export interface CustodyAgreementView {
+  gemId: string;
+  stoneName: string;
+  /** Current agreement end: the latest extension, else the vault receipt. */
+  endsAt: string | null;
+  source: 'amendment' | 'receipt' | 'attestation' | null;
+  amendments: Array<{
+    previousEndsAt: string;
+    newEndsAt: string;
+    reference: string;
+    amendedAt: string;
+  }>;
+}
+
+/** The stones this vault custodian holds, with their custody agreements. */
+export async function loadCustodyAgreements(
+  organizationId?: string,
+): Promise<CustodyAgreementView[]> {
+  const response = await invokeEdgeFunction<{ terms: CustodyAgreementView[] }>('v1-bank-workflow', {
+    action: 'custody_terms',
+    ...(organizationId ? { organizationId } : {}),
+  });
+  return response.terms;
+}
+
+/** Records a signed extension; the original agreement date stays on record. */
+export async function amendCustodyAgreement(input: {
+  gemId: string;
+  expectedEndsAt: string;
+  newEndsAt: string;
+  reference: string;
+  attestAccurate: boolean;
+  organizationId?: string;
+}): Promise<void> {
+  await invokeEdgeFunction('v1-bank-workflow', { action: 'amend_custody_term', ...input });
+}
+
 export async function loadAdminOverview(): Promise<OperationsOverview> {
   return invokeEdgeFunction<OperationsOverview>('v1-admin-operations', { action: 'overview' });
 }

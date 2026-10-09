@@ -24,21 +24,15 @@ describe('gift preparation conflicts', () => {
     expect(retirement).toContain("'gift.superseded'");
   });
 
-  it('reads the latest intake term, falls back to an append-only custodian attestation, and does not swallow errors', () => {
+  it('reads the effective custody term (amendment, receipt or attestation) without swallowing errors', () => {
     const lookup = prepare.slice(
-      prepare.indexOf('const [submissionTerm, attestedTerm]'),
+      prepare.indexOf("admin.rpc('effective_gem_custody'"),
       prepare.indexOf('if (!reserveEscrowEndsAt)'),
     );
 
-    expect(lookup).toContain(".from('seller_submissions')");
-    expect(lookup).toContain(".order('reserve_escrow_ends_at', { ascending: false })");
-    expect(lookup).toContain('.limit(1)');
-    expect(lookup).toContain(".from('gem_custody_terms')");
-    expect(lookup).toContain(".eq('deployment_id', deployment.id)");
-    expect(lookup).toContain('submissionTerm.data?.reserve_escrow_ends_at ??');
-    expect(lookup).toContain('attestedTerm.data?.reserve_escrow_ends_at');
-    expect(lookup).toContain('if (submissionTerm.error) throw submissionTerm.error');
-    expect(lookup).toContain('if (attestedTerm.error) throw attestedTerm.error');
+    expect(lookup).toContain('p_deployment_id: deployment.id');
+    expect(lookup).toContain('p_gem_id: gemId.toString()');
+    expect(lookup).toContain('if (custodyError) throw custodyError');
     expect(prepare).toContain('Digital Carat will not guess this date');
   });
 });

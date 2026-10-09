@@ -356,6 +356,19 @@ async function seedDatabase(db, deployment) {
       }),
     });
   }
+  // One stone with a complete vault custodian receipt, so the custodian is
+  // disclosed publicly and that vault can extend the custody agreement.
+  const received = new Date(Date.now() - 86_400_000).toISOString();
+  await rest(db, '/rest/v1/seller_submissions?onchain_gem_id=eq.6', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      bank_received_at: received,
+      bank_received_by: users.bank.id,
+      bank_organization_id: organizations.bank.id,
+      bank_location: 'E2E Geneva vault',
+      bank_custody_started_at: received,
+    }),
+  });
   return users;
 }
 

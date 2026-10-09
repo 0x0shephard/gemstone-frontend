@@ -78,6 +78,9 @@ vi.mock('./transactionPipeline', () => ({
 vi.mock('./projection', () => ({
   syncProjection: mocks.syncProjection,
 }));
+vi.mock('@/services/offchain/custody', () => ({
+  publicGemCustody: async () => new Map(),
+}));
 
 import { requireDeploymentManifest } from '@/config/contracts';
 import { chainService, occurredAtForBlock } from './chainService';
