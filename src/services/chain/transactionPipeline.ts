@@ -623,11 +623,13 @@ export function decodeTransactionError(error: unknown): Error {
       }
       const errorName = reverted.data?.errorName;
       const reason =
-        errorName === 'Expired'
-          ? 'This offer has expired and can no longer be accepted.'
-          : errorName === 'InvalidOffer'
-            ? 'This offer is no longer open. Refresh the list to see its current state.'
-            : (errorName ?? reverted.reason ?? 'Contract transaction reverted');
+        errorName === 'AuctionActive'
+          ? 'A bid is live, so this cannot be changed until its auction settles.'
+          : errorName === 'Expired'
+            ? 'This offer has expired and can no longer be accepted.'
+            : errorName === 'InvalidOffer'
+              ? 'This offer is no longer open. Refresh the list to see its current state.'
+              : (errorName ?? reverted.reason ?? 'Contract transaction reverted');
       return new TransactionGuardError(reason, 'CONTRACT_REVERTED');
     }
     if (/rejected|denied/i.test(error.shortMessage)) {

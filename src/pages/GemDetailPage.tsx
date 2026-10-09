@@ -180,20 +180,34 @@ export default function GemDetailPage() {
                 <div className="grid grid-cols-2 gap-2.5">
                   {isActiveListing ? (
                     <>
-                      <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
-                        This NFT is escrowed by the Marketplace. Cancel the listing before swapping,
-                        redeeming, or accepting an offer.
-                      </p>
-                      <TxButton
-                        block
-                        variant="secondary"
-                        disabled={!gem.tokenId}
-                        action={() => dataService.cancelListing({ tokenId: gem.tokenId! })}
-                        pendingLabel="Cancelling…"
-                        telemetryFlow="cancel_listing"
-                      >
-                        Cancel listing
-                      </TxButton>
+                      {gem.listingWinningOfferId ? (
+                        /*
+                         * Marketplace.cancel reverts AuctionActive once a qualifying
+                         * bid leads: the bidder's funds are committed and the
+                         * auction settles to them automatically at expiry.
+                         */
+                        <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                          A bid is live on this listing, so it can no longer be cancelled. The
+                          auction settles automatically to the winning bid when its timer ends.
+                        </p>
+                      ) : (
+                        <>
+                          <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                            This NFT is escrowed by the Marketplace. Cancel the listing before
+                            swapping, redeeming, or accepting an offer.
+                          </p>
+                          <TxButton
+                            block
+                            variant="secondary"
+                            disabled={!gem.tokenId}
+                            action={() => dataService.cancelListing({ tokenId: gem.tokenId! })}
+                            pendingLabel="Cancelling…"
+                            telemetryFlow="cancel_listing"
+                          >
+                            Cancel listing
+                          </TxButton>
+                        </>
+                      )}
                     </>
                   ) : (
                     <>
