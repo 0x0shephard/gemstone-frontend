@@ -16,6 +16,7 @@ import {
   type BankSellerQueueItem,
 } from '@/services/offchain/operations';
 import { recordCustodyTerm } from '@/services/offchain/verification';
+import { custodyDatesProblem } from '@/lib/custodyDates';
 
 export default function BankPage() {
   return (
@@ -177,6 +178,14 @@ function SellerIntakeQueue({ query }: { query: UseQueryResult<BankSellerQueueIte
   const [reserveEscrowEndsAt, setReserveEscrowEndsAt] = useState('');
   const [matchesDeclared, setMatchesDeclared] = useState(true);
   const [confirmed, setConfirmed] = useState<string>();
+  const datesProblem =
+    receivedAt && custodyStartedAt && reserveEscrowEndsAt
+      ? custodyDatesProblem({
+          receivedAt: new Date(receivedAt),
+          custodyStartedAt: new Date(custodyStartedAt),
+          agreementEndsAt: new Date(reserveEscrowEndsAt),
+        })
+      : undefined;
 
   const mutation = useMutation({
     mutationFn: async (event: FormEvent) => {
@@ -282,7 +291,12 @@ function SellerIntakeQueue({ query }: { query: UseQueryResult<BankSellerQueueIte
               The received stone and package match the assigned declaration. A mismatch remains
               visible in the receipt rather than being silently accepted.
             </label>
-            {mutation.error && (
+            {datesProblem && (
+              <p role="alert" className="text-[12px] text-ruby">
+                {datesProblem}
+              </p>
+            )}
+            {mutation.error && !datesProblem && (
               <p role="alert" className="text-[12px] text-ruby">
                 {mutation.error instanceof Error
                   ? mutation.error.message
@@ -297,6 +311,7 @@ function SellerIntakeQueue({ query }: { query: UseQueryResult<BankSellerQueueIte
                 !receivedAt ||
                 !custodyStartedAt ||
                 !reserveEscrowEndsAt ||
+                Boolean(datesProblem) ||
                 !conditionNotes.trim()
               }
             >

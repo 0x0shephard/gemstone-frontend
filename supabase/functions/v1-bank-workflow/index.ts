@@ -1,3 +1,4 @@
+import { custodyDatesProblem } from '../_shared/custodyDates.ts';
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
@@ -95,6 +96,13 @@ Deno.serve(async (request) => {
     const receivedAt = instant(body.receivedAt, 'receivedAt');
     const custodyStartedAt = instant(body.custodyStartedAt, 'custodyStartedAt');
     const reserveEscrowEndsAt = instant(body.reserveEscrowEndsAt, 'reserveEscrowEndsAt');
+    // Same rule as record_bank_receipt, but naming the date that breaks it.
+    const datesProblem = custodyDatesProblem({
+      receivedAt: new Date(receivedAt),
+      custodyStartedAt: new Date(custodyStartedAt),
+      agreementEndsAt: new Date(reserveEscrowEndsAt),
+    });
+    if (datesProblem) return json({ error: datesProblem }, 400);
 
     const { data: submission, error: lookupError } = await admin
       .from('seller_submissions')
