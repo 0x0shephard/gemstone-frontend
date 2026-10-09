@@ -81,6 +81,9 @@ function buildOffers(): Offer[] {
           ? 'var(--dc-emerald)'
           : '#8B8B94',
     secondsLeft,
+    saleUsd: BigInt(amount) * 10n ** 18n,
+    expiry: BigInt(Math.floor(Date.now() / 1000) + secondsLeft),
+    withdrawn: false,
   }));
 }
 

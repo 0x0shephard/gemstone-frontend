@@ -128,6 +128,12 @@ export interface Offer {
   status: 'Pending' | 'Awaiting settlement' | 'Accepted' | 'Expired' | 'Refunded';
   statusColor: string;
   secondsLeft: number;
+  /** Amount offered to the owner, 18-decimal USD, before any reserve top-up. */
+  saleUsd: bigint;
+  /** Unix expiry. Every bid in one listing auction shares the auction's end time. */
+  expiry: bigint;
+  /** The bidder took it back (cancelOffer), as opposed to being outbid or refunded at settlement. */
+  withdrawn: boolean;
 }
 
 export interface SwapRequest {

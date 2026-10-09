@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useListings } from '@/hooks/useData';
+import { useBidSummaries, useListings } from '@/hooks/useData';
 import { GemCard } from '@/components/gem/GemCard';
 import { FilterPills } from '@/components/ui/FilterPills';
 import { CardGridSkeleton, ErrorState, EmptyState } from '@/components/ui/States';
@@ -17,6 +17,7 @@ type Sort = 'value-desc' | 'value-asc' | 'reserve';
 
 export default function MarketplacePage() {
   const { data: gems, isLoading, isError } = useListings();
+  const bids = useBidSummaries();
   const [filter, setFilter] = useState<Filter>('all');
   const [sort, setSort] = useState<Sort>('value-desc');
   const [search, setSearch] = useState('');
@@ -178,6 +179,7 @@ export default function MarketplacePage() {
                 href={`/gem/${gem.gemId}?market=${gem.market ?? 'secondary'}`}
                 ctaLabel={gem.market === 'primary' ? 'Buy now →' : 'Purchase →'}
                 revealDelay={(i % 4) * 60}
+                bidSummary={gem.tokenId ? bids.get(gem.tokenId.toString()) : undefined}
                 participant={
                   participant
                     ? {

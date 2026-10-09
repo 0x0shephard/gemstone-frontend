@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import {
+  useBidSummaries,
   usePendingReserveCredits,
   usePendingTreasuryPayout,
   useProfile,
   useSwaps,
 } from '@/hooks/useData';
 import { SwapCard } from '@/pages/SwapsPage';
+import { WinningBid } from '@/components/gem/WinningBid';
+import type { BidSummary } from '@/services/chain/bidSummary';
 import { useAuth } from '@/providers/AuthProvider';
 import { useKyc } from '@/hooks/useKyc';
 import { StatTile } from '@/components/ui/StatTile';
@@ -512,8 +515,15 @@ function BidsTable({ rows }: { rows: Bid[] }) {
   );
 }
 
-function offerColumns(address?: string): Column<Offer>[] {
+function offerColumns(address: string | undefined, bids: Map<string, BidSummary>): Column<Offer>[] {
   const normalized = address?.toLowerCase();
+  const summaryOf = (r: Offer) => (r.gem.tokenId ? bids.get(r.gem.tokenId.toString()) : undefined);
+  /** For the viewer's own live bid: whether it is the one currently winning. */
+  const standing = (r: Offer) => {
+    const summary = summaryOf(r);
+    if (r.status !== 'Pending' || !summary || normalized !== r.bidder.toLowerCase()) return;
+    return summary.winning.offerId === r.offerId ? 'Winning' : 'Outbid';
+  };
   return [
     {
       key: 'gem',
@@ -526,16 +536,28 @@ function offerColumns(address?: string): Column<Offer>[] {
       ),
     },
     { key: 'offer', header: 'Offer', align: 'right', mono: true, render: (r) => r.offerFmt },
+    {
+      key: 'winning',
+      header: 'Winning bid',
+      render: (r) => {
+        const summary = summaryOf(r);
+        return summary ? (
+          <WinningBid summary={summary} compact />
+        ) : (
+          <span className="text-ink-dim">—</span>
+        );
+      },
+    },
     { key: 'from', header: 'From', mono: true, render: (r) => r.from },
     {
       key: 'status',
       header: 'Status',
       render: (r) => (
         <StatusBadge
-          color={r.statusColor}
+          color={standing(r) === 'Outbid' ? 'var(--dc-ruby)' : r.statusColor}
           dot={r.status === 'Pending' || r.status === 'Awaiting settlement'}
         >
-          {r.status}
+          {standing(r) ?? r.status}
         </StatusBadge>
       ),
     },
@@ -619,9 +641,10 @@ function offerColumns(address?: string): Column<Offer>[] {
 }
 
 function OffersTable({ rows, address }: { rows: Offer[]; address?: string }) {
+  const bids = useBidSummaries();
   return (
     <DataTable
-      columns={offerColumns(address)}
+      columns={offerColumns(address, bids)}
       rows={rows}
       rowKey={(r) => r.offerId.toString()}
       empty="No offers."

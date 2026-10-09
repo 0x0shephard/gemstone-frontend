@@ -1076,6 +1076,16 @@ async function getOffers(): Promise<Offer[]> {
                   ? 'Expired'
                   : 'Pending';
       const saleUsdValue = state[4] || (created.args.saleUsdValue as bigint);
+      // An outbid listing bid and a settlement refund also end in OfferCancelled;
+      // only a bidder's own cancelOffer has neither companion event.
+      const withdrawn =
+        terminal?.eventName === 'OfferCancelled' &&
+        !snapshot.events.some(
+          (event) =>
+            event.module === 'Marketplace' &&
+            ((event.eventName === 'ListingBidOutbid' && event.args.previousOfferId === offerId) ||
+              (event.eventName === 'ListingAuctionRefunded' && event.args.offerId === offerId)),
+        );
       return {
         offerId,
         gem,
@@ -1096,6 +1106,9 @@ async function getOffers(): Promise<Offer[]> {
             ? 'var(--dc-amber)'
             : '#8B8B94',
         secondsLeft: Number(expiry > now ? expiry - now : 0n),
+        saleUsd: saleUsdValue,
+        expiry,
+        withdrawn,
       } satisfies Offer;
     }),
   );

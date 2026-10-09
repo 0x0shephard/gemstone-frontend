@@ -17,8 +17,9 @@ import {
 } from '@/lib/gem';
 import { parseUsdInput } from '@/lib/units';
 import { fmtUsd } from '@/lib/format';
-import { useAuctions, useGems, useProfile, useRedemptions } from '@/hooks/useData';
-import { minimumBidUsd } from '@/lib/auctionBid';
+import { useAuctions, useBidSummaries, useGems, useProfile, useRedemptions } from '@/hooks/useData';
+import { WinningBid } from '@/components/gem/WinningBid';
+import { MIN_BID_INCREMENT_USD, minimumBidUsd } from '@/lib/auctionBid';
 import { contractAddresses, giftOperatorAddress, NATIVE_ASSET } from '@/config/contracts';
 import { formatUnits, keccak256, toHex, zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
@@ -263,7 +264,21 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
   const shortfall = reserveShortfallUsd(gem);
   const total = usd + shortfall;
   const automaticAuction = Boolean(gem.listingSeller);
-  const belowAsk = automaticAuction && gem.listedPrice !== undefined && usd < gem.listedPrice;
+  const bids = useBidSummaries();
+  const current = gem.tokenId ? bids.get(gem.tokenId.toString()) : undefined;
+  /*
+   * Marketplace.createOffer: the first bid on a listing must meet the ask, and
+   * each later bid must beat the leader by $1 (Marketplace.MIN_BID_INCREMENT_USD,
+   * the same as the primary auction's). Offers on
+   * an unlisted token have no minimum; the top offer is shown for context.
+   */
+  const leader = current?.kind === 'listing-auction' ? current.winning : undefined;
+  const minimumUsd = leader
+    ? Number(formatUnits(leader.saleUsd + MIN_BID_INCREMENT_USD, 18))
+    : automaticAuction
+      ? gem.listedPrice
+      : undefined;
+  const belowAsk = minimumUsd !== undefined && usd > 0 && usd < minimumUsd;
   return (
     <Modal
       open={open}
@@ -276,13 +291,14 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
       }
     >
       <ModalGemHeader gem={gem} />
+      {current && <WinningBid summary={current} />}
       <Field
         label="Offer amount (USD)"
         inputMode="decimal"
         placeholder="0"
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
-        error={belowAsk ? `Bid must be at least ${gem.listedPriceFmt}.` : undefined}
+        error={belowAsk ? `Bid must be at least ${fmtUsd(minimumUsd!)}.` : undefined}
       />
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">Payment asset</span>

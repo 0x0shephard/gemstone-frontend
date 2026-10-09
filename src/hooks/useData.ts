@@ -1,3 +1,5 @@
+import { useMemo } from 'react';
+import { bidSummaries } from '@/services/chain/bidSummary';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { dataService } from '@/services';
 import { listRedemptionWorkflows } from '@/services/offchain/redemptions';
@@ -45,6 +47,12 @@ export const useAuction = (id: string) =>
   });
 export const useOffers = () =>
   useQuery({ queryKey: qk.offers, queryFn: () => dataService.getOffers() });
+
+/** Winning bid and bidder count per token id, from the same offer history. */
+export function useBidSummaries() {
+  const { data: offers } = useOffers();
+  return useMemo(() => bidSummaries(offers ?? []), [offers]);
+}
 export const useSwaps = () =>
   useQuery({ queryKey: qk.swaps, queryFn: () => dataService.getSwapRequests() });
 export const useRedemptions = () =>

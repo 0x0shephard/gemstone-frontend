@@ -10,6 +10,8 @@ import type { Address } from 'viem';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { gemLocation } from '@/lib/gem';
 import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
+import type { BidSummary } from '@/services/chain/bidSummary';
+import { WinningBid, winningBidTitle } from './WinningBid';
 
 interface GemCardProps {
   gem: DecoratedGem;
@@ -26,6 +28,8 @@ interface GemCardProps {
    * stacked for you.
    */
   footer?: React.ReactNode;
+  /** Current winning bid on the token, when it has live bids. */
+  bidSummary?: BidSummary;
 }
 
 /** The primary gem card used across marketplace, auctions and featured grids. */
@@ -37,6 +41,7 @@ export function GemCard({
   revealDelay,
   participant,
   footer,
+  bidSummary,
 }: GemCardProps) {
   const to = href ?? `/gem/${gem.gemId}`;
   const { address } = useAccount();
@@ -167,6 +172,14 @@ export function GemCard({
             </div>
           )}
         </div>
+        {bidSummary && (
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[9.5px] font-semibold uppercase tracking-[0.15em] text-ink-dim">
+              {winningBidTitle(bidSummary)}
+            </span>
+            <WinningBid summary={bidSummary} compact />
+          </div>
+        )}
         <div className="flex justify-end">
           <span className="text-[12px] font-semibold text-ink-muted transition-all group-hover:translate-x-0.5 group-hover:text-ink">
             {ctaLabel ?? defaultCta}

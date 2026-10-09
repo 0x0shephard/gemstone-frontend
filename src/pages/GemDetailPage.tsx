@@ -1,7 +1,8 @@
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import { isAddressEqual } from 'viem';
-import { useGem } from '@/hooks/useData';
+import { useBidSummaries, useGem } from '@/hooks/useData';
+import { WinningBid } from '@/components/gem/WinningBid';
 import { GemThumb } from '@/components/gem/GemThumb';
 import { StatTile } from '@/components/ui/StatTile';
 import { Card } from '@/components/ui/Card';
@@ -24,6 +25,7 @@ export default function GemDetailPage() {
   const { data: gem, isLoading, isError } = useGem(gemId);
   const { address } = useAccount();
   const modals = useGemModals();
+  const bids = useBidSummaries();
   const manageRequested = searchParams.get('manage') === '1';
 
   if (isLoading) {
@@ -35,6 +37,7 @@ export default function GemDetailPage() {
     );
   }
   if (isError || !gem) return <ErrorState message="Gem not found." />;
+  const winning = gem.tokenId ? bids.get(gem.tokenId.toString()) : undefined;
 
   /*
    * Read from the chain rather than the URL. These were previously derived from
@@ -141,6 +144,11 @@ export default function GemDetailPage() {
 
           <Card className="dc-facet-border p-5 sm:p-6">
             <PriceBreakdown gem={gem} />
+            {winning && (
+              <div className="mt-5">
+                <WinningBid summary={winning} />
+              </div>
+            )}
             <div className="mt-5 border-t border-line/[0.06] pt-5">
               <ReserveStatus gem={gem} showShortfall={false} />
             </div>

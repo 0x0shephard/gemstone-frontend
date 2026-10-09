@@ -23,6 +23,9 @@ test('a collector offers on an unlisted token, the holder accepts, and a bid can
   const alice = await actor(browser, stack, 'alice');
   await alice.page.goto('/profile?tab=offers');
   await connectWallet(alice.page);
+  // The holder sees the top offer, who made it and how many bid.
+  await expect(alice.page.getByText(/\$1,200 by 0x/).first()).toBeVisible();
+  await expect(alice.page.getByText(/1 bid/).first()).toBeVisible();
   await alice.page.getByRole('button', { name: 'Accept', exact: true }).click();
   await tapThroughSteps(alice.page, async () => (await nft.ownerOf(tokenId)) === bob.address);
   expect(await nft.ownerOf(tokenId)).toBe(bob.address);
@@ -37,7 +40,11 @@ test('a collector offers on an unlisted token, the holder accepts, and a bid can
   await tapThroughSteps(alice.page, () =>
     offerDialog.getByRole('button', { name: /^Done/ }).isVisible(),
   );
+  await alice.page.goto(`/gem/${gemId}`);
+  await expect(alice.page.getByText('Top offer')).toBeVisible();
+  await expect(alice.page.getByText('$1,300').first()).toBeVisible();
   await alice.page.goto('/profile?tab=offers');
+  await expect(alice.page.getByText('Winning', { exact: true })).toBeVisible();
   const escrowed = await nft.ethBalance(alice.address);
   await alice.page.getByRole('button', { name: 'Withdraw bid' }).click();
   // The refund (about 0.65 ETH) dwarfs the gas, so the balance rises only if
