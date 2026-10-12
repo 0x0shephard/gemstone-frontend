@@ -67,3 +67,12 @@ export async function recoverAmbiguousWalletBroadcast(
 
 export const WALLET_NETWORK_FAILURE_MESSAGE =
   'The wallet lost its connection after the send request. The transaction may still have been broadcast, so do not submit it again. Check wallet activity and return here for reconciliation.';
+
+/*
+ * No answer at all is different from a dropped connection: usually the request
+ * never reached the wallet (a stale WalletConnect session), so nothing was
+ * signed. It still cannot be proven here, so the work stays locked until the
+ * stale-work check sees the account nonce has not moved.
+ */
+export const WALLET_NO_RESPONSE_MESSAGE =
+  'Your wallet did not respond. Open your wallet app: if no request is waiting there, nothing was sent. Disconnect and reconnect the wallet on this site, then try again in a minute.';

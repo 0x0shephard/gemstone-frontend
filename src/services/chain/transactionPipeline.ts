@@ -55,6 +55,7 @@ import {
   isAmbiguousWalletBroadcastError,
   recoverAmbiguousWalletBroadcast,
   WALLET_NETWORK_FAILURE_MESSAGE,
+  WALLET_NO_RESPONSE_MESSAGE,
 } from './walletRpcRecovery';
 import {
   isWalletConnectConnector,
@@ -509,10 +510,11 @@ async function runStep(
         ? await recoverAmbiguousWalletBroadcast(sendError, step.reconcile)
         : undefined;
       if (!recovered) {
-        if (
-          sendError instanceof WalletResponseTimeoutError ||
-          isAmbiguousWalletBroadcastError(sendError)
-        ) {
+        if (sendError instanceof WalletResponseTimeoutError) {
+          recordUnknownBroadcast(workId, index);
+          throw new BroadcastOutcomeUnknownError(WALLET_NO_RESPONSE_MESSAGE, workId);
+        }
+        if (isAmbiguousWalletBroadcastError(sendError)) {
           recordUnknownBroadcast(workId, index);
           throw new BroadcastOutcomeUnknownError(WALLET_NETWORK_FAILURE_MESSAGE, workId);
         }
