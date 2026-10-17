@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { BrandMark } from '@/components/ui/BrandMark';
+import { BrandLogo } from '@/components/ui/BrandMark';
 import { BackToHomeLink } from '@/components/layout/BackToHomeLink';
 
 /** Centered card on a subtle radial-gradient backdrop, for login/signup. */
@@ -14,8 +14,8 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     >
       <div className="dc-dot-grid pointer-events-none absolute inset-0 opacity-35" />
       <BackToHomeLink className="absolute left-4 top-4 z-10 sm:left-6 sm:top-6" />
-      <Link to="/" className="mb-8">
-        <BrandMark />
+      <Link to="/" className="mb-6" aria-label="Digital Carat home">
+        <BrandLogo size={132} />
       </Link>
       {children}
       <p className="mt-8 text-[11.5px] text-ink-dim">

@@ -4,6 +4,7 @@
 @import '@fontsource/manrope/600.css';
 @import '@fontsource/manrope/700.css';
 @import '@fontsource/manrope/800.css';
+@import '@fontsource/cormorant-garamond/500.css';
 @import '@fontsource/jetbrains-mono/400.css';
 @import '@fontsource/jetbrains-mono/500.css';
 @import '@fontsource/jetbrains-mono/600.css';
@@ -80,6 +81,8 @@
  */
 :root {
   color-scheme: light;
+  /* The logo's deep emerald, sampled from the supplied artwork. */
+  --dc-brand: #0b3b2c;
   --dc-vault: #f8f5f0;
   --dc-sidebar: #f1ece3;
   /* Triple form so Tailwind's /opacity modifier works on this surface. A bare
@@ -133,6 +136,7 @@
  */
 :root[data-color-scheme='garnet'] {
   color-scheme: dark;
+  --dc-brand: #e8dcb5;
   --dc-vault: #0a1524;
   --dc-sidebar: #0d1a2c;
   --dc-sidebar-rgb: 13 26 44;

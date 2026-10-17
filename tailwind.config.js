@@ -29,6 +29,7 @@ export default {
          */
         line: 'rgb(var(--dc-line-rgb) / <alpha-value>)',
         // brand + gem accents
+        brand: 'var(--dc-brand)',
         atelier: 'rgb(var(--dc-accent-rgb) / <alpha-value>)',
         ruby: 'rgb(var(--dc-ruby-rgb) / <alpha-value>)',
         sapphire: 'rgb(var(--dc-sapphire-rgb) / <alpha-value>)',
@@ -40,6 +41,8 @@ export default {
       // addresses, hashes and figures, which need tabular monospace.
       fontFamily: {
         display: ['Manrope', 'system-ui', 'sans-serif'],
+        // The logo's wordmark only; everything else stays Manrope.
+        brand: ['"Cormorant Garamond"', '"Times New Roman"', 'serif'],
         sans: ['Manrope', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },

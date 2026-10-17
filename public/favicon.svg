@@ -1,28 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Digital Carat">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-180 -180 360 360" role="img" aria-label="Digital Carat">
   <title>Digital Carat</title>
   <!--
-    A brilliant cut seen side-on: table, crown, girdle, culet. Five facets and
-    no outline, because anything finer than this dissolves at 16px, which is the
-    size that actually matters.
-
-    The colours follow the app's own accent rather than being picked for the
-    icon: emerald in the atelier scheme, gold in garnet. A single flat green
-    would vanish against a dark tab strip, which is the usual way a favicon
-    fails without anyone noticing.
+    The logo's emerald-cut gem alone: at 16px the stem and circle would shrink
+    the gem to a few pixels, so the tab icon keeps only the outline, table and
+    corner facets, with heavier strokes than the artwork. Deep emerald in light
+    tabs, ivory in dark ones, where a dark green would vanish.
   -->
   <style>
-    svg { --g1: #2e8f76; --g2: #0b5d4b; --g3: #05372c; }
+    g { stroke: #0b3b2c; }
     @media (prefers-color-scheme: dark) {
-      svg { --g1: #e6c65c; --g2: #c9a227; --g3: #8f7318; }
+      g { stroke: #e8dcb5; }
     }
   </style>
-
-  <!-- Crown -->
-  <path d="M3 10.7 L10.7 4.8 L16 10.7 Z" fill="var(--g2)" />
-  <path d="M10.7 4.8 L21.3 4.8 L16 10.7 Z" fill="var(--g1)" />
-  <path d="M21.3 4.8 L29 10.7 L16 10.7 Z" fill="var(--g2)" />
-
-  <!-- Pavilion -->
-  <path d="M3 10.7 L16 10.7 L16 27.2 Z" fill="var(--g3)" />
-  <path d="M16 10.7 L29 10.7 L16 27.2 Z" fill="var(--g2)" />
+  <g fill="none" stroke-width="20" stroke-linejoin="miter">
+    <polygon points="-63,-163 63,-163 106,-120 106,120 63,163 -63,163 -106,120 -106,-120" />
+    <polygon points="-30,-100 30,-100 50,-80 50,80 30,100 -30,100 -50,80 -50,-80" />
+    <path d="M-63 -163L-30 -100M63 -163L30 -100M106 -120L50 -80M106 120L50 80M63 163L30 100M-63 163L-30 100M-106 120L-50 80M-106 -120L-50 -80" />
+  </g>
 </svg>

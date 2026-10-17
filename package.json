@@ -21,13 +21,13 @@
     "seed:sepolia-demo": "node scripts/seed-sepolia-demo-inventory.mjs",
     "verify:sepolia-demo": "node scripts/verify-sepolia-demo-inventory.mjs",
     "verify:anvil-lifecycle": "node scripts/verify-anvil-frontend-lifecycle.mjs",
-    "build:favicon": "node scripts/build-favicon.mjs",
     "e2e:stack": "node e2e/stack/stack.mjs up",
     "e2e:stack:down": "node e2e/stack/stack.mjs down",
     "test:e2e:full": "for p in desktop-chrome android-chrome iphone-webkit; do node e2e/stack/stack.mjs up && E2E_REUSE_STACK=1 playwright test -c playwright.e2e.config.ts --project=$p || exit 1; done",
     "rehearse:upgrade": "node scripts/rehearse-upgrade.mjs"
   },
   "dependencies": {
+    "@fontsource/cormorant-garamond": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.1.1",
     "@fontsource/manrope": "^5.1.1",
     "@hookform/resolvers": "^3.9.1",
