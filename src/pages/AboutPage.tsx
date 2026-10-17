@@ -7,36 +7,26 @@ import { useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 import { displayVaultCount } from './vaultStats';
 
-const PILLARS: { title: string; body: string; color: string }[] = [
+const REASONS: { title: string; body: string; color: string }[] = [
   {
-    title: 'Verified custody',
-    body: 'Every stone is graded by an independent gemologist and held in an insured custodian vault with a public, third-party attestation.',
+    title: 'Not an empty token',
+    body: 'You are not trading with virtual value but with a real-life asset. The blockchain is just the vehicle. Instead of trading with a paper or bank receipt, your ownership is recorded on Ethereum.',
     color: 'var(--dc-emerald)',
   },
   {
-    title: 'On-chain reserves',
-    body: 'Each gem carries a reserve posted on-chain. Minting requires that reserve to be fully funded, and redemption needs at least 20% of it.',
+    title: '1 Token = 1 Gemstone',
+    body: 'You are not buying a fraction of a gemstone. Each token is the full ownership of a single and unique gemstone.',
     color: 'var(--dc-sapphire)',
   },
   {
-    title: 'NFT minting',
-    body: 'Once vaulted and funded, a gemstone is minted as a single DGE NFT — a one-to-one, transferable claim on the physical asset.',
-    color: 'var(--dc-frost)',
-  },
-  {
-    title: 'Primary auctions',
-    body: '24-hour timed auctions settle automatically on expiry. If a reserve is short at settlement, a top-up is required before the sale finalizes.',
+    title: 'Only natural stones',
+    body: 'We allow only certified natural gemstones to be auctioned, not synthetic gemstones.',
     color: 'var(--dc-amber)',
   },
   {
-    title: 'Secondary marketplace',
-    body: 'List or buy minted gems, with qualifying listed-token bids settled automatically after 24 hours. Reserve shortfall is always shown and included in the buyer’s total.',
+    title: 'Gemstones hold a perennial value',
+    body: 'Unlike many other collectible tokens in art or collection cards that might hold zero value in the coming years, gemstones are a limited natural resource valued for millennia, and they will always hold value that you can pass on to future generations.',
     color: 'var(--dc-ruby)',
-  },
-  {
-    title: 'Swaps & redemption',
-    body: 'Trade gem-for-gem with an optional cash delta, or redeem: the NFT locks and burns as the physical stone is released from the vault.',
-    color: 'var(--dc-emerald)',
   },
 ];
 
@@ -46,29 +36,6 @@ export default function AboutPage() {
 
   return (
     <div className="space-y-12">
-      {/* Intro */}
-      <section
-        data-reveal
-        className="dc-facet-border dc-dot-grid overflow-hidden rounded-[4px] border border-line/[0.09] bg-card px-6 py-8 sm:px-9 sm:py-10"
-      >
-        <StatusBadge tone="danger" dot className="mb-5">
-          Protocol live · {displayVaultCount(data?.gemsInVault)} gemstones in vault
-        </StatusBadge>
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-dim">
-          The Digital Carat protocol
-        </p>
-        <h1 className="mt-3 max-w-3xl text-[34px] font-semibold leading-[1.05] tracking-tightest text-ink md:text-[46px]">
-          Physical gemstones, with a digital path to ownership.
-        </h1>
-        <p className="mt-5 text-[15.5px] leading-relaxed text-ink-muted">
-          Digital Carat is an institutional-grade protocol for tokenized gemstones. Each DGE NFT
-          represents exactly one verified physical stone — certified, vaulted, insured, and backed
-          by an on-chain reserve. Hold it, trade it, auction it, swap it, or redeem the physical
-          gemstone itself. The chain tracks ownership; the vault holds the asset; the reserve keeps
-          them honest.
-        </p>
-      </section>
-
       {/* Stats */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Gemstones in vault" value={displayVaultCount(data?.gemsInVault)} />
@@ -77,28 +44,28 @@ export default function AboutPage() {
         <StatTile label="Settlement" value="Automated" valueColor="var(--dc-emerald)" />
       </section>
 
-      {/* Pillars */}
+      {/* Why gemstone tokens */}
       <section className="space-y-5">
         <div data-reveal>
-          <p className="text-[12px] font-semibold uppercase tracking-eyebrow text-ink-muted">
-            How the protocol works
-          </p>
-          <h2 className="mt-2 text-[26px] font-semibold tracking-tight text-ink">
-            Seven modules, one honest asset
+          <h2 className="text-[26px] font-semibold tracking-tight text-ink">
+            Why gemstone tokens?
           </h2>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {PILLARS.map((p, i) => (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {REASONS.map((reason, i) => (
             <Card
-              key={p.title}
+              key={reason.title}
               hoverLift
               data-reveal
-              data-reveal-delay={(i % 3) * 80}
+              data-reveal-delay={(i % 2) * 80}
               className="p-6"
             >
-              <span className="mb-3 block h-2 w-2 rounded-full" style={{ background: p.color }} />
-              <h3 className="text-[16px] font-semibold text-ink">{p.title}</h3>
-              <p className="mt-2 text-[13.5px] leading-relaxed text-ink-muted">{p.body}</p>
+              <span
+                className="mb-3 block h-2 w-2 rounded-full"
+                style={{ background: reason.color }}
+              />
+              <h3 className="text-[16px] font-semibold text-ink">{reason.title}</h3>
+              <p className="mt-2 text-[13.5px] leading-relaxed text-ink-muted">{reason.body}</p>
             </Card>
           ))}
         </div>
@@ -109,10 +76,9 @@ export default function AboutPage() {
         <Card data-reveal className="p-7">
           <h3 className="text-[18px] font-semibold text-ink">Custody &amp; insurance</h3>
           <p className="mt-3 text-[14px] leading-relaxed text-ink-muted">
-            Stones are held by professional custodians in high-security vaults and underwritten by a
-            Lloyd&apos;s syndicate. Every gem entering the protocol carries a certificate hash and a
-            custody attestation recorded against its on-chain record, so provenance and location are
-            independently verifiable at any time.
+            Every gem entering the protocol carries a certificate hash and a custody attestation
+            recorded against its on-chain record, so provenance and location are independently
+            verifiable at any time.
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             {data?.trustSignals.map((t) => (
@@ -148,12 +114,8 @@ export default function AboutPage() {
           </p>
           <h2 className="mt-2 text-[26px] font-semibold tracking-tight text-ink">Principles</h2>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           {[
-            [
-              'Reserves are never hidden',
-              'If a gem’s reserve is short, we show it — prominently — and fold the top-up into your total. You always see the real cost.',
-            ],
             [
               'Open to buyers, gated for sellers',
               'Anyone can browse, buy, bid, swap, and hold with no KYC. Selling and redemption require verified identity, as regulation demands.',
