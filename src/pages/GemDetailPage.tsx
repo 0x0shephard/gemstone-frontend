@@ -18,6 +18,8 @@ import { TxButton } from '@/components/tx/TxButton';
 import { dataService } from '@/services';
 import { gemLocation } from '@/lib/gem';
 import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
+import { activeChain } from '@/config/chains';
+import { openSeaItemUrl } from '@/lib/externalMarketplaces';
 
 export default function GemDetailPage() {
   const { gemId = '' } = useParams();
@@ -67,6 +69,10 @@ export default function GemDetailPage() {
   );
   const isManageView = ownedByViewer || manageRequested;
   const isActiveListing = isManageView && isSecondaryListing;
+  const openSeaUrl =
+    gem.tokenId && contractAddresses.DGENFT
+      ? openSeaItemUrl(activeChain.id, contractAddresses.DGENFT, gem.tokenId)
+      : undefined;
 
   const specs: [string, React.ReactNode][] = [
     ['Gem ID', <span className="font-mono">{gem.displayId}</span>],
@@ -85,6 +91,21 @@ export default function GemDetailPage() {
       : []),
     ['Market fee', gem.feeLabel],
     ['Redemption', gem.redeem],
+    ...(openSeaUrl
+      ? ([
+          [
+            'Also on',
+            <a
+              href={openSeaUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-emerald hover:underline"
+            >
+              OpenSea ↗
+            </a>,
+          ],
+        ] as [string, React.ReactNode][])
+      : []),
   ];
 
   return (
@@ -246,6 +267,30 @@ export default function GemDetailPage() {
                       >
                         Redeem physical gemstone
                       </Button>
+                      {/*
+                        Outside marketplaces sell straight from the wallet, while a
+                        Digital Carat listing escrows the token, so the two cannot
+                        both be live. The reserve and redemption rules still apply:
+                        the contract refuses a sale while the token owes reserve and
+                        holds none, or while a redemption is open.
+                      */}
+                      {openSeaUrl && (
+                        <p className="col-span-2 text-[11.5px] leading-relaxed text-ink-dim">
+                          You can also list this token on{' '}
+                          <a
+                            href={openSeaUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-emerald hover:underline"
+                          >
+                            OpenSea ↗
+                          </a>{' '}
+                          from your wallet. It stays in your wallet until it sells there, while a
+                          Digital Carat listing holds it in escrow, so cancel one before using the
+                          other. A token that owes reserve, or is being redeemed, cannot sell
+                          anywhere until that is resolved.
+                        </p>
+                      )}
                     </>
                   )}
                 </div>

@@ -26,6 +26,30 @@ were checked on-chain on 2026-10-26.
 - **Builds** are pinned to `evm_version = "cancun"`; `foundry.toml` has an
   Arbiscan verification entry (`ARBISCAN_API_KEY`).
 
+## Outside marketplaces (OpenSea and others)
+
+DGENFT is a standard ERC-721 with ERC-2981 royalties, so OpenSea and other
+marketplaces on the chain index it automatically. Owners list from their own
+wallet; the token stays there until it sells. The contract's rules still apply to
+those sales: a token being redeemed, or one that owes reserve and holds none,
+cannot be transferred, so such a listing cannot be filled.
+
+- `owner()` returns the collection owner OpenSea uses to let an account claim and
+  edit the collection page (set with `setCollectionOwner`, or `COLLECTION_OWNER`
+  at deploy). It is display only and grants nothing in the contract. Use a Safe:
+  OpenSea lets it change the collection's payout address.
+- `contractURI()` (ERC-7572) points at `https://digitalcarat.io/collection.json`,
+  served from `public/collection.json`. Change it with `setContractURI`.
+- Royalty: `ROYALTY_RECEIVER` and `ROYALTY_BPS` (at most 10%), or
+  `setDefaultRoyalty` later. Marketplaces may treat royalties as optional.
+- Sales outside Digital Carat skip its platform fee and the reserve top-up its
+  marketplace charges. The stone's existing reserve stays with the token.
+- The gem page links to the token's OpenSea page on chains OpenSea lists. OpenSea
+  retired its testnet site, so there is no link on Sepolia.
+
+After deploying: from the collection-owner Safe, claim the collection on OpenSea,
+then set its creator earnings and links there.
+
 ## Deploy
 
 ```bash
@@ -45,7 +69,7 @@ Marketplace, PrimarySaleAuction, SwapEscrow) and `ReserveManager.hasReserveAsset
 1. PaymentTokenRegistry (leave the sequencer feed unset)
 2. ReserveManager
 3. Marketplace, PrimarySaleAuction, SwapEscrow
-4. DGENFT
+4. DGENFT (also adds `owner()` and `contractURI()`, both empty until set)
 
 Each is a plain `upgradeToAndCall(newImplementation, "")`. Sepolia needs the
 high gas limit described in the deploy notes (`cast send --create … --gas-limit 32000000`).
