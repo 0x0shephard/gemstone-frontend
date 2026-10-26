@@ -287,8 +287,8 @@ export default function GemDetailPage() {
                           </a>{' '}
                           from your wallet. It stays in your wallet until it sells there, while a
                           Digital Carat listing holds it in escrow, so cancel one before using the
-                          other. A token that owes reserve, or is being redeemed, cannot sell
-                          anywhere until that is resolved.
+                          other. While it is being redeemed, or owes reserve and holds none, it
+                          cannot be sold anywhere.
                         </p>
                       )}
                     </>

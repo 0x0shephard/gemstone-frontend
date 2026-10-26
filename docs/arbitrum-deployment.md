@@ -40,10 +40,14 @@ cannot be transferred, so such a listing cannot be filled.
   OpenSea lets it change the collection's payout address.
 - `contractURI()` (ERC-7572) points at `https://digitalcarat.io/collection.json`,
   served from `public/collection.json`. Change it with `setContractURI`.
-- Royalty: `ROYALTY_RECEIVER` and `ROYALTY_BPS` (at most 10%), or
-  `setDefaultRoyalty` later. Marketplaces may treat royalties as optional.
-- Sales outside Digital Carat skip its platform fee and the reserve top-up its
-  marketplace charges. The stone's existing reserve stays with the token.
+- Royalty: `ROYALTY_RECEIVER` and `ROYALTY_BPS`, or `setDefaultRoyalty` later;
+  the contract caps it at 10%. Marketplaces may treat royalties as optional.
+- The Digital Carat marketplace does not pay the ERC-2981 royalty; it charges
+  its own secondary fee to the platform recipient. Outside sales pay the royalty
+  (if the marketplace honours it) and skip that fee and the reserve top-up the
+  in-house marketplace charges. Setting the royalty receiver to the platform
+  recipient keeps both routes paying the same account. A partly funded token can
+  sell outside without the top-up; the stone's existing reserve stays with it.
 - The gem page links to the token's OpenSea page on chains OpenSea lists. OpenSea
   retired its testnet site, so there is no link on Sepolia.
 
@@ -63,12 +67,12 @@ addresses in a deployment manifest as for Sepolia.
 
 Upgrade in this order. Each later contract calls something only the earlier
 upgrades add: `PaymentTokenRegistry.requireSequencerUp` (ReserveManager,
-Marketplace, PrimarySaleAuction, SwapEscrow) and `ReserveManager.hasReserveAssets`
+Marketplace, PrimarySaleAuction, SwapEscrow, RedemptionManager) and `ReserveManager.hasReserveAssets`
 (DGENFT, on every transfer, so a DGENFT upgrade done first would block all transfers):
 
 1. PaymentTokenRegistry (leave the sequencer feed unset)
 2. ReserveManager
-3. Marketplace, PrimarySaleAuction, SwapEscrow
+3. Marketplace, PrimarySaleAuction, SwapEscrow, RedemptionManager
 4. DGENFT (also adds `owner()` and `contractURI()`, both empty until set)
 
 Each is a plain `upgradeToAndCall(newImplementation, "")`. Sepolia needs the
