@@ -401,7 +401,8 @@ describe('chain transaction construction', () => {
       .mockResolvedValueOnce(2n)
       .mockResolvedValueOnce(0n)
       .mockResolvedValueOnce(registryGem(usd(1_000)))
-      .mockResolvedValueOnce(usd(100));
+      .mockResolvedValueOnce(0n)
+      .mockResolvedValueOnce(400);
     await expect(
       chainService.transferToken({ tokenId: 4n, to: manifest.addresses.ComplianceRegistry }),
     ).rejects.toThrow(/reserve above zero/i);
@@ -414,7 +415,8 @@ describe('chain transaction construction', () => {
       .mockResolvedValueOnce(2n)
       .mockResolvedValueOnce(0n)
       .mockResolvedValueOnce(registryGem(usd(1_000)))
-      .mockResolvedValueOnce(0n);
+      .mockResolvedValueOnce(0n)
+      .mockResolvedValueOnce(0);
     await chainService.transferToken({ tokenId: 4n, to: manifest.addresses.ComplianceRegistry });
     expect(mocks.runContractTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: 'safeTransferFrom' }),
