@@ -14,4 +14,14 @@ describe('decodeTransactionError', () => {
     );
     expect(error.message).toMatch(/reserves are briefly below full coverage/);
   });
+
+  it.each(['0x032b3d00', '0x35e6141b'] as const)(
+    'explains an L2 sequencer outage (%s) instead of a bare selector',
+    (data) => {
+      const error = decodeTransactionError(
+        new ContractFunctionRevertedError({ abi, data, functionName: 'requestRedemption' }),
+      );
+      expect(error.message).toMatch(/recovering from an outage/);
+    },
+  );
 });

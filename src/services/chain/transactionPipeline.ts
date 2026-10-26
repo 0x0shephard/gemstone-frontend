@@ -577,6 +577,9 @@ async function runStep(
  */
 /** `ReserveManager.Insolvent(uint256,uint256)`. */
 const RESERVE_INSOLVENT = '0x1f2c89f0';
+/** `PaymentTokenRegistry.SequencerDown()` and `SequencerGracePeriodNotOver()` (L2 deployments). */
+const SEQUENCER_DOWN = '0x032b3d00';
+const SEQUENCER_GRACE_PERIOD = '0x35e6141b';
 const ERC20_INSUFFICIENT_ALLOWANCE = '0xfb8f41b2';
 
 export function decodeTransactionError(error: unknown): Error {
@@ -620,6 +623,14 @@ export function decodeTransactionError(error: unknown): Error {
       if (selector === RESERVE_INSOLVENT) {
         return new TransactionGuardError(
           'Protocol reserves are briefly below full coverage, so bids, purchases, offers and new redemptions are paused. Try again once Digital Carat restores coverage.',
+          'CONTRACT_REVERTED',
+        );
+      }
+      // Every priced action quotes through PaymentTokenRegistry, which refuses prices while an
+      // L2 sequencer is down or just back. Also a bare selector from the caller's ABI.
+      if (selector === SEQUENCER_DOWN || selector === SEQUENCER_GRACE_PERIOD) {
+        return new TransactionGuardError(
+          'The network is recovering from an outage, so prices are paused for safety. Try again in about an hour; no payment was taken.',
           'CONTRACT_REVERTED',
         );
       }
