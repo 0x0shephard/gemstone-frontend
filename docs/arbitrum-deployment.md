@@ -12,8 +12,11 @@ were checked on-chain on 2026-10-26.
   uses 25 hours (90000s). A one-hour window would reject valid prices most of the day.
 - **Sequencer uptime.** `PaymentTokenRegistry` refuses every quote while the
   Arbitrum sequencer is down and for `SEQUENCER_GRACE_PERIOD` (default one hour)
-  after it is back. A production Arbitrum deploy refuses to run without
-  `SEQUENCER_UPTIME_FEED`. Unset on Sepolia and L1, where the check is skipped.
+  after it is back. A production deploy to Arbitrum One or Nova, OP Mainnet or Base
+  refuses to run without `SEQUENCER_UPTIME_FEED`. Unset on Sepolia and L1, where the
+  check is skipped. During an outage, auction settlement reverts and is retried later
+  instead of refunding the winner, and solvency and swap checks report the outage
+  rather than an empty reserve.
 - **Price outages do not freeze ownership.** DGENFT's zero-reserve rule now asks
   whether reserve assets are held (`ReserveManager.hasReserveAssets`), not their
   oracle value, so a stale feed or sequencer outage pauses sales and redemptions
@@ -34,12 +37,15 @@ addresses in a deployment manifest as for Sepolia.
 
 ## Bringing the same changes to Sepolia (optional)
 
-Upgrade in this order; DGENFT calls `ReserveManager.hasReserveAssets`, which
-only exists after the ReserveManager upgrade:
+Upgrade in this order. Each later contract calls something only the earlier
+upgrades add: `PaymentTokenRegistry.requireSequencerUp` (ReserveManager,
+Marketplace, PrimarySaleAuction, SwapEscrow) and `ReserveManager.hasReserveAssets`
+(DGENFT, on every transfer, so a DGENFT upgrade done first would block all transfers):
 
-1. ReserveManager
-2. PaymentTokenRegistry (leave the sequencer feed unset)
-3. DGENFT
+1. PaymentTokenRegistry (leave the sequencer feed unset)
+2. ReserveManager
+3. Marketplace, PrimarySaleAuction, SwapEscrow
+4. DGENFT
 
 Each is a plain `upgradeToAndCall(newImplementation, "")`. Sepolia needs the
 high gas limit described in the deploy notes (`cast send --create … --gas-limit 32000000`).
