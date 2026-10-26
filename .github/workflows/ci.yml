@@ -36,6 +36,9 @@ jobs:
           path: gemstone
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned so a new "stable" can't change nightly results unannounced.
+          version: v1.8.5
       - name: Contract integration and fuzz/invariant suite
         working-directory: gemstone
         run: forge test

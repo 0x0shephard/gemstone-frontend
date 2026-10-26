@@ -2042,8 +2042,28 @@ export const chainService: IDataService = {
       functionName: 'reserveBalanceUsd',
       args: [gemId],
     })) as bigint;
+    // DGENFT blocks a transfer only when the policy charges this gem (a per-gem minimum, or a
+    // rate at its registry price) and no reserve is held; at a 0% rate the token moves freely.
     if (reserveBalance === 0n) {
-      throw new Error('Fund this gemstone’s reserve above zero before transferring it.');
+      const [registryGem, minimumReserve] = (await Promise.all([
+        readRegistryGem(gemId),
+        client.readContract({
+          ...contract('ReserveManager'),
+          functionName: 'minimumReserveUsd',
+          args: [gemId],
+        }),
+      ])) as [RegistryGem, bigint];
+      const reserveBps =
+        minimumReserve > 0n
+          ? 0
+          : ((await client.readContract({
+              ...contract('ReserveManager'),
+              functionName: 'reserveBpsFor',
+              args: [registryGem.priceUsd],
+            })) as number);
+      if (minimumReserve > 0n || reserveBps > 0) {
+        throw new Error('Fund this gemstone’s reserve above zero before transferring it.');
+      }
     }
 
     const result = await runContractTransaction({

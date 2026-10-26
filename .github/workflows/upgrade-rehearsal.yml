@@ -34,6 +34,9 @@ jobs:
           node-version: 24
           cache: npm
       - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned so a new "stable" can't change nightly results unannounced.
+          version: v1.8.5
       - run: npm ci
       - name: Rehearse
         env:
