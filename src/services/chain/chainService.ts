@@ -2042,8 +2042,17 @@ export const chainService: IDataService = {
       functionName: 'reserveBalanceUsd',
       args: [gemId],
     })) as bigint;
+    // DGENFT blocks a transfer only when the policy requires a reserve and none is held; at a
+    // 0% rate nothing is owed and the token moves freely.
     if (reserveBalance === 0n) {
-      throw new Error('Fund this gemstone’s reserve above zero before transferring it.');
+      const requiredReserve = (await client.readContract({
+        ...contract('ReserveManager'),
+        functionName: 'requiredReserveUsd',
+        args: [gemId, (await readRegistryGem(gemId)).priceUsd],
+      })) as bigint;
+      if (requiredReserve > 0n) {
+        throw new Error('Fund this gemstone’s reserve above zero before transferring it.');
+      }
     }
 
     const result = await runContractTransaction({

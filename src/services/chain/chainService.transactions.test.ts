@@ -379,7 +379,7 @@ describe('chain fee tier reads', () => {
 });
 
 describe('chain transaction construction', () => {
-  it('allows a direct transfer only when its reserve is above zero', async () => {
+  it('allows a direct transfer only when its reserve is above zero or none is required', async () => {
     mocks.readContract
       .mockResolvedValueOnce(manifest.addresses.Treasury)
       .mockResolvedValueOnce(false)
@@ -399,11 +399,26 @@ describe('chain transaction construction', () => {
       .mockResolvedValueOnce(manifest.addresses.Treasury)
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(2n)
-      .mockResolvedValueOnce(0n);
+      .mockResolvedValueOnce(0n)
+      .mockResolvedValueOnce(registryGem(usd(1_000)))
+      .mockResolvedValueOnce(usd(100));
     await expect(
       chainService.transferToken({ tokenId: 4n, to: manifest.addresses.ComplianceRegistry }),
     ).rejects.toThrow(/reserve above zero/i);
     expect(mocks.runContractTransaction).not.toHaveBeenCalled();
+
+    // A 0% reserve policy owes nothing, so a token holding none still moves.
+    mocks.readContract
+      .mockResolvedValueOnce(manifest.addresses.Treasury)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(2n)
+      .mockResolvedValueOnce(0n)
+      .mockResolvedValueOnce(registryGem(usd(1_000)))
+      .mockResolvedValueOnce(0n);
+    await chainService.transferToken({ tokenId: 4n, to: manifest.addresses.ComplianceRegistry });
+    expect(mocks.runContractTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: 'safeTransferFrom' }),
+    );
   });
 
   it('quotes buy-now with reserve shortfall and approves the primary sale contract', async () => {
