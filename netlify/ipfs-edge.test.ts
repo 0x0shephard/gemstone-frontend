@@ -122,12 +122,11 @@ describe('/ipfs edge function', () => {
     expect(fetchMock.mock.calls[0][0]).toBe(`https://gateway.pinata.cloud/ipfs/${CID_V1}/1.json`);
   });
 
-  it('folds a query string onto the bare path so it cannot bust the cache', async () => {
-    const fetchMock = upstream('', { status: 200 });
+  it('serves the bare CID for a request with a query string, without redirecting', async () => {
+    const fetchMock = upstream('bytes', { status: 200, headers: { 'content-type': 'image/jpeg' } });
     const response = await get(`/ipfs/${CID_V0}?filename=x.html`);
-    expect(response.status).toBe(301);
-    expect(response.headers.get('location')).toBe(`/ipfs/${CID_V0}`);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0]).toBe(`https://gateway.pinata.cloud/ipfs/${CID_V0}`);
   });
 
   it('does not forward the upstream content-length (the body may be decompressed)', async () => {

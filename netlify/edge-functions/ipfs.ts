@@ -69,17 +69,11 @@ export default async function ipfs(request: Request): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD')
     return refuse(405, 'Method not allowed');
 
-  const url = new URL(request.url);
-  const path = gatewayPath(url.pathname);
+  // Any query string is dropped: the gateway is asked for the bare CID path. (Redirecting
+  // to the bare path is not an option: Netlify re-appends the query to a relative
+  // Location, so the redirect loops.)
+  const path = gatewayPath(new URL(request.url).pathname);
   if (!path) return refuse(400, 'Not an IPFS path');
-  // The edge cache keys on the full URL, so `?x=1`, `?x=2`… would each miss and
-  // reach the gateway. The app never sends a query; fold any onto the bare path.
-  if (url.search) {
-    return new Response(null, {
-      status: 301,
-      headers: { ...LOCKED_DOWN, Location: url.pathname, 'Cache-Control': 'public, max-age=86400' },
-    });
-  }
 
   // The timer covers only the wait for headers. Aborting later would cut the
   // streamed body short for a slow client, and the edge could cache the stub.
