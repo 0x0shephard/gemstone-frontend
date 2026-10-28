@@ -134,7 +134,7 @@ hour, against 300 on Sepolia):
   scanner, and refuses to report "not registered" until it has read the whole range.
 - **Canary**: reads the chain and manifests from the production release in
   `netlify.toml`, so it follows the switch. It also fails, which emails the repository
-  owner, when the operator wallet drops below 0.002 ETH on Arbitrum (0.02 on
+  owner, when the operator wallet drops below 0.0003 ETH on Arbitrum (0.02 on
   Sepolia). Add the proof approver and authorizer to the repository variable
   `CANARY_WATCH_WALLETS` (comma-separated).
 - App and edge: `CHAIN_ID=42161`, RPC and explorer URLs,

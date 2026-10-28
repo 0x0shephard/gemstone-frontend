@@ -26,7 +26,8 @@ const CHAINS = {
   [arbitrum.id]: {
     chain: arbitrum,
     rpc: 'https://arbitrum-one-rpc.publicnode.com',
-    minGas: '0.002',
+    // Low for a minimally funded operator: still ~15 activations at 0.02 gwei.
+    minGas: '0.0003',
   },
 } as const;
 const FUNCTIONS = process.env.CANARY_FUNCTIONS_URL ?? '';
