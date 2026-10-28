@@ -27,9 +27,10 @@ const LEGACY_MOBILE_GATEWAYS = new Set(['https://ipfs.io/ipfs', 'https://dweb.li
  * before a phone has to wait for that failure.
  */
 /**
- * This site's own `/ipfs/*` path, proxied to Pinata by Netlify (public/_redirects)
- * and by the Vite dev/preview servers. Same-origin, so a gateway's rate-limit
- * reply can no longer be blocked as a cross-origin response, and CDN-cached.
+ * This site's own `/ipfs/*` path, served from Pinata by a Netlify edge function
+ * (netlify/edge-functions/ipfs.ts) and proxied by the Vite dev/preview servers.
+ * Same-origin, so a gateway's rate-limit reply can no longer be blocked as a
+ * cross-origin response, and CDN-cached. Only images and JSON pass through.
  */
 export const FIRST_PARTY_IPFS_GATEWAY = '/ipfs';
 
@@ -61,7 +62,8 @@ export function gatewayUrl(gateway: string, uri: string): string {
  */
 export function resizedIpfsImageUrl(uri: string, width = 960): string | undefined {
   if (!isIpfsUri(uri)) return undefined;
-  // The site's own durable-cached /ipfs/ path, so a resize never waits on a gateway twice.
-  const source = gatewayUrl(FIRST_PARTY_IPFS_GATEWAY, uri);
+  // Pinata directly (allowed by `[images] remote_images` in netlify.toml). The
+  // resized variant is what the CDN caches, so the original is fetched once.
+  const source = gatewayUrl(PUBLIC_IPFS_GATEWAYS[0], uri);
   return `/.netlify/images?url=${encodeURIComponent(source)}&w=${width}`;
 }

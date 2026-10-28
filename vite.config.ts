@@ -179,7 +179,8 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: { '/ipfs': ipfsProxy },
     },
-    // Same `/ipfs/*` proxy Netlify applies in production (public/_redirects).
+    // Stands in for the `/ipfs/*` edge function production uses
+    // (netlify/edge-functions/ipfs.ts).
     preview: {
       proxy: { '/ipfs': ipfsProxy },
     },
