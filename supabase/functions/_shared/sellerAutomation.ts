@@ -20,6 +20,8 @@ import {
 } from './ipfs.ts';
 import { isDataUri, type PublicAttributes } from './metadataDocument.ts';
 import { protocolDeploymentId } from './deployment.ts';
+import { blocksBack, blocksForSeconds } from './blockTime.ts';
+import { findRegisteredGem } from './registrationRecovery.ts';
 
 type AdminClient = SupabaseClient;
 
@@ -358,58 +360,43 @@ async function recoverRegisteredGem(
    *
    * A 128-block floor meant recovery worked for about twenty-five minutes and
    * then silently stopped, so a retry the next morning registered the stone a
-   * second time. The registry has no uniqueness guard to catch that.
+   * second time. The registry has no uniqueness guard to catch that. The
+   * fallback for rows from before the floor was recorded is the same twenty-five
+   * minutes, measured in this chain's blocks (125 on Sepolia, 6,000 on Arbitrum).
    */
   const recordedFloor =
     submission.registration_scan_from_block === null ||
     submission.registration_scan_from_block === undefined
       ? undefined
       : BigInt(submission.registration_scan_from_block);
-  const fallbackFloor = latestBlock > 127n ? latestBlock - 127n : chain.deploymentBlock;
-  const earliestBlock = recordedFloor ?? fallbackFloor;
-  const lowerBound = earliestBlock > chain.deploymentBlock ? earliestBlock : chain.deploymentBlock;
-  let toBlock = latestBlock;
-  while (toBlock >= lowerBound) {
-    const candidateFrom = toBlock >= 9n ? toBlock - 9n : 0n;
-    const fromBlock = candidateFrom > lowerBound ? candidateFrom : lowerBound;
-    const logs = await chain.publicClient.getLogs({
-      address: chain.addresses.registry,
-      event: {
-        type: 'event',
-        name: 'GemRegistered',
-        inputs: [
-          { name: 'gemId', type: 'uint256', indexed: true },
-          { name: 'seller', type: 'address', indexed: true },
-          { name: 'custodian', type: 'address', indexed: true },
-        ],
-      },
-      args: {
-        seller: getAddress(submission.seller_wallet),
-        custodian: chain.account.address,
-      },
-      fromBlock,
-      toBlock,
-    });
-    for (const log of [...logs].reverse()) {
+  const from =
+    recordedFloor !== undefined && recordedFloor > chain.deploymentBlock
+      ? recordedFloor
+      : recordedFloor !== undefined
+        ? chain.deploymentBlock
+        : blocksBack(latestBlock, blocksForSeconds(chain.chainId, 25 * 60), chain.deploymentBlock);
+  return findRegisteredGem(chain, {
+    registry: chain.addresses.registry,
+    seller: getAddress(submission.seller_wallet),
+    custodian: chain.account.address,
+    from,
+    to: latestBlock,
+    isMatch: async (gemId) => {
       const gem = (await chain.publicClient.readContract({
         address: chain.addresses.registry,
         abi: gemRegistryAbi,
         functionName: 'getGem',
-        args: [log.args.gemId!],
+        args: [gemId],
       })) as {
         metadataURI: string;
         certificateHash: Hash;
       };
-      if (
+      return (
         gem.metadataURI === submission.metadata_uri &&
         gem.certificateHash.toLowerCase() === submission.certificate_hash?.toLowerCase()
-      ) {
-        return log.args.gemId;
-      }
-    }
-    if (fromBlock === lowerBound) break;
-    toBlock = fromBlock - 1n;
-  }
+      );
+    },
+  });
 }
 
 async function persistStep(

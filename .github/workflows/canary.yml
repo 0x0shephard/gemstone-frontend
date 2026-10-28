@@ -1,8 +1,9 @@
 name: Live canary
 
-# Read-only checks against https://digitalcarat.io and Sepolia after every
-# deploy and every six hours: pages render without app errors, upgraded proxies
-# match deployments/sepolia.json, and edge functions answer.
+# Read-only checks against https://digitalcarat.io and its chain after every
+# deploy and every six hours: pages render without app errors, every proxy runs
+# the implementation its release and upgrade manifests record (release taken from
+# netlify.toml, so this follows a move to Arbitrum), and edge functions answer.
 
 on:
   push:
@@ -44,6 +45,8 @@ jobs:
           CANARY_PASSWORD: ${{ secrets.CANARY_PASSWORD }}
           CANARY_SUPABASE_URL: https://ozqesbzewekolpeaxaux.supabase.co
           CANARY_SUPABASE_ANON_KEY: ${{ secrets.CANARY_SUPABASE_ANON_KEY }}
+          # Low-gas alert: extra wallets to watch besides the operator (comma-separated).
+          CANARY_WATCH_WALLETS: ${{ vars.CANARY_WATCH_WALLETS }}
         run: npx playwright test -c playwright.canary.config.ts
       - if: failure()
         uses: actions/upload-artifact@v4

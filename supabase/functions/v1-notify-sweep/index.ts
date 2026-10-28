@@ -18,6 +18,7 @@ import {
   type OperatorChain,
 } from '../_shared/chain.ts';
 import { scanLogs } from '../_shared/logScan.ts';
+import { blocksBack, blocksForSeconds } from '../_shared/blockTime.ts';
 import { notifyWallet, reconcileNotificationProfileLinks } from '../_shared/notify.ts';
 import { TIMED_OUT, phaseLog, withDeadline, type PhaseLog } from '../_shared/deadline.ts';
 import { protocolDeploymentId, requireProtocolDeployment } from '../_shared/deployment.ts';
@@ -58,7 +59,7 @@ import { protocolDeploymentId, requireProtocolDeployment } from '../_shared/depl
  * instead mean never seeing the positions in the part that was skipped — the
  * cursor never goes back.
  */
-const FIRST_RUN_LOOKBACK_BLOCKS = 50_000n;
+const FIRST_RUN_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 
 /** Re-read recent blocks so a reorg near the head cannot strand an event. */
 const REORG_REPLAY_BLOCKS = 64n;
@@ -108,7 +109,12 @@ type Admin = SupabaseClient;
 const usd = (value: bigint) =>
   `$${Number(formatUnits(value, 18)).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
-async function cursorFor(admin: Admin, contract: string, head: bigint): Promise<bigint> {
+async function cursorFor(
+  admin: Admin,
+  chain: OperatorChain,
+  contract: string,
+  head: bigint,
+): Promise<bigint> {
   const { data } = await admin
     .from('notification_scan_state')
     .select('scanned_through_block')
@@ -116,8 +122,13 @@ async function cursorFor(admin: Admin, contract: string, head: bigint): Promise<
     .eq('contract', contract)
     .maybeSingle();
   if (!data) {
-    const floor = head > FIRST_RUN_LOOKBACK_BLOCKS ? head - FIRST_RUN_LOOKBACK_BLOCKS : 0n;
-    return floor;
+    // A week in this chain's blocks (about 50k on Sepolia, 2.4M on Arbitrum), and
+    // nothing before the deployment existed.
+    return blocksBack(
+      head,
+      blocksForSeconds(chain.chainId, FIRST_RUN_LOOKBACK_SECONDS),
+      chain.deploymentBlock,
+    );
   }
   const scanned = BigInt(data.scanned_through_block);
   return scanned > REORG_REPLAY_BLOCKS ? scanned - REORG_REPLAY_BLOCKS : 0n;
@@ -405,7 +416,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     mark('notification_profile_links');
 
     // ---- Marketplace ------------------------------------------------------
-    const marketFrom = await cursorFor(admin, 'marketplace', head);
+    const marketFrom = await cursorFor(admin, chain, 'marketplace', head);
     const marketResult = await scanLogs(chain, {
       address: marketplaceAddress(),
       from: marketFrom,
@@ -499,7 +510,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     if (!marketResult.caughtUp) behind.marketplace = marketResult.blocksBehind.toString();
 
     // ---- Swap escrow ------------------------------------------------------
-    const swapFrom = await cursorFor(admin, 'swap_escrow', head);
+    const swapFrom = await cursorFor(admin, chain, 'swap_escrow', head);
     const swapResult = await scanLogs(chain, {
       address: swapEscrowAddress(),
       from: swapFrom,
@@ -560,7 +571,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     if (!swapResult.caughtUp) behind.swap_escrow = swapResult.blocksBehind.toString();
 
     // ---- Primary sale auction --------------------------------------------
-    const auctionFrom = await cursorFor(admin, 'primary_sale', head);
+    const auctionFrom = await cursorFor(admin, chain, 'primary_sale', head);
     const auctionResult = await scanLogs(chain, {
       address: chain.addresses.primarySale,
       from: auctionFrom,
@@ -674,7 +685,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
     if (!auctionResult.caughtUp) behind.primary_sale = auctionResult.blocksBehind.toString();
 
     // ---- Redemption manager ----------------------------------------------
-    const redemptionFrom = await cursorFor(admin, 'redemption_manager', head);
+    const redemptionFrom = await cursorFor(admin, chain, 'redemption_manager', head);
     const redemptionResult = await scanLogs(chain, {
       address: redemptionManagerAddress(),
       from: redemptionFrom,

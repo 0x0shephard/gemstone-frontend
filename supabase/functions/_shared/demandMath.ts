@@ -139,6 +139,12 @@ export function suggestedSpan(message: string): bigint | null {
     const span = BigInt(offered[2]) - BigInt(offered[1]) + 1n;
     if (span > 0n) return span;
   }
+  // Alchemy's paid plans write the cap as "up to a 2K block range"; the suffix matters.
+  const sized = message.match(/(\d+)\s*([km])\s*[- ]?block\s*range/i);
+  if (sized) {
+    const span = BigInt(sized[1]) * (sized[2].toLowerCase() === 'k' ? 1_000n : 1_000_000n);
+    if (span > 0n) return span;
+  }
   const stated =
     message.match(/(\d+)\s*[- ]?block\s*range/i) ??
     message.match(/blocks?\s+is\s+(\d+)/i) ??
