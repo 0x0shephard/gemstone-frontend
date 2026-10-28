@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PublicClient } from 'viem';
 import { contractModules } from '@/config/contracts';
-import { scanLogs } from './projection';
+import { providerRangeHint, scanLogs } from './projection';
 
 /**
  * Stands in for an RPC provider that rejects `eth_getLogs` spans wider than its
@@ -128,5 +128,33 @@ describe('projection log scanning', () => {
     await expect(scanLogs(client, 0n, 10_000n, 0n, { signal: controller.signal })).rejects.toThrow(
       /cancelled/,
     );
+  });
+});
+
+describe('provider range hints', () => {
+  it.each([
+    ['Log response size exceeded. Maximum allowed number of requested blocks is 50000', 50_000n],
+    ['query exceeds maximum block range: 2000', 2_000n],
+    [
+      'Log response size exceeded. You can make eth_getLogs requests with up to a 2K block range and no limit on the response size, or you can request any block range with a cap of 10K logs in the response.',
+      2_000n,
+    ],
+    [
+      'Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range.',
+      10n,
+    ],
+    ['Log response size exceeded. this block range should work: [0x10, 0x80f]', 2_048n],
+  ])('reads %j as %s blocks', (message, expected) => {
+    expect(providerRangeHint(new Error(message))).toBe(expected);
+  });
+
+  it('takes the widest hint across providers and ignores errors without one', () => {
+    const error = new AggregateError([
+      new Error('fetch failed'),
+      new Error('Maximum allowed number of requested blocks is 1000'),
+      new Error('you can make eth_getLogs requests with up to a 2K block range'),
+    ]);
+    expect(providerRangeHint(error)).toBe(2_000n);
+    expect(providerRangeHint(new Error('fetch failed'))).toBeUndefined();
   });
 });
