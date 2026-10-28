@@ -29,19 +29,26 @@ const rpcTransport = createRpcTransport(
  * turn a fresh 260k-block projection into tens of thousands of requests.
  * `scanLogs` tries these clients in order and adapts to the provider's range.
  */
-export const projectionLogClients =
-  activeChain.id === 11155111 && !isLocalRpc(env.rpcUrl)
-    ? [
-        createPublicClient({
-          chain: activeChain,
-          transport: http(SEPOLIA_LOGS_RPC, { retryCount: 0, timeout: 15_000 }),
-        }),
-        createPublicClient({
-          chain: activeChain,
-          transport: http(SEPOLIA_PUBLIC_RPC, { retryCount: 0, timeout: 15_000 }),
-        }),
-      ]
-    : [];
+const logsClient = (url: string) =>
+  createPublicClient({
+    chain: activeChain,
+    transport: http(url, { retryCount: 0, timeout: 15_000 }),
+  });
+
+/**
+ * `VITE_LOGS_RPC_URL`, when set, goes first on any chain. Without it, Sepolia
+ * uses its public wide-range endpoints, and other chains (Arbitrum) use the
+ * configured RPC, which must then accept `eth_getLogs` spans of a few thousand
+ * blocks: at 0.25 s a block, an hour is 14,400 of them.
+ */
+export const projectionLogClients = isLocalRpc(env.rpcUrl)
+  ? []
+  : [
+      ...(env.logsRpcUrl ? [logsClient(env.logsRpcUrl)] : []),
+      ...(activeChain.id === 11155111
+        ? [logsClient(SEPOLIA_LOGS_RPC), logsClient(SEPOLIA_PUBLIC_RPC)]
+        : []),
+    ];
 
 /**
  * The browser extension, named for what it usually is.

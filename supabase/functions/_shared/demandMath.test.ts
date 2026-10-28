@@ -125,6 +125,14 @@ describe('reading a provider span cap out of its rejection', () => {
     expect(suggestedSpan(DRPC)).toBe(10_000n);
   });
 
+  it('reads a K-suffixed cap as thousands, not as a 2-block span', () => {
+    const paid =
+      'Log response size exceeded. You can make eth_getLogs requests with up to a 2K block ' +
+      'range and no limit on the response size, or you can request any block range with a cap ' +
+      'of 10K logs in the response.';
+    expect(suggestedSpan(paid)).toBe(2_000n);
+  });
+
   it('finds nothing in an error that is not about range', () => {
     expect(suggestedSpan('execution reverted')).toBeNull();
     expect(suggestedSpan('502 Bad Gateway')).toBeNull();
