@@ -161,16 +161,24 @@ test('operator wallets hold enough gas', async () => {
     transport: http(process.env.CANARY_RPC ?? target.rpc),
   });
   // The operator signs every server-side transaction; CANARY_WATCH_WALLETS adds
-  // the others that pay gas (proof approver, authorizer), comma-separated.
+  // the others that pay gas (proof approver, authorizer) or hold funds (the
+  // Safe), comma-separated. `42161:0x…` limits an entry to one chain, so a
+  // wallet that exists only on Arbitrum is not reported empty while the site
+  // still runs on Sepolia.
+  const watched = (process.env.CANARY_WATCH_WALLETS ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .flatMap((entry) => {
+      const [chain, wallet] = entry.includes(':') ? entry.split(':') : ['', entry];
+      return !chain || Number(chain) === release.chainId ? [wallet.trim()] : [];
+    });
   // Off Sepolia the edge operator is meant to be its own key, which no manifest
-  // records, so an unset list would quietly watch the wrong wallet.
-  if (release.chainId !== sepolia.id && !process.env.CANARY_WATCH_WALLETS?.trim()) {
+  // records, so an empty list would quietly watch the wrong wallet.
+  if (release.chainId !== sepolia.id && watched.length === 0) {
     throw new Error('Set CANARY_WATCH_WALLETS to the edge operator and other gas-paying wallets');
   }
-  const wallets = [
-    release.giftOperator,
-    ...(process.env.CANARY_WATCH_WALLETS ?? '').split(',').map((wallet) => wallet.trim()),
-  ].filter(Boolean) as Address[];
+  const wallets = [release.giftOperator, ...watched].filter(Boolean) as Address[];
   const minimum = parseEther(process.env.CANARY_MIN_GAS_ETH ?? target.minGas);
   for (const wallet of new Set(wallets)) {
     const balance = await client.getBalance({ address: wallet });
