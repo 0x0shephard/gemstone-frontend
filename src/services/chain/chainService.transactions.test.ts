@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { encodeFunctionData, zeroAddress, zeroHash } from 'viem';
+import {
+  ContractFunctionExecutionError,
+  ContractFunctionRevertedError,
+  HttpRequestError,
+  encodeFunctionData,
+  parseAbi,
+  zeroAddress,
+  zeroHash,
+} from 'viem';
 
 const mocks = vi.hoisted(() => ({
   readContract: vi.fn(),
@@ -83,7 +91,7 @@ vi.mock('@/services/offchain/custody', () => ({
 }));
 
 import { requireDeploymentManifest } from '@/config/contracts';
-import { chainService, occurredAtForBlock } from './chainService';
+import { chainService, isContractAnswer, occurredAtForBlock } from './chainService';
 
 const manifest = requireDeploymentManifest();
 const usdc = manifest.usdc!;
@@ -1045,5 +1053,22 @@ describe('chain transaction construction', () => {
     expect(mocks.runContractTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: 'cancelRedemption', args: [22n] }),
     );
+  });
+});
+
+describe('telling an older contract from a failing RPC', () => {
+  const abi = parseAbi(['function SETTLEMENT_GRACE() view returns (uint64)']);
+  const wrap = (cause: Error) =>
+    new ContractFunctionExecutionError(cause as never, { abi, functionName: 'SETTLEMENT_GRACE' });
+
+  it('treats a revert as the contract answering that it has no such function', () => {
+    const reverted = new ContractFunctionRevertedError({ abi, functionName: 'SETTLEMENT_GRACE' });
+    expect(isContractAnswer(wrap(reverted))).toBe(true);
+  });
+
+  it('does not mistake an unreachable RPC for an older contract', () => {
+    const offline = new HttpRequestError({ url: 'https://rpc.example', details: 'fetch failed' });
+    expect(isContractAnswer(wrap(offline))).toBe(false);
+    expect(isContractAnswer(new Error('timeout'))).toBe(false);
   });
 });

@@ -173,7 +173,10 @@ export const mockService: IDataService = {
   },
 
   getFeeTiers: () => delay(feeTiers),
-  getBidPolicy: () => delay({ binding: true, settlementGraceSeconds: 7 * 24 * 60 * 60 }),
+  getBidPolicy: () => {
+    const rule = { binding: true, settlementGraceSeconds: 7 * 24 * 60 * 60 };
+    return delay({ listing: rule, primary: rule });
+  },
   getPaymentAssets: () => delay(paymentAssets),
   getPendingAuctionRefunds: () =>
     delay([
