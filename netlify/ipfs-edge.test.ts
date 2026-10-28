@@ -1,5 +1,6 @@
+// @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import ipfs, { config, gatewayPath } from './ipfs';
+import ipfs, { config, gatewayPath } from './edge-functions/ipfs';
 
 const CID_V0 = 'QmVHNHvdZ6dKLjfG7hB57R88wfsRYvwUByETa2DNADzBZv';
 const CID_V1 = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy';
@@ -31,6 +32,7 @@ describe('/ipfs edge function', () => {
 
       expect(fetchMock).toHaveBeenCalledWith(`https://gateway.pinata.cloud/ipfs/${CID_V0}`, {
         method: 'GET',
+        signal: expect.any(AbortSignal),
       });
       expect(response.status).toBe(200);
       expect(await response.text()).toBe('bytes');
@@ -87,6 +89,7 @@ describe('/ipfs edge function', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(`https://gateway.pinata.cloud/ipfs/${CID_V0}`, {
       method: 'HEAD',
+      signal: expect.any(AbortSignal),
     });
     expect(response.status).toBe(200);
   });
@@ -109,15 +112,29 @@ describe('/ipfs edge function', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('allows a file inside a directory CID and drops the query string', async () => {
+  it('allows a file inside a directory CID', async () => {
     const fetchMock = upstream('{}', {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
     expect(gatewayPath(`/ipfs/${CID_V1}/1.json`)).toBe(`${CID_V1}/1.json`);
-    await get(`/ipfs/${CID_V1}/1.json?filename=x.html`);
-    expect(fetchMock).toHaveBeenCalledWith(`https://gateway.pinata.cloud/ipfs/${CID_V1}/1.json`, {
-      method: 'GET',
+    await get(`/ipfs/${CID_V1}/1.json`);
+    expect(fetchMock.mock.calls[0][0]).toBe(`https://gateway.pinata.cloud/ipfs/${CID_V1}/1.json`);
+  });
+
+  it('folds a query string onto the bare path so it cannot bust the cache', async () => {
+    const fetchMock = upstream('', { status: 200 });
+    const response = await get(`/ipfs/${CID_V0}?filename=x.html`);
+    expect(response.status).toBe(301);
+    expect(response.headers.get('location')).toBe(`/ipfs/${CID_V0}`);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not forward the upstream content-length (the body may be decompressed)', async () => {
+    upstream('{}', {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'content-length': '9' },
     });
+    expect((await get(`/ipfs/${CID_V0}`)).headers.get('content-length')).not.toBe('9');
   });
 });

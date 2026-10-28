@@ -15,6 +15,8 @@
 // cached for a year and the gateway is asked once per edge node.
 
 const GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
+// The client tries the next gateway on failure, so a stalled one must fail fast.
+const UPSTREAM_TIMEOUT_MS = 15_000;
 
 // What the app loads from /ipfs: gem photos (chainService image candidates) and
 // token metadata JSON (services/chain/metadata.ts). SVG is excluded on purpose:
@@ -41,7 +43,8 @@ const LOCKED_DOWN = {
   'Referrer-Policy': 'no-referrer',
 };
 
-const PASSED_THROUGH = ['content-length', 'etag', 'last-modified'];
+// Not content-length: fetch decompresses a gzipped body but keeps the encoded length.
+const PASSED_THROUGH = ['etag', 'last-modified'];
 
 function refuse(status: number, message: string): Response {
   return new Response(message, {
@@ -66,12 +69,24 @@ export default async function ipfs(request: Request): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD')
     return refuse(405, 'Method not allowed');
 
-  const path = gatewayPath(new URL(request.url).pathname);
+  const url = new URL(request.url);
+  const path = gatewayPath(url.pathname);
   if (!path) return refuse(400, 'Not an IPFS path');
+  // The edge cache keys on the full URL, so `?x=1`, `?x=2`… would each miss and
+  // reach the gateway. The app never sends a query; fold any onto the bare path.
+  if (url.search) {
+    return new Response(null, {
+      status: 301,
+      headers: { ...LOCKED_DOWN, Location: url.pathname, 'Cache-Control': 'public, max-age=86400' },
+    });
+  }
 
   let upstream: Response;
   try {
-    upstream = await fetch(GATEWAY + path, { method: request.method });
+    upstream = await fetch(GATEWAY + path, {
+      method: request.method,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
   } catch {
     return refuse(502, 'Gateway unavailable');
   }

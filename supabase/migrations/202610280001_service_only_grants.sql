@@ -18,13 +18,6 @@ grant execute on function public.activate_protocol_deployment(text, text) to ser
 revoke all on function public.record_valuation(jsonb) from public, anon, authenticated;
 grant execute on function public.record_valuation(jsonb) to service_role;
 
--- Trigger guards. A trigger fires whatever the caller's EXECUTE rights, so
--- these need no client grant; revoking them keeps the rule above uniform.
-revoke all on function public.prevent_gem_custody_amendment_mutation()
-  from public, anon, authenticated;
-revoke all on function public.prevent_gem_custody_term_mutation()
-  from public, anon, authenticated;
-
 -- v1-notify-sweep's block cursors. With RLS off, anyone could move a cursor past
 -- unscanned blocks and silently drop deadline, offer and redemption notices.
 alter table public.notification_scan_state enable row level security;
