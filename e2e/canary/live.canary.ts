@@ -50,10 +50,11 @@ for (const route of ['/', '/marketplace', '/auctions', '/swaps', '/gift']) {
     page.on('console', (message) => {
       if (message.type() !== 'error') return;
       const text = message.text();
-      // Third-party IPFS gateways rate-limit (429, no CORS headers); the app
-      // falls back to other gateways. Counted and annotated, not failed on.
-      if (/ipfs|pinata|gateway|not allowed by Access-Control-Allow-Origin/i.test(text))
-        gatewayErrors += 1;
+      // The same third-party test as page errors. A public RPC fallback that
+      // rate-limits answers 429 without CORS headers, which Chrome logs as
+      // "blocked by CORS policy"; the app moves on to the next endpoint. This
+      // filter used to miss that wording and failed most scheduled runs.
+      if (isGateway(text)) gatewayErrors += 1;
       else if (!/Failed to load resource/.test(text)) errors.push(text);
     });
     test.info().annotations.push({ type: 'third-party-throttling', description: '0' });
