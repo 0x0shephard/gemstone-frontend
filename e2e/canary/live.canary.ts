@@ -161,6 +161,11 @@ test('operator wallets hold enough gas', async () => {
   });
   // The operator signs every server-side transaction; CANARY_WATCH_WALLETS adds
   // the others that pay gas (proof approver, authorizer), comma-separated.
+  // Off Sepolia the edge operator is meant to be its own key, which no manifest
+  // records, so an unset list would quietly watch the wrong wallet.
+  if (release.chainId !== sepolia.id && !process.env.CANARY_WATCH_WALLETS?.trim()) {
+    throw new Error('Set CANARY_WATCH_WALLETS to the edge operator and other gas-paying wallets');
+  }
   const wallets = [
     release.giftOperator,
     ...(process.env.CANARY_WATCH_WALLETS ?? '').split(',').map((wallet) => wallet.trim()),

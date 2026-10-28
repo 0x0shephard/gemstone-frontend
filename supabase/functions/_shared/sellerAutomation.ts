@@ -362,7 +362,7 @@ async function recoverRegisteredGem(
    * then silently stopped, so a retry the next morning registered the stone a
    * second time. The registry has no uniqueness guard to catch that. The
    * fallback for rows from before the floor was recorded is the same twenty-five
-   * minutes, measured in this chain's blocks (128 on Sepolia, 6,000 on Arbitrum).
+   * minutes, measured in this chain's blocks (125 on Sepolia, 6,000 on Arbitrum).
    */
   const recordedFloor =
     submission.registration_scan_from_block === null ||

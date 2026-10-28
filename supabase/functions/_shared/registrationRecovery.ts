@@ -35,6 +35,15 @@ export async function findRegisteredGem(
   chain: OperatorChain,
   search: RegistrationSearch,
 ): Promise<bigint | undefined> {
+  // The logs endpoint may be a different node from the one that confirmed the
+  // write. One that has not reached `to` yet answers the missing blocks with no
+  // logs, which would read as "not registered"; make it catch up first.
+  const logsHead = await chain.logsClient.getBlockNumber();
+  if (logsHead < search.to) {
+    throw new Error(
+      `Logs endpoint is at block ${logsHead}, behind ${search.to}; retry before registering again`,
+    );
+  }
   const seller = search.seller.toLowerCase();
   const custodian = search.custodian.toLowerCase();
   const candidates: bigint[] = [];
