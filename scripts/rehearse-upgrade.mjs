@@ -178,7 +178,20 @@ try {
     try {
       execFileSync(
         'forge',
-        ['script', `script/${script}.s.sol:${script}`, '--rpc-url', FORK, '--broadcast', '--slow'],
+        // --skip-simulation: forge's local simulation prices contract creation at
+        // the old rate and sets a gas limit Sepolia runs out of (its node
+        // charges ~7x more; a Marketplace implementation took 30.16M gas). This
+        // takes each limit from the node, as the real broadcast must. Rehearse
+        // with anvil >= 1.8, whose fork applies the same pricing.
+        [
+          'script',
+          `script/${script}.s.sol:${script}`,
+          '--rpc-url',
+          FORK,
+          '--broadcast',
+          '--slow',
+          '--skip-simulation',
+        ],
         {
           cwd: contractsDir,
           env,
