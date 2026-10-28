@@ -1,4 +1,5 @@
 import { BrandMark } from '@/components/ui/BrandMark';
+import { activeChain } from '@/config/chains';
 
 /** Landing footer with custody / insurance attestations. */
 export function Footer() {
@@ -16,7 +17,10 @@ export function Footer() {
           <div className="font-mono text-[10px] uppercase tracking-[0.13em] text-emerald">
             Custody network verified
           </div>
-          <p className="mt-2 text-[11.5px] text-ink-dim">© 2026 Digital Carat · Sepolia testnet</p>
+          <p className="mt-2 text-[11.5px] text-ink-dim">
+            © 2026 Digital Carat · {activeChain.name}
+            {activeChain.testnet ? ' testnet' : ''}
+          </p>
         </div>
       </div>
     </footer>

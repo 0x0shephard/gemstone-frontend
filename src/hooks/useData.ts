@@ -19,6 +19,7 @@ export const qk = {
   profile: (address?: string) => ['profile', address ?? 'me'] as const,
   landing: ['landing'] as const,
   feeTiers: ['feeTiers'] as const,
+  bidPolicy: ['bidPolicy'] as const,
   paymentAssets: ['paymentAssets'] as const,
   pendingAuctionRefunds: (address?: string) =>
     ['pendingAuctionRefunds', address ?? 'disconnected'] as const,
@@ -37,6 +38,13 @@ export const useGem = (id: string) =>
   });
 export const useListings = () =>
   useQuery({ queryKey: qk.listings, queryFn: () => dataService.getListings() });
+/** A contract constant, so it is read once per session. */
+export const useBidPolicy = () =>
+  useQuery({
+    queryKey: qk.bidPolicy,
+    queryFn: () => dataService.getBidPolicy(),
+    staleTime: Infinity,
+  });
 export const useAuctions = () =>
   useQuery({ queryKey: qk.auctions, queryFn: () => dataService.getAuctions() });
 export const useAuction = (id: string) =>

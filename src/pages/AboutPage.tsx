@@ -39,7 +39,8 @@ export default function AboutPage() {
       {/* Stats */}
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile label="Gemstones in vault" value={displayVaultCount(data?.gemsInVault)} />
-        <StatTile label="Reserve backing" value="On-chain" valueColor="var(--dc-sapphire)" />
+        {/* At a 0% launch rate nothing is held yet, so name the policy, not backing. */}
+        <StatTile label="Reserve policy" value="On-chain" valueColor="var(--dc-sapphire)" />
         <StatTile label="Custody" value={<span className="text-[18px]">Insured vaults</span>} />
         <StatTile label="Settlement" value="Automated" valueColor="var(--dc-emerald)" />
       </section>

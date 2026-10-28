@@ -36,6 +36,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_SECONDARY_FEE_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_BID_INCREMENT_USD",
     "inputs": [],
     "outputs": [
@@ -50,6 +63,19 @@
   {
     "type": "function",
     "name": "OFFER_DURATION",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "SETTLEMENT_GRACE",
     "inputs": [],
     "outputs": [
       {
@@ -1305,6 +1331,17 @@
     "type": "error",
     "name": "AuctionNotEnded",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BidLocked",
+    "inputs": [
+      {
+        "name": "withdrawableAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

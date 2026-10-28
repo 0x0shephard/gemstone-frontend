@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { ContractFunctionRevertedError, parseAbi } from 'viem';
+import { ContractFunctionRevertedError, encodeErrorResult, parseAbi } from 'viem';
 import { decodeTransactionError } from './transactionPipeline';
 
 const abi = parseAbi(['function requestRedemption(uint256,bytes32,bytes32)']);
+const marketplaceAbi = parseAbi([
+  'function cancelOffer(uint256)',
+  'error BidLocked(uint256 withdrawableAt)',
+]);
 
 describe('decodeTransactionError', () => {
   it('explains the solvency freeze instead of a bare revert', () => {
@@ -24,4 +28,17 @@ describe('decodeTransactionError', () => {
       expect(error.message).toMatch(/recovering from an outage/);
     },
   );
+
+  it('explains a binding bid and when it can be withdrawn', () => {
+    const data = encodeErrorResult({
+      abi: marketplaceAbi,
+      errorName: 'BidLocked',
+      args: [1_800_000_000n],
+    });
+    const error = decodeTransactionError(
+      new ContractFunctionRevertedError({ abi: marketplaceAbi, data, functionName: 'cancelOffer' }),
+    );
+    expect(error.message).toMatch(/binding until its auction settles/);
+    expect(error.message).toMatch(/2027/);
+  });
 });

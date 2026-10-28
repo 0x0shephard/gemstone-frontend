@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAccount } from 'wagmi';
 import {
+  useBidPolicy,
   useBidSummaries,
   usePendingReserveCredits,
   usePendingTreasuryPayout,
@@ -26,7 +27,7 @@ import { Card } from '@/components/ui/Card';
 import { CardGridSkeleton, EmptyState } from '@/components/ui/States';
 import { fmtUsd, shortenAddress } from '@/lib/format';
 import { WalletAddress } from '@/components/wallet/WalletAddress';
-import type { Bid, Offer, PendingReserveCredit } from '@/services/types';
+import type { Bid, BindingRule, Offer, PendingReserveCredit } from '@/services/types';
 import { AnalyticsConsent } from '@/components/privacy/AnalyticsConsent';
 import { PendingRefunds } from '@/components/wallet/PendingRefunds';
 import { TxButton } from '@/components/tx/TxButton';
@@ -457,7 +458,8 @@ export function ReserveCreditsCard({
   );
 }
 
-const bidColumns: Column<Bid>[] = [
+/** `rule` is undefined until the contract answers; bids then count as binding. */
+export const bidColumns = (rule?: BindingRule): Column<Bid>[] => [
   {
     key: 'gem',
     header: 'Gem',
@@ -489,9 +491,12 @@ const bidColumns: Column<Bid>[] = [
     key: 'actions',
     header: '',
     align: 'right',
-    // Only the leader has funds escrowed; an outbid bid was already refunded.
+    // Only the leader has funds escrowed; an outbid bid was already refunded. On
+    // upgraded contracts the leading bid is binding, so there is nothing to cancel.
     render: (r) =>
-      r.status === 'Leading' && r.secondsLeft > 0 ? (
+      r.status !== 'Leading' ? null : (rule?.binding ?? true) ? (
+        <span className="text-[11px] text-ink-dim">Binding until settled</span>
+      ) : r.secondsLeft > 0 ? (
         <TxButton
           size="sm"
           variant="secondary"
@@ -505,9 +510,10 @@ const bidColumns: Column<Bid>[] = [
 ];
 
 function BidsTable({ rows }: { rows: Bid[] }) {
+  const { data: policy } = useBidPolicy();
   return (
     <DataTable
-      columns={bidColumns}
+      columns={bidColumns(policy?.primary)}
       rows={rows}
       rowKey={(r) => r.gem.gemId.toString()}
       empty="No active bids."
@@ -515,7 +521,13 @@ function BidsTable({ rows }: { rows: Bid[] }) {
   );
 }
 
-function offerColumns(address: string | undefined, bids: Map<string, BidSummary>): Column<Offer>[] {
+export function offerColumns(
+  address: string | undefined,
+  bids: Map<string, BidSummary>,
+  /** Undefined until the contract answers; the winning bid then counts as binding. */
+  rule?: BindingRule,
+): Column<Offer>[] {
+  const binding = rule?.binding ?? true;
   const normalized = address?.toLowerCase();
   const summaryOf = (r: Offer) => (r.gem.tokenId ? bids.get(r.gem.tokenId.toString()) : undefined);
   /** For the viewer's own live bid: whether it is the one currently winning. */
@@ -579,17 +591,35 @@ function offerColumns(address: string | undefined, bids: Map<string, BidSummary>
       render: (r) => {
         const isBidder = normalized === r.bidder.toLowerCase();
         const isOwner = normalized === r.tokenOwner.toLowerCase();
+        // A binding winning bid nobody settled within the grace period may leave.
+        const released =
+          rule?.binding === true &&
+          r.automatic &&
+          BigInt(Math.floor(Date.now() / 1000)) >= r.expiry + BigInt(rule.settlementGraceSeconds);
         if (r.status === 'Awaiting settlement' && r.gem.tokenId) {
           return (
-            <TxButton
-              size="sm"
-              variant="secondary"
-              action={() => dataService.settleListingAuction({ tokenId: r.gem.tokenId! })}
-              pendingLabel="Settling…"
-              telemetryFlow="listed_token_auction_settle"
-            >
-              Settle now
-            </TxButton>
+            <div className="flex justify-end gap-2">
+              {released && isBidder ? (
+                <TxButton
+                  size="sm"
+                  variant="ghost"
+                  action={() => dataService.cancelOffer({ offerId: r.offerId })}
+                  pendingLabel="Withdrawing…"
+                  telemetryFlow="offer_withdraw"
+                >
+                  Withdraw bid
+                </TxButton>
+              ) : null}
+              <TxButton
+                size="sm"
+                variant="secondary"
+                action={() => dataService.settleListingAuction({ tokenId: r.gem.tokenId! })}
+                pendingLabel="Settling…"
+                telemetryFlow="listed_token_auction_settle"
+              >
+                Settle now
+              </TxButton>
+            </div>
           );
         }
         if (r.status === 'Expired' && isBidder) {
@@ -605,7 +635,8 @@ function offerColumns(address: string | undefined, bids: Map<string, BidSummary>
             </TxButton>
           );
         }
-        if (r.status === 'Pending' && isBidder) {
+        // The winning bid on a listing is binding on upgraded contracts.
+        if (r.status === 'Pending' && isBidder && (!r.automatic || !binding)) {
           return (
             <TxButton
               size="sm"
@@ -642,9 +673,10 @@ function offerColumns(address: string | undefined, bids: Map<string, BidSummary>
 
 function OffersTable({ rows, address }: { rows: Offer[]; address?: string }) {
   const bids = useBidSummaries();
+  const { data: policy } = useBidPolicy();
   return (
     <DataTable
-      columns={offerColumns(address, bids)}
+      columns={offerColumns(address, bids, policy?.listing)}
       rows={rows}
       rowKey={(r) => r.offerId.toString()}
       empty="No offers."

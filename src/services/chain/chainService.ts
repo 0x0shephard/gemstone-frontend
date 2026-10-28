@@ -3,6 +3,7 @@ import { getAccount, getPublicClient } from '@wagmi/core';
 import {
   BaseError,
   ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
   encodeFunctionData,
   formatUnits,
   isAddress,
@@ -47,6 +48,8 @@ import type {
   CreateOfferRequest,
   CreateSwapRequest,
   DecoratedGem,
+  BidPolicy,
+  BindingRule,
   FeeTier,
   FundReserveRequest,
   Gem,
@@ -1430,6 +1433,39 @@ function refresh(): void {
   void projection(true).catch(() => undefined);
 }
 
+/**
+ * Contracts from before binding bids have no `SETTLEMENT_GRACE`, so the call
+ * reverts. Only that answer means "older contract": an RPC failure is rethrown,
+ * so the query retries and the UI keeps the binding default meanwhile, rather
+ * than caching a guess that shows buttons which revert.
+ */
+async function bindingRule(module: 'Marketplace' | 'PrimarySaleAuction'): Promise<BindingRule> {
+  try {
+    const grace = (await client.readContract({
+      ...contract(module),
+      functionName: 'SETTLEMENT_GRACE',
+    })) as bigint;
+    return { binding: true, settlementGraceSeconds: Number(grace) };
+  } catch (error) {
+    if (isContractAnswer(error)) return { binding: false, settlementGraceSeconds: 0 };
+    throw error;
+  }
+}
+
+/** The contract itself answered (reverted, or returned nothing), as opposed to the RPC failing. */
+export function isContractAnswer(error: unknown): boolean {
+  return (
+    error instanceof BaseError &&
+    Boolean(
+      error.walk(
+        (cause) =>
+          cause instanceof ContractFunctionRevertedError ||
+          cause instanceof ContractFunctionZeroDataError,
+      ),
+    )
+  );
+}
+
 export const chainService: IDataService = {
   getGems: allGems,
   getGem: readGem,
@@ -1732,6 +1768,13 @@ export const chainService: IDataService = {
       gemsInVault: gems.length,
       featuredCaption: gems[0]?.displayId ?? 'No registered gems',
     };
+  },
+  getBidPolicy: async (): Promise<BidPolicy> => {
+    const [listing, primary] = await Promise.all([
+      bindingRule('Marketplace'),
+      bindingRule('PrimarySaleAuction'),
+    ]);
+    return { listing, primary };
   },
   getFeeTiers: async (): Promise<FeeTier[]> => {
     const count = (await client.readContract({
@@ -2247,7 +2290,7 @@ export const chainService: IDataService = {
     };
     return runContractTransaction(call);
   },
-  /** Withdraws the caller's own live offer, or a leading listed-token bid before it ends. */
+  /** Withdraws the caller's own offer, or a leading listed-token bid the contract has released. */
   cancelOffer: (request: OfferRequest) =>
     runContractTransaction({
       ...contract('Marketplace'),

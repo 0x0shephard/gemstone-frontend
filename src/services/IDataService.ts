@@ -16,6 +16,7 @@ import type {
   CreateOfferRequest,
   CreateSwapRequest,
   DecoratedGem,
+  BidPolicy,
   FeeTier,
   FundReserveRequest,
   HowStep,
@@ -93,6 +94,7 @@ export interface IDataService {
   getProfile(address?: string): Promise<ProfileData>;
   getLanding(): Promise<LandingData>;
   getFeeTiers(): Promise<FeeTier[]>;
+  getBidPolicy(): Promise<BidPolicy>;
   getPaymentAssets(): Promise<PaymentAsset[]>;
   getPendingAuctionRefunds(address?: string): Promise<PendingRefund[]>;
   getPendingReserveCredits(address?: string): Promise<PendingReserveCredit[]>;

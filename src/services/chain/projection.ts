@@ -239,6 +239,38 @@ function decodeLog(
   }
 }
 
+const SUFFIX: Record<string, bigint> = { '': 1n, k: 1_000n, m: 1_000_000n };
+
+/**
+ * The widest `eth_getLogs` span a provider's rejection says it will accept, if it
+ * says. Formats seen:
+ * - PublicNode: "Maximum allowed number of requested blocks is 50000"
+ * - "maximum block range: 2000"
+ * - Alchemy: "…requests with up to a 2K block range…", plus
+ *   "this block range should work: [0x1a2b, 0x1d2c]"
+ * The K/M suffix matters: read as a bare number, Alchemy's "2K" is a 2-block span.
+ */
+export function providerRangeHint(error: unknown): bigint | undefined {
+  const errors = error instanceof AggregateError ? error.errors : [error];
+  const suggestions = errors.flatMap((candidate) => {
+    const message = candidate instanceof Error ? candidate.message : String(candidate);
+    const stated = [
+      ...message.matchAll(
+        /(?:up to a|maximum(?: allowed)?(?: number of requested blocks is| block range:))\s*(\d+)\s*([km]?)\b/gi,
+      ),
+    ].map((match) => BigInt(match[1]) * SUFFIX[match[2].toLowerCase()]);
+    const workable = [
+      ...message.matchAll(
+        /block range should work:\s*\[\s*(0x[0-9a-f]+)\s*,\s*(0x[0-9a-f]+)\s*\]/gi,
+      ),
+    ].map((match) => BigInt(match[2]) - BigInt(match[1]) + 1n);
+    return [...stated, ...workable].filter((value) => value > 0n);
+  });
+  return suggestions.length
+    ? suggestions.reduce((largest, value) => (value > largest ? value : largest))
+    : undefined;
+}
+
 export async function scanLogs(
   client: PublicClient,
   fromBlock: bigint,
@@ -272,21 +304,6 @@ export async function scanLogs(
     const last = errors.at(-1);
     const detail = last instanceof Error ? `: ${last.message}` : '';
     throw new AggregateError(errors, `Every historical log provider rejected the request${detail}`);
-  };
-
-  const suggestedRange = (error: unknown): bigint | undefined => {
-    const errors = error instanceof AggregateError ? error.errors : [error];
-    const suggestions = errors.flatMap((candidate) => {
-      const message = candidate instanceof Error ? candidate.message : String(candidate);
-      return [
-        ...message.matchAll(
-          /(?:up to a|maximum(?: allowed)?(?: number of requested blocks is| block range:))\s*(\d+)/gi,
-        ),
-      ].map((match) => BigInt(match[1]));
-    });
-    return suggestions.length
-      ? suggestions.reduce((largest, value) => (value > largest ? value : largest))
-      : undefined;
   };
 
   while (cursor <= latestBlock) {
@@ -325,7 +342,7 @@ export async function scanLogs(
       if (logs.length < 1_000 && range < ceiling) range *= 2n;
     } catch (error) {
       if (range <= MIN_RANGE) throw error;
-      const providerRange = suggestedRange(error);
+      const providerRange = providerRangeHint(error);
       const narrower = providerRange && providerRange < range ? providerRange : range / 2n;
       ceiling = narrower < MIN_RANGE ? MIN_RANGE : narrower;
       range = ceiling;

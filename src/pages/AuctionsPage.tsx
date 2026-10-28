@@ -1,4 +1,4 @@
-import { useAuctions } from '@/hooks/useData';
+import { useAuctions, useBidPolicy } from '@/hooks/useData';
 import { GemThumb } from '@/components/gem/GemThumb';
 import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -24,9 +24,11 @@ interface RowProps {
   mode: 'live' | 'settle' | 'past';
   address?: string;
   onBid: (gem: DecoratedGem) => void;
+  /** Upgraded contracts make the leading bid binding, so it has no cancel. */
+  bindingBids: boolean;
 }
 
-function AuctionRow({ auction: a, mode, address, onBid }: RowProps) {
+function AuctionRow({ auction: a, mode, address, onBid, bindingBids }: RowProps) {
   const mine = Boolean(address && a.highestBidder?.toLowerCase() === address.toLowerCase());
   return (
     <tr className="border-b border-line/[0.06] transition-colors last:border-b-0 hover:bg-line/[0.02]">
@@ -101,14 +103,16 @@ function AuctionRow({ auction: a, mode, address, onBid }: RowProps) {
             <Button size="sm" onClick={() => onBid(a.gem)}>
               Raise bid
             </Button>
-            <TxButton
-              size="sm"
-              variant="secondary"
-              action={() => dataService.cancelAuctionBid({ gemId: a.gem.gemId })}
-              pendingLabel="Cancelling…"
-            >
-              Cancel bid
-            </TxButton>
+            {bindingBids ? null : (
+              <TxButton
+                size="sm"
+                variant="secondary"
+                action={() => dataService.cancelAuctionBid({ gemId: a.gem.gemId })}
+                pendingLabel="Cancelling…"
+              >
+                Cancel bid
+              </TxButton>
+            )}
           </div>
         ) : mode === 'live' ? (
           <Button size="sm" onClick={() => onBid(a.gem)}>
@@ -138,6 +142,9 @@ function AuctionTable({
   address?: string;
   onBid: (gem: DecoratedGem) => void;
 }) {
+  // Until the contract answers, hide the cancel rather than offer one that may revert.
+  const { data: policy } = useBidPolicy();
+  const bindingBids = policy?.primary.binding ?? true;
   const headers = [
     'Stone',
     'Floor',
@@ -172,6 +179,7 @@ function AuctionTable({
               mode={mode}
               address={address}
               onBid={onBid}
+              bindingBids={bindingBids}
             />
           ))}
         </tbody>
