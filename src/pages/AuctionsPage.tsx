@@ -144,7 +144,7 @@ function AuctionTable({
 }) {
   // Until the contract answers, hide the cancel rather than offer one that may revert.
   const { data: policy } = useBidPolicy();
-  const bindingBids = policy?.binding ?? true;
+  const bindingBids = policy?.primary.binding ?? true;
   const headers = [
     'Stone',
     'Floor',

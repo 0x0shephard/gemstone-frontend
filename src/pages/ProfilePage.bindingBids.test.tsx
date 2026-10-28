@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Address } from 'viem';
-import type { Bid, BidPolicy, Offer } from '@/services/types';
+import type { Bid, BindingRule, Offer } from '@/services/types';
 
 vi.mock('@/services', () => ({ dataService: {} }));
 vi.mock('@/components/tx/TxButton', () => ({
@@ -15,8 +15,8 @@ import { bidColumns, offerColumns } from './ProfilePage';
 const BIDDER = '0x1111111111111111111111111111111111111111' as Address;
 const OWNER = '0x2222222222222222222222222222222222222222' as Address;
 const WEEK = 7 * 24 * 60 * 60;
-const binding: BidPolicy = { binding: true, settlementGraceSeconds: WEEK };
-const legacy: BidPolicy = { binding: false, settlementGraceSeconds: 0 };
+const binding: BindingRule = { binding: true, settlementGraceSeconds: WEEK };
+const legacy: BindingRule = { binding: false, settlementGraceSeconds: 0 };
 const now = () => BigInt(Math.floor(Date.now() / 1000));
 
 const gem = { gemId: 1n, tokenId: 7n, name: 'Stone', displayId: 'DC-1' } as Bid['gem'];
@@ -92,5 +92,15 @@ describe('binding leading bids', () => {
     });
     renderCell(offerColumns(BIDDER, new Map(), binding), 'action', stale);
     expect(screen.getByRole('button', { name: 'Withdraw bid' })).toBeInTheDocument();
+  });
+
+  it('offers no withdrawal of any kind before the contract has answered', () => {
+    const ended = offer({ status: 'Awaiting settlement', secondsLeft: 0, expiry: now() - 3600n });
+    renderCell(offerColumns(BIDDER, new Map(), undefined), 'action', ended);
+    expect(screen.queryByRole('button', { name: 'Withdraw bid' })).toBeNull();
+    renderCell(offerColumns(BIDDER, new Map(), undefined), 'action', offer({}));
+    expect(screen.queryByRole('button', { name: 'Withdraw bid' })).toBeNull();
+    renderCell(bidColumns(undefined), 'actions', leadingBid);
+    expect(screen.queryByRole('button', { name: 'Cancel bid' })).toBeNull();
   });
 });
