@@ -39,7 +39,8 @@ type Event =
  * Supabase's default privileges grant EXECUTE on a new public function to
  * `anon` and `authenticated` by name, so only a revoke naming them closes it;
  * `revoke ... from public` alone does not. `create or replace` of an existing
- * function keeps its grants.
+ * function keeps its grants. A `drop function` then `create` resets them in
+ * Postgres but not in this replay; no migration does that yet.
  */
 function definerFunctions() {
   const events: Event[] = [];

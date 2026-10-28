@@ -81,14 +81,17 @@ export default async function ipfs(request: Request): Promise<Response> {
     });
   }
 
+  // The timer covers only the wait for headers. Aborting later would cut the
+  // streamed body short for a slow client, and the edge could cache the stub.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   let upstream: Response;
   try {
-    upstream = await fetch(GATEWAY + path, {
-      method: request.method,
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    upstream = await fetch(GATEWAY + path, { method: request.method, signal: controller.signal });
   } catch {
     return refuse(502, 'Gateway unavailable');
+  } finally {
+    clearTimeout(timer);
   }
   // The client treats any failure as "try the next gateway", so a gateway's own
   // error body is never needed and never forwarded.

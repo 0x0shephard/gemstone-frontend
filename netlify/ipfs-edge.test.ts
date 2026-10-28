@@ -138,3 +138,41 @@ describe('/ipfs edge function', () => {
     expect((await get(`/ipfs/${CID_V0}`)).headers.get('content-length')).not.toBe('9');
   });
 });
+
+describe('/ipfs edge function timeout', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('gives up on a gateway that sends no headers within 15 s', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) =>
+            init.signal!.addEventListener('abort', () =>
+              reject(new DOMException('aborted', 'AbortError')),
+            ),
+          ),
+      ),
+    );
+    const pending = get(`/ipfs/${CID_V0}`);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect((await pending).status).toBe(502);
+  });
+
+  it('does not abort a body that is still streaming after the headers arrived', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        signal = init.signal ?? undefined;
+        return new Response('bytes', { status: 200, headers: { 'content-type': 'image/jpeg' } });
+      }),
+    );
+    const response = await get(`/ipfs/${CID_V0}`);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(signal?.aborted).toBe(false);
+    expect(await response.text()).toBe('bytes');
+  });
+});
