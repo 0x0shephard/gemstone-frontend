@@ -635,6 +635,22 @@ export function decodeTransactionError(error: unknown): Error {
         );
       }
       const errorName = reverted.data?.errorName;
+      if (errorName === 'BidLocked') {
+        const [withdrawableAt] = (reverted.data?.args ?? []) as readonly bigint[];
+        const when =
+          typeof withdrawableAt === 'bigint'
+            ? new Date(Number(withdrawableAt) * 1000).toLocaleString(undefined, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              })
+            : undefined;
+        return new TransactionGuardError(
+          `A leading bid is binding until its auction settles.${
+            when ? ` If nobody settles it, you can withdraw it after ${when}.` : ''
+          }`,
+          'CONTRACT_REVERTED',
+        );
+      }
       const reason =
         errorName === 'AuctionActive'
           ? 'A bid is live, so this cannot be changed until its auction settles.'

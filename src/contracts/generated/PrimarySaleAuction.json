@@ -62,6 +62,19 @@
   },
   {
     "type": "function",
+    "name": "SETTLEMENT_GRACE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "UPGRADE_INTERFACE_VERSION",
     "inputs": [],
     "outputs": [
@@ -1139,6 +1152,17 @@
     "type": "error",
     "name": "BatchTooLarge",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BidLocked",
+    "inputs": [
+      {
+        "name": "withdrawableAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

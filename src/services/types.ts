@@ -315,7 +315,18 @@ export interface BidRequest {
   saleAmountUsd: bigint;
 }
 
-/** Withdraws the caller's leading primary-auction bid before close. */
+/**
+ * Whether a leading auction bid can be withdrawn. Upgraded contracts make it binding
+ * until settlement, with an exit `settlementGraceSeconds` after the close if nobody
+ * has settled it (and at any time while paused); earlier ones allowed withdrawal
+ * until the close. Read from the contract so one build serves both.
+ */
+export interface BidPolicy {
+  binding: boolean;
+  settlementGraceSeconds: number;
+}
+
+/** Withdraws the caller's leading primary-auction bid when the contract allows it. */
 export interface CancelAuctionBidRequest {
   gemId: bigint;
 }

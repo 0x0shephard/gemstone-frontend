@@ -47,6 +47,7 @@ import type {
   CreateOfferRequest,
   CreateSwapRequest,
   DecoratedGem,
+  BidPolicy,
   FeeTier,
   FundReserveRequest,
   Gem,
@@ -1733,6 +1734,18 @@ export const chainService: IDataService = {
       featuredCaption: gems[0]?.displayId ?? 'No registered gems',
     };
   },
+  getBidPolicy: async (): Promise<BidPolicy> => {
+    try {
+      const grace = (await client.readContract({
+        ...contract('Marketplace'),
+        functionName: 'SETTLEMENT_GRACE',
+      })) as bigint;
+      return { binding: true, settlementGraceSeconds: Number(grace) };
+    } catch {
+      // Contracts from before binding bids have no SETTLEMENT_GRACE.
+      return { binding: false, settlementGraceSeconds: 0 };
+    }
+  },
   getFeeTiers: async (): Promise<FeeTier[]> => {
     const count = (await client.readContract({
       ...contract('ReserveManager'),
@@ -2247,7 +2260,7 @@ export const chainService: IDataService = {
     };
     return runContractTransaction(call);
   },
-  /** Withdraws the caller's own live offer, or a leading listed-token bid before it ends. */
+  /** Withdraws the caller's own offer, or a leading listed-token bid the contract has released. */
   cancelOffer: (request: OfferRequest) =>
     runContractTransaction({
       ...contract('Marketplace'),
