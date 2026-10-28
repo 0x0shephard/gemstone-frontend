@@ -106,8 +106,14 @@ Marketplace, PrimarySaleAuction, SwapEscrow, RedemptionManager) and `ReserveMana
 3. Marketplace, PrimarySaleAuction, SwapEscrow, RedemptionManager
 4. DGENFT (also adds `owner()` and `contractURI()`, both empty until set)
 
-Each is a plain `upgradeToAndCall(newImplementation, "")`. Sepolia needs the
-high gas limit described in the deploy notes (`cast send --create … --gas-limit 32000000`).
+Each is a plain `upgradeToAndCall(newImplementation, "")`. Run every upgrade script with
+`--broadcast --slow --skip-simulation`. Sepolia prices contract creation about 7x above
+forge's local simulation (implementations took 14–30M gas on 2026-10-28), so a simulated
+gas limit runs out; `--skip-simulation` takes each limit from the node. Rehearse first with
+`scripts/rehearse-upgrade.mjs` and anvil 1.8 or later: older anvil forks use the old
+pricing and pass upgrades the real chain would reject. Then record a manifest per upgraded
+proxy in the contracts repo's `deployments/`, or the canary reports the new implementations
+as unexpected.
 
 ## Configuration for Arbitrum
 
