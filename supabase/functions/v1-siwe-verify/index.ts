@@ -3,11 +3,17 @@ import {
   defineChain,
   getAddress,
   http,
+  recoverMessageAddress,
   type Address,
   type Hex,
 } from 'npm:viem@2';
 import { parseSiweMessage, verifySiweMessage } from 'npm:viem@2/siwe';
 import { adminClient, audit, requireUser, sha256 } from '../_shared/auth.ts';
+import {
+  configuredChainId,
+  siweTimesValid,
+  type WalletSignatureKind,
+} from '../_shared/authPolicy.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { resolveSiteOrigin } from '../_shared/origins.ts';
 import { backfillProfileLinks } from '../_shared/notify.ts';
@@ -15,22 +21,33 @@ import { backfillProfileLinks } from '../_shared/notify.ts';
 Deno.serve(async (request) => {
   const early = preflight(request);
   if (early) return early;
+
+  // Fail closed: no default chain, so a lost secret cannot reopen Sepolia.
+  const expectedChain = configuredChainId(Deno.env.get('CHAIN_ID'));
+  if (expectedChain === null) {
+    console.error('v1-siwe-verify: CHAIN_ID is not set to a positive integer');
+    return json({ error: 'Wallet linking is not configured' }, 503);
+  }
+
+  let user;
   try {
-    const user = await requireUser(request);
+    user = await requireUser(request);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : 'Invalid session' }, 401);
+  }
+
+  try {
     const { message, signature, confirmRelink = false } = await request.json();
     const parsed = parseSiweMessage(message);
     const expectedOrigin = resolveSiteOrigin(parsed.domain, parsed.uri);
-    const expectedChain = Number(Deno.env.get('CHAIN_ID') ?? 11155111);
     const now = new Date();
     if (
       !expectedOrigin ||
       parsed.chainId !== expectedChain ||
       !parsed.address ||
       !parsed.nonce ||
-      !parsed.issuedAt ||
-      !parsed.expirationTime ||
-      parsed.issuedAt > now ||
-      parsed.expirationTime <= now
+      // `issuedAt` is the wallet's clock and may run up to a minute ahead.
+      !siweTimesValid(parsed, now)
     )
       return json({ error: 'Invalid SIWE fields' }, 400);
 
@@ -59,6 +76,23 @@ Deno.serve(async (request) => {
       time: now,
     });
     if (!verified) return json({ error: 'Invalid signature' }, 401);
+
+    /*
+     * Which kind of signer proved this. `verifySiweMessage` accepts an EOA
+     * signature, an ERC-1271 contract wallet and an ERC-6492 counterfactual one.
+     * Only the first is proof on every chain: a contract wallet is proven on
+     * `expectedChain` alone, since the same address on another chain can be a
+     * different contract with different owners. The link records both so a
+     * later reader (or a chain switch) can tell which links still hold.
+     */
+    const signatureKind: WalletSignatureKind = await recoverMessageAddress({
+      message,
+      signature: signature as Hex,
+    })
+      .then((recovered) =>
+        recovered.toLowerCase() === String(parsed.address).toLowerCase() ? 'eoa' : 'contract',
+      )
+      .catch(() => 'contract' as const);
 
     const admin = adminClient();
     const nonceHash = await sha256(parsed.nonce);
@@ -98,6 +132,7 @@ Deno.serve(async (request) => {
           profile_id: user.id,
           wallet_address: walletAddress,
           chain_id: expectedChain,
+          signature_kind: signatureKind,
           is_primary: true,
           verified_at: now.toISOString(),
         },

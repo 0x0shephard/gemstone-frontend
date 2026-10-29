@@ -1,9 +1,27 @@
 project_id = "digital-carat"
 
+# Only the keys set here differ from the CLI defaults. This file drives the
+# local stack; it is not pushed to production by `db push` or `functions
+# deploy`. Do not run `supabase config push` against production with this file:
+# an [auth] table here would reset every auth setting it leaves out (site URL,
+# redirect URLs, providers, SMTP) to the CLI defaults.
+[auth]
+# Anonymous sign-ins hand out an `authenticated` JWT to anyone with the anon
+# key. Nothing in the app uses them. Production is switched off in the
+# dashboard (Authentication -> Sign In / Providers -> Allow anonymous sign-ins).
+enable_anonymous_sign_ins = false
+
 [functions.v1-siwe-nonce]
 verify_jwt = false
 
 [functions.v1-siwe-verify]
+verify_jwt = false
+
+# Sumsub calls this server to server and cannot send a Supabase JWT, so the
+# gateway rejected every delivery before the function ran. Authorization is the
+# HMAC over the body (`x-payload-digest`, keyed by SUMSUB_WEBHOOK_SECRET), which
+# the function checks itself and refuses with 401 when it does not match.
+[functions.v1-sumsub-webhook]
 verify_jwt = false
 
 [functions.v1-seller-submit]

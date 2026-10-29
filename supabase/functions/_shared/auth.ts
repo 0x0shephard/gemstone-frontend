@@ -1,4 +1,5 @@
 import { createClient, type User } from 'npm:@supabase/supabase-js@2';
+import { isAnonymousUser } from './authPolicy.ts';
 
 export function adminClient() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, {
@@ -15,6 +16,12 @@ export async function requireUser(request: Request): Promise<User> {
   });
   const { data, error } = await client.auth.getUser();
   if (error || !data.user) throw new Error('Invalid session');
+  /*
+   * An anonymous sign-in is a real `authenticated` session with no person
+   * behind it. Refused with the same message as a bad token, so every caller
+   * that maps 'Invalid session' to 401 keeps doing so.
+   */
+  if (isAnonymousUser(data.user)) throw new Error('Invalid session');
   return data.user;
 }
 
