@@ -96,7 +96,8 @@ export interface IDataService {
   getFeeTiers(): Promise<FeeTier[]>;
   getBidPolicy(): Promise<BidPolicy>;
   getPaymentAssets(): Promise<PaymentAsset[]>;
-  getPendingAuctionRefunds(address?: string): Promise<PendingRefund[]>;
+  /** Pull-payment credits held for the address by the auction and the marketplace, per asset. */
+  getPendingRefunds(address?: string): Promise<PendingRefund[]>;
   getPendingReserveCredits(address?: string): Promise<PendingReserveCredit[]>;
   getPendingTreasuryPayout(address?: string): Promise<PendingTreasuryPayout | undefined>;
   /**

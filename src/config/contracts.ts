@@ -59,14 +59,31 @@ export const musdcFaucetAddress = parsePublicAsset(
 );
 
 /**
+ * Where the gift operator comes from.
+ *
+ * When a release manifest is embedded it is the only source: a stale
+ * `VITE_GIFT_OPERATOR_ADDRESS` left in the hosting environment by an earlier
+ * deployment must never win, and must not fill the gap when the manifest names
+ * no operator either. The env variable is read only by builds without an
+ * embedded release (local development and tests).
+ */
+export function resolveGiftOperator(
+  embedded: { giftOperator?: string } | null | undefined,
+  envValue: unknown,
+): Address | undefined {
+  const candidate = embedded ? embedded.giftOperator : envValue;
+  return typeof candidate === 'string' && isAddress(candidate) ? getAddress(candidate) : undefined;
+}
+
+/**
  * The operator EOA that holds newly gifted tokens in custody until claim.
  *
  * Not part of {@link deploymentManifest}: it is an EOA rather than a deployed
  * contract. It also remains the spender for legacy approval-backed cards.
  */
-export const giftOperatorAddress = parsePublicAsset(
-  embeddedDeploymentConfig?.giftOperator,
-  'VITE_GIFT_OPERATOR_ADDRESS',
+export const giftOperatorAddress = resolveGiftOperator(
+  embeddedDeploymentConfig,
+  import.meta.env.VITE_GIFT_OPERATOR_ADDRESS,
 );
 
 export interface DeploymentManifest {

@@ -11,6 +11,7 @@ import {
 } from '@wagmi/core';
 import {
   BaseError,
+  ContractFunctionExecutionError,
   ContractFunctionRevertedError,
   WaitForTransactionReceiptTimeoutError,
   encodeFunctionData,
@@ -28,6 +29,7 @@ import { NATIVE_ASSET } from '@/config/contracts';
 import { wagmiConfig } from '@/providers/wagmi';
 import { supabase } from '@/providers/supabase';
 import { dgeNftAbi } from '@/contracts/abis';
+import { decodeForeignRevert, describeRevert } from './revertMessages';
 import type { TxResult } from '@/services/types';
 import {
   BroadcastPendingError,
@@ -634,7 +636,14 @@ export function decodeTransactionError(error: unknown): Error {
           'CONTRACT_REVERTED',
         );
       }
-      const errorName = reverted.data?.errorName;
+      /*
+       * Errors from a contract the wallet did not call (the payment-token
+       * registry's oracle guards, the reserve manager's solvency check) are not
+       * in this call's ABI, so they arrive undecoded. Decode them against those
+       * contracts' errors before giving up on a name.
+       */
+      const foreign = reverted.data ? undefined : decodeForeignRevert(reverted.raw);
+      const errorName = reverted.data?.errorName ?? foreign?.errorName;
       if (errorName === 'BidLocked') {
         const [withdrawableAt] = (reverted.data?.args ?? []) as readonly bigint[];
         const when =
@@ -651,14 +660,17 @@ export function decodeTransactionError(error: unknown): Error {
           'CONTRACT_REVERTED',
         );
       }
+      const execution = error.walk(
+        (candidate) => candidate instanceof ContractFunctionExecutionError,
+      ) as ContractFunctionExecutionError | null;
+      const functionName =
+        execution?.functionName ??
+        /contract function "([A-Za-z0-9_]+)"/.exec(reverted.shortMessage)?.[1];
       const reason =
-        errorName === 'AuctionActive'
-          ? 'A bid is live, so this cannot be changed until its auction settles.'
-          : errorName === 'Expired'
-            ? 'This offer has expired and can no longer be accepted.'
-            : errorName === 'InvalidOffer'
-              ? 'This offer is no longer open. Refresh the list to see its current state.'
-              : (errorName ?? reverted.reason ?? 'Contract transaction reverted');
+        (errorName ? describeRevert(errorName, functionName) : undefined) ??
+        errorName ??
+        reverted.reason ??
+        'Contract transaction reverted';
       return new TransactionGuardError(reason, 'CONTRACT_REVERTED');
     }
     if (/rejected|denied/i.test(error.shortMessage)) {

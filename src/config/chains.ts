@@ -69,10 +69,18 @@ export const activeChain: Chain = KNOWN[env.chainId] ?? customChain();
 export const supportedChains: readonly [Chain, ...Chain[]] =
   activeChain.id === mainnet.id ? [mainnet] : [activeChain, mainnet];
 
+/**
+ * The block explorer for the active chain: an explicit `VITE_EXPLORER_BASE_URL`
+ * when set, otherwise the chain's own default (Arbiscan on Arbitrum One).
+ */
+export function explorerBaseUrl(): string {
+  return (env.explorerBaseUrl || activeChain.blockExplorers?.default.url || '').replace(/\/$/, '');
+}
+
 export function explorerTxUrl(hash: string): string {
-  return `${env.explorerBaseUrl.replace(/\/$/, '')}/tx/${hash}`;
+  return `${explorerBaseUrl()}/tx/${hash}`;
 }
 
 export function explorerAddressUrl(address: string): string {
-  return `${env.explorerBaseUrl.replace(/\/$/, '')}/address/${address}`;
+  return `${explorerBaseUrl()}/address/${address}`;
 }

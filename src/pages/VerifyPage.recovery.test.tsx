@@ -242,4 +242,48 @@ describe('redemption emergency recovery', () => {
       screen.queryByRole('button', { name: 'Prepare recovery execution' }),
     ).not.toBeInTheDocument();
   });
+
+  it('lets a Safe approver record the executed transaction hash and shows the server error', async () => {
+    const value = tracker('approve_recovery');
+    const EXECUTED = `0x${'a'.repeat(64)}` as const;
+    mocks.loadDetail.mockResolvedValue(value);
+    mocks.resume.mockResolvedValue({
+      action: 'approve_recovery',
+      idempotencyKey: 'intent-approve',
+      expectedVersion: 7,
+      payload: { recoveryWallet: WALLET, proposalHash: PROPOSAL },
+      chainArguments: { tokenId: '42', proposalHash: PROPOSAL },
+      transactionHash: null,
+      createdAt: '2026-10-04T00:00:00.000Z',
+    });
+    mocks.mutateRecovery
+      .mockRejectedValueOnce(new Error('Receipt is not an execTransaction from a Safe owner'))
+      .mockResolvedValueOnce({ request: { ...value, version: 8 } });
+    renderReview(value);
+
+    fireEvent.click(await screen.findByText(/Signing with a Safe\?/));
+    const field = screen.getByLabelText('Executed transaction hash');
+    const record = screen.getByRole('button', { name: 'Record recovery step' });
+    // A Safe transaction hash is not accepted until it is a well-formed tx hash.
+    fireEvent.change(field, { target: { value: '0x1234' } });
+    expect(record).toBeDisabled();
+
+    fireEvent.change(field, { target: { value: EXECUTED } });
+    fireEvent.click(record);
+    expect(
+      await screen.findByText('Receipt is not an execTransaction from a Safe owner'),
+    ).toBeInTheDocument();
+    expect(mocks.approve).not.toHaveBeenCalled();
+    expect(mocks.mutateRecovery).toHaveBeenLastCalledWith(
+      'approve_recovery',
+      expect.objectContaining({
+        idempotencyKey: 'intent-approve',
+        recoveryWallet: WALLET,
+        transactionHash: EXECUTED,
+      }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Record recovery step' }));
+    await waitFor(() => expect(mocks.mutateRecovery).toHaveBeenCalledTimes(2));
+  });
 });

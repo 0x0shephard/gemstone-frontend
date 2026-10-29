@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import { useBidSummaries, useListings } from '@/hooks/useData';
 import { GemCard } from '@/components/gem/GemCard';
 import { FilterPills } from '@/components/ui/FilterPills';
@@ -163,6 +164,24 @@ export default function MarketplacePage() {
         <CardGridSkeleton />
       ) : isError ? (
         <ErrorState />
+      ) : (gems ?? []).length === 0 ? (
+        /*
+         * Nothing exists yet, which is a different fact from "nothing matches":
+         * telling a first visitor to clear a filter they never set reads as a
+         * broken page.
+         */
+        <div className="space-y-3 text-center">
+          <EmptyState
+            title="No tokens are trading yet"
+            hint="The vault is just opening. A stone becomes a token by winning its primary auction, and appears here once minted."
+          />
+          <Link
+            to="/auctions"
+            className="inline-block text-[13px] font-semibold text-atelier underline-offset-2 hover:underline"
+          >
+            See auctions →
+          </Link>
+        </div>
       ) : visible.length === 0 ? (
         <EmptyState
           title="No stones match this view"

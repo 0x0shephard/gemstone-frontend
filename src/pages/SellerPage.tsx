@@ -8,6 +8,7 @@ import { GemCard } from '@/components/gem/GemCard';
 import { useGems } from '@/hooks/useData';
 import { useAuth } from '@/providers/AuthProvider';
 import { env } from '@/config/env';
+import { activeChain } from '@/config/chains';
 import { fmtUsdBaseUnits } from '@/lib/format';
 import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
@@ -31,7 +32,7 @@ const SUBMIT_OUTCOME: Record<string, string> = {
   awaiting_custody:
     'was accepted. Send the stone to the custodian — grading begins once it arrives and is logged.',
   awaiting_grading: 'is queued for gemological review. A grading lab will price it before listing.',
-  approved: 'passed automatic verification and entered Sepolia activation.',
+  approved: 'passed automatic verification and is being activated on-chain.',
   registered: 'passed automatic verification and is now listed.',
 };
 
@@ -39,6 +40,7 @@ const SUBMIT_OUTCOME: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   awaiting_custody: 'Awaiting arrival',
   awaiting_grading: 'Awaiting lab review',
+  rejected: 'Rejected by the gem lab',
   withdrawn: 'Withdrawn',
 };
 
@@ -223,16 +225,27 @@ export default function SellerPage() {
     setActivationId(submissionId);
     setResult(undefined);
     try {
-      await activateSellerGem(submissionId);
-      setResult({
-        ok: true,
-        message: 'Sepolia activation completed.',
-      });
+      const outcome = await activateSellerGem(submissionId);
+      /*
+       * Activation is run by Digital Carat after the vault records receipt, so
+       * "not yet" comes back as the server's explanation (a 409). It is shown
+       * as information: nothing failed and there is nothing to retry.
+       */
+      setResult(
+        outcome.waiting
+          ? { ok: true, message: outcome.waiting }
+          : outcome.onchainGemId
+            ? {
+                ok: true,
+                message: `Activated on ${activeChain.name} as gem #${outcome.onchainGemId}.`,
+              }
+            : { ok: true, message: 'Activation is in progress. Check back shortly.' },
+      );
       await reloadSubmissions();
     } catch (error) {
       setResult({
         ok: false,
-        message: error instanceof Error ? error.message : 'Activation retry failed',
+        message: error instanceof Error ? error.message : 'Activation status could not be checked',
       });
       // A failed attempt still advances `activation_state` and `activation_error`.
       // Without this the row keeps rendering the previous failure beside a banner
@@ -464,8 +477,8 @@ export default function SellerPage() {
               <div>
                 <h3 className="text-[14px] font-semibold text-ink">Activation queue</h3>
                 <p className="mt-0.5 text-[11.5px] text-ink-muted">
-                  A grading lab prices the stone, then it is registered, valued and listed on
-                  Sepolia in one step.
+                  A grading lab prices the stone, then it is registered, valued and listed on{' '}
+                  {activeChain.name} in one step.
                 </p>
               </div>
               <span className="font-mono text-[10.5px] text-ink-dim">
@@ -541,7 +554,7 @@ export default function SellerPage() {
                         disabled={activationId === submission.id}
                         onClick={() => void retryActivation(submission.id)}
                       >
-                        {activationId === submission.id ? 'Activating…' : 'Retry activation'}
+                        {activationId === submission.id ? 'Checking…' : 'Check activation'}
                       </Button>
                     )}
                     {resumable && (

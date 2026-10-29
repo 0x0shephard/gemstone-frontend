@@ -20,17 +20,22 @@ export function describePaymentAsset(
   return { symbol: 'token', decimals: 18 };
 }
 
+/** `usdValue` is undefined when the cash asset could not be quoted; the token amount still stands. */
 export function formatSwapCash(
   amount: bigint,
-  usdValue: bigint,
+  usdValue: bigint | undefined,
   descriptor: AssetDescriptor,
   proposerPays: boolean,
 ): string {
   if (amount === 0n) return 'No cash delta';
+  const usd =
+    usdValue === undefined
+      ? 'USD value unavailable'
+      : `$${Number(formatUnits(usdValue, 18)).toLocaleString()}`;
   return `${proposerPays ? 'Proposer pays' : 'Accepter pays'} ${formatUnits(
     amount,
     descriptor.decimals,
-  )} ${descriptor.symbol} ($${Number(formatUnits(usdValue, 18)).toLocaleString()})`;
+  )} ${descriptor.symbol} (${usd})`;
 }
 
 /**
@@ -74,10 +79,21 @@ export function latestBidEventsForAddress(
   return [...latestByGem.values()];
 }
 
+/**
+ * Auctions by what can happen to them next.
+ *
+ * Only an ended auction with a leading bid is awaiting settlement:
+ * `PrimarySaleAuction.settleAuction` reverts `InvalidAuction` when nobody bid,
+ * so offering "Settle" there (and counting it as pending) promised an action
+ * that could only fail. An ended auction without a bid waits for the lister to
+ * open a new round instead.
+ */
 export function groupAuctions(auctions: Auction[]) {
+  const ended = (auction: Auction) => !auction.settled && auction.secondsLeft <= 0;
   return {
     live: auctions.filter((auction) => !auction.settled && auction.secondsLeft > 0),
-    awaitingSettlement: auctions.filter((auction) => !auction.settled && auction.secondsLeft <= 0),
+    awaitingSettlement: auctions.filter((auction) => ended(auction) && auction.highestBidder),
+    endedWithoutBids: auctions.filter((auction) => ended(auction) && !auction.highestBidder),
     past: auctions.filter((auction) => auction.settled),
   };
 }
@@ -104,6 +120,49 @@ export function groupActionableSwaps(swaps: SwapRequest[], viewer?: string) {
     blockedOwned: swaps.filter(
       (swap) => swap.status === 'Active' && redeeming(swap) && ownedByViewer(swap),
     ),
+  };
+}
+
+/**
+ * The account on the requested side of a swap.
+ *
+ * `requestedOwner` is a live `ownerOf` read, so once a swap is accepted it names
+ * the proposer (who now holds the requested token) and the counterparty drops
+ * out of their own completed swap. The accepter recorded by the event is the
+ * counterparty from then on.
+ */
+export function swapCounterparty(
+  swap: Pick<SwapRequest, 'status' | 'requestedOwner' | 'accepter'>,
+) {
+  return swap.status === 'Accepted' && swap.accepter ? swap.accepter : swap.requestedOwner;
+}
+
+/** Whether the viewer is either party to the swap. */
+export function isSwapParty(
+  swap: Pick<SwapRequest, 'status' | 'proposer' | 'requestedOwner' | 'accepter'>,
+  viewer?: string,
+): boolean {
+  const normalized = viewer?.toLowerCase();
+  if (!normalized) return false;
+  return (
+    swap.proposer.toLowerCase() === normalized ||
+    swapCounterparty(swap).toLowerCase() === normalized ||
+    swap.requestedOwner.toLowerCase() === normalized
+  );
+}
+
+/**
+ * The viewer's swaps for the portfolio, split the way its tab counts them.
+ *
+ * `open` (still holding a token in escrow) is what the tab's count reports;
+ * `closed` is the record of accepted and cancelled swaps, shown to both
+ * parties beneath it.
+ */
+export function portfolioSwaps(swaps: SwapRequest[], viewer?: string) {
+  const mine = swaps.filter((swap) => isSwapParty(swap, viewer));
+  return {
+    open: mine.filter((swap) => swap.status === 'Active' || swap.status === 'Expired'),
+    closed: mine.filter((swap) => swap.status === 'Accepted' || swap.status === 'Cancelled'),
   };
 }
 

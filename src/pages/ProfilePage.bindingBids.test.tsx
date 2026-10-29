@@ -103,4 +103,38 @@ describe('binding leading bids', () => {
     renderCell(bidColumns(undefined), 'actions', leadingBid);
     expect(screen.queryByRole('button', { name: 'Cancel bid' })).toBeNull();
   });
+
+  it('offers "Withdraw bid" on a leading primary bid once the grace period has run out', () => {
+    const ended: Bid = {
+      ...leadingBid,
+      secondsLeft: 0,
+      endTime: now() - BigInt(WEEK) - 1n,
+      settled: false,
+    };
+    renderCell(bidColumns(binding, BIDDER), 'actions', ended);
+    expect(screen.getByRole('button', { name: 'Withdraw bid' })).toBeInTheDocument();
+  });
+
+  it('keeps a leading primary bid binding inside the grace period', () => {
+    const ended: Bid = { ...leadingBid, secondsLeft: 0, endTime: now() - 3600n, settled: false };
+    renderCell(bidColumns(binding, BIDDER), 'actions', ended);
+    expect(screen.queryByRole('button', { name: 'Withdraw bid' })).toBeNull();
+    expect(screen.getByText('Binding until settled')).toBeInTheDocument();
+  });
+
+  it('offers the paused-state exit for primary and listing bids, and hides settlement', () => {
+    const paused: BindingRule = { ...binding, paused: true };
+    renderCell(bidColumns(paused, BIDDER), 'actions', { ...leadingBid, endTime: now() + 3600n });
+    expect(screen.getByRole('button', { name: 'Withdraw bid' })).toBeInTheDocument();
+    screen.getByRole('button', { name: 'Withdraw bid' }).remove();
+
+    renderCell(offerColumns(BIDDER, new Map(), paused), 'action', offer({}));
+    expect(screen.getByRole('button', { name: 'Withdraw bid' })).toBeInTheDocument();
+    screen.getByRole('button', { name: 'Withdraw bid' }).remove();
+
+    const ended = offer({ status: 'Awaiting settlement', secondsLeft: 0, expiry: now() - 60n });
+    renderCell(offerColumns(BIDDER, new Map(), paused), 'action', ended);
+    expect(screen.getByRole('button', { name: 'Withdraw bid' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Settle now' })).toBeNull();
+  });
 });

@@ -103,6 +103,9 @@ export interface Auction {
   bids: number;
   secondsLeft: number;
   floorUsd: bigint;
+  /** Unix start and end, from `PrimarySaleAuction.auctions`. Bids are accepted in [start, end). */
+  startTime: bigint;
+  endTime: bigint;
   /** Contract settlement state. Settled auctions stay visible as history. */
   settled: boolean;
   /** A settled auction either minted its token or refunded the winning bid. */
@@ -117,6 +120,10 @@ export interface Bid {
   status: 'Leading' | 'Outbid';
   statusColor: string;
   secondsLeft: number;
+  /** Unix close of the auction, from contract state, when read. */
+  endTime?: bigint;
+  /** The auction's settlement flag at read time. */
+  settled?: boolean;
 }
 
 export interface Offer {
@@ -152,6 +159,12 @@ export interface SwapRequest {
   diff: string;
   status: 'Active' | 'Accepted' | 'Cancelled' | 'Expired';
   statusColor: string;
+  /**
+   * Who accepted it, from `SwapEscrow.OfferAccepted`. After acceptance the
+   * requested token belongs to the proposer, so `requestedOwner` (a live
+   * `ownerOf`) no longer names the counterparty; this does.
+   */
+  accepter?: Address;
 }
 
 export interface Redemption {
@@ -195,6 +208,8 @@ export interface FeeTier {
   tier: string;
   range: string;
   pct: string;
+  /** The bracket's reserve rate in basis points, when read from the contract. */
+  bps?: number;
 }
 
 export interface TreasurySplitItem {
@@ -224,12 +239,24 @@ export interface PaymentAsset {
   symbol: string;
   name: string;
   decimals: number;
+  /** USD per whole token; 0 when the registry quote could not be read. */
   usdPrice: number;
   enabled: boolean;
   isNative: boolean;
+  /** Why an asset cannot be used even though the registry lists it (e.g. unreadable decimals). */
+  unavailableReason?: string;
 }
 
+/**
+ * The contracts that hold pull-payment credits. Both credit a refund they could
+ * not push (a wallet that rejects ETH, a reverting token transfer) and pay it
+ * out through their own `claimRefund(asset)`.
+ */
+export type RefundSource = 'PrimarySaleAuction' | 'Marketplace';
+
 export interface PendingRefund {
+  /** The contract holding the credit; `claimRefund` must be sent to it. */
+  source: RefundSource;
   paymentAsset: Address;
   symbol: PaymentAsset['symbol'];
   amount: bigint;
@@ -325,6 +352,12 @@ export interface BidRequest {
 export interface BindingRule {
   binding: boolean;
   settlementGraceSeconds: number;
+  /**
+   * The contract is paused. A paused contract releases binding bids at once
+   * (`cancelBid` / `cancelOffer` skip the grace check), and is the only exit
+   * while it lasts, since settlement is paused too. Undefined when unread.
+   */
+  paused?: boolean;
 }
 
 export interface BidPolicy {
@@ -349,6 +382,8 @@ export interface SettleListingAuctionRequest {
 
 export interface ClaimRefundRequest {
   paymentAsset: Address;
+  /** Defaults to `PrimarySaleAuction`, the only source before marketplace credits were surfaced. */
+  source?: RefundSource;
 }
 
 export interface ClaimTreasuryPayoutRequest {

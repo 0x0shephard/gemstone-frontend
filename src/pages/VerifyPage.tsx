@@ -635,6 +635,24 @@ function RecoveryPanel({
     });
     if (prepared.storageKey) clearOperationIdempotencyKey(prepared.storageKey);
   }
+  /*
+   * A Safe connected over WalletConnect answers a transaction request with its
+   * own safeTxHash, which is not a transaction on chain, so the step can never
+   * be recorded from it. Once the Safe has executed the transaction, the
+   * approver pastes the executed transaction hash and the server validates
+   * that receipt instead.
+   */
+  const [executedHash, setExecutedHash] = useState('');
+  const executedHashValid = /^0x[0-9a-fA-F]{64}$/.test(executedHash.trim());
+  const recordExecuted = useMutation({
+    mutationFn: () => confirm(executedHash.trim() as `0x${string}`),
+    onSuccess: () => {
+      setExecutedHash('');
+      setPrepared(undefined);
+      setEvidence(undefined);
+      void queryClient.invalidateQueries({ queryKey: ['operations'] });
+    },
+  });
 
   return (
     <div className="space-y-3 border-t border-ruby/20 pt-4">
@@ -735,6 +753,56 @@ function RecoveryPanel({
               ? 'Approve with this distinct wallet'
               : 'Execute delayed recovery'}
         </TxButton>
+      )}
+      {prepared && preparedValid && walletMatches && (
+        <details className="rounded-[4px] border border-line/[0.08] bg-inset p-3">
+          <summary className="cursor-pointer text-[12px] font-medium text-ink">
+            Signing with a Safe? Record the executed transaction
+          </summary>
+          <p className="mt-2 text-[11.5px] leading-relaxed text-ink-muted">
+            A Safe returns its own Safe transaction hash, which is not on chain. After the Safe
+            executes this step, paste the hash of the executed transaction here.
+          </p>
+          <form
+            className="mt-2 space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (executedHashValid) recordExecuted.mutate();
+            }}
+          >
+            <label className="block">
+              <span className="mb-1 block text-[11px] text-ink-dim">Executed transaction hash</span>
+              <input
+                value={executedHash}
+                onChange={(event) => setExecutedHash(event.target.value)}
+                placeholder="0x…"
+                spellCheck={false}
+                autoComplete="off"
+                className="h-9 w-full rounded-[4px] border border-line/[0.12] bg-line/[0.03] px-3 font-mono text-[11.5px] text-ink outline-none"
+              />
+            </label>
+            {executedHash.trim() && !executedHashValid && (
+              <p className="text-[11px] text-amber">
+                Enter a 32-byte transaction hash (0x + 64 hex).
+              </p>
+            )}
+            {recordExecuted.error && (
+              <p role="alert" className="text-[12px] text-ruby">
+                {recordExecuted.error instanceof Error
+                  ? recordExecuted.error.message
+                  : 'The recovery step could not be recorded.'}
+              </p>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              variant="secondary"
+              disabled={!executedHashValid || recordExecuted.isPending}
+            >
+              {recordExecuted.isPending ? 'Recording…' : 'Record recovery step'}
+            </Button>
+          </form>
+        </details>
       )}
       {prepared && !preparedValid && (
         <p role="alert" className="text-[12px] text-ruby">

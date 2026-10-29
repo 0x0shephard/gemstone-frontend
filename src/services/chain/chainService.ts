@@ -61,6 +61,7 @@ import type {
   PendingTreasuryPayout,
   Redemption,
   RedemptionRequest,
+  RefundSource,
   SetCollectorCommitmentRequest,
   StartRedemptionFulfillmentRequest,
   SubmitFulfillmentProofRequest,
@@ -82,6 +83,7 @@ import type {
 } from '../types';
 import { syncProjection, type ProjectionSnapshot } from './projection';
 import { readMetadata, trait } from './metadata';
+import { withPurchaseHeadroom } from '@/lib/slippage';
 import { gatewayUrl, resizedIpfsImageUrl, resolveIpfsGateways } from '@/config/ipfs';
 import {
   runContractTransaction,
@@ -92,6 +94,8 @@ import {
   describePaymentAsset,
   escrowedSwapTokenIds,
   formatSwapCash,
+  isSwapParty,
+  portfolioSwaps,
   auctionBidCount,
   latestBidEventsForAddress,
 } from './marketPresentation';
@@ -748,6 +752,47 @@ function paymentParams(
   };
 }
 
+/**
+ * Decimals of the payment tokens this deployment is known to use, by lowercase
+ * address. USDC (real on a mainnet release, the mintable stand-in on Sepolia) has
+ * six. These are immutable token properties, so a known value is used without a
+ * read rather than risking a guess.
+ */
+const KNOWN_TOKEN_DECIMALS: ReadonlyMap<string, number> = new Map([
+  // Native USDC on Arbitrum One.
+  ['0xaf88d065e77c8cc2239327c5edb3a432268e5831', 6],
+  ...(manifest.usdc ? ([[manifest.usdc.toLowerCase(), 6]] as const) : []),
+]);
+
+const DECIMALS_READ_ATTEMPTS = 3;
+
+/**
+ * An ERC-20's decimals, or undefined when they cannot be established.
+ *
+ * Defaulting to 18 on a failed read made a six-decimal USDC quote and display a
+ * trillion times too large or small. Known assets come from the table above;
+ * anything else is read with a short retry, and a token that still will not
+ * answer is reported as unusable rather than guessed at.
+ */
+export async function tokenDecimals(address: Address): Promise<number | undefined> {
+  const known = KNOWN_TOKEN_DECIMALS.get(address.toLowerCase());
+  if (known !== undefined) return known;
+  for (let attempt = 0; attempt < DECIMALS_READ_ATTEMPTS; attempt += 1) {
+    try {
+      const value = Number(
+        await client.readContract({ address, abi: erc20MetadataAbi, functionName: 'decimals' }),
+      );
+      if (Number.isInteger(value) && value >= 0 && value <= 36) return value;
+      return undefined;
+    } catch {
+      if (attempt < DECIMALS_READ_ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+  }
+  return undefined;
+}
+
 async function getPaymentAssets(): Promise<PaymentAsset[]> {
   let addresses: Address[];
   try {
@@ -777,7 +822,7 @@ async function getPaymentAssets(): Promise<PaymentAsset[]> {
     ...new Map(addresses.map((address) => [address.toLowerCase(), address])).values(),
   ];
   const candidates = await Promise.all(
-    uniqueAddresses.map(async (address) => {
+    uniqueAddresses.map(async (address): Promise<Omit<PaymentAsset, 'enabled' | 'usdPrice'>> => {
       const isNative = address === NATIVE_ASSET;
       if (isNative) {
         return {
@@ -795,15 +840,31 @@ async function getPaymentAssets(): Promise<PaymentAsset[]> {
         client
           .readContract({ address, abi: erc20MetadataAbi, functionName: 'name' })
           .catch(() => 'ERC-20 token') as Promise<string>,
-        client
-          .readContract({ address, abi: erc20MetadataAbi, functionName: 'decimals' })
-          .catch(() => 18) as Promise<number>,
+        tokenDecimals(address),
       ]);
-      return { address, symbol, name, decimals: Number(decimals), isNative };
+      return {
+        address,
+        symbol,
+        name,
+        decimals: decimals ?? 0,
+        isNative,
+        ...(decimals === undefined
+          ? {
+              unavailableReason:
+                'Its decimals could not be read from the token contract, so amounts cannot be quoted safely.',
+            }
+          : {}),
+      };
     }),
   );
   return Promise.all(
     candidates.map(async (asset) => {
+      /*
+       * An asset whose decimals are unknown must not be quoted or offered: every
+       * amount derived from it would be off by a power of ten. It is reported,
+       * disabled, rather than dropped, so the screen can say why.
+       */
+      if (asset.unavailableReason) return { ...asset, enabled: false, usdPrice: 0 };
       const enabled = (await client
         .readContract({
           ...contract('PaymentTokenRegistry'),
@@ -907,6 +968,8 @@ async function leadingBidsFromState(address: Address): Promise<Bid[]> {
         status: 'Leading',
         statusColor: 'var(--dc-emerald)',
         secondsLeft: Number(state[3] > now ? state[3] - now : 0n),
+        endTime: state[3],
+        settled: state[1],
       };
     }),
   );
@@ -946,6 +1009,8 @@ async function getAuctions(): Promise<Auction[]> {
         bids: auctionBidCount(events, gemId),
         secondsLeft: Number(state[3] > now ? state[3] - now : 0n),
         floorUsd: state[4],
+        startTime: state[2],
+        endTime: state[3],
         settled,
         outcome: settled ? (gem.tokenId ? ('Minted' as const) : ('Refunded' as const)) : undefined,
         tokenId: settled ? gem.tokenId : undefined,
@@ -1141,7 +1206,13 @@ async function getSwaps(): Promise<SwapRequest[]> {
     (event) => event.module === 'SwapEscrow' && event.eventName === 'OfferCreated',
   );
   const now = BigInt(Math.floor(Date.now() / 1_000));
-  const swaps = await Promise.all(
+  /*
+   * Settled per swap. One swap whose row cannot be built (a token whose gem
+   * cannot be read, a cash asset the registry will no longer quote) used to
+   * reject the whole `Promise.all`, so the Swaps page failed outright and every
+   * proposer lost their "Return my gemstone" button with it.
+   */
+  const settled = await Promise.allSettled(
     [
       ...new Map(
         createdEvents
@@ -1191,14 +1262,19 @@ async function getSwaps(): Promise<SwapRequest[]> {
       const proposerPays = state[7] ? state[5] : (created.args.proposerPaysCash as boolean);
       const cashAsset = state[3] || (created.args.cashAsset as Address);
       const cashDescriptor = describePaymentAsset(cashAsset, paymentAssets);
+      // The USD figure is decoration. A disabled or stale-priced cash asset
+      // reverts the quote, and that must not hide the swap or its cancel.
       const cashUsd =
         cashAmount === 0n
           ? 0n
-          : ((await client.readContract({
-              ...contract('PaymentTokenRegistry'),
-              functionName: 'quoteTokenToUsd',
-              args: [cashAsset, cashAmount],
-            })) as bigint);
+          : ((await client
+              .readContract({
+                ...contract('PaymentTokenRegistry'),
+                functionName: 'quoteTokenToUsd',
+                args: [cashAsset, cashAmount],
+              })
+              .catch(() => undefined)) as bigint | undefined);
+      const accepted = terminal?.eventName === 'OfferAccepted' ? terminal : undefined;
       return {
         offerId,
         gem: requested,
@@ -1214,10 +1290,22 @@ async function getSwaps(): Promise<SwapRequest[]> {
         // As with offers: an expired swap still holds the proposer's token in
         // escrow, so it is unfinished business rather than history.
         statusColor: status === 'Active' || status === 'Expired' ? 'var(--dc-amber)' : '#8B8B94',
+        accepter:
+          typeof accepted?.args.accepter === 'string'
+            ? (accepted.args.accepter as Address)
+            : undefined,
       } satisfies SwapRequest;
     }),
   );
-  return swaps.filter(Boolean) as SwapRequest[];
+  const swaps = settled.flatMap((result) =>
+    result.status === 'fulfilled' && result.value ? [result.value] : [],
+  );
+  const failures = settled.filter((result) => result.status === 'rejected');
+  // Every row failing is an unreachable chain, not an empty swap board.
+  if (failures.length > 0 && swaps.length === 0) {
+    throw (failures[0] as PromiseRejectedResult).reason;
+  }
+  return swaps;
 }
 
 async function getRedemptions(): Promise<Redemption[]> {
@@ -1316,13 +1404,7 @@ async function activityFor(
     }
   }
   const relevantSwapIds = new Set(
-    swaps
-      .filter(
-        (swap) =>
-          swap.proposer.toLowerCase() === normalized ||
-          swap.requestedOwner.toLowerCase() === normalized,
-      )
-      .map((swap) => swap.offerId.toString()),
+    swaps.filter((swap) => isSwapParty(swap, normalized)).map((swap) => swap.offerId.toString()),
   );
   for (const event of snapshot.events) {
     if (
@@ -1441,11 +1523,18 @@ function refresh(): void {
  */
 async function bindingRule(module: 'Marketplace' | 'PrimarySaleAuction'): Promise<BindingRule> {
   try {
-    const grace = (await client.readContract({
-      ...contract(module),
-      functionName: 'SETTLEMENT_GRACE',
-    })) as bigint;
-    return { binding: true, settlementGraceSeconds: Number(grace) };
+    const [grace, paused] = await Promise.all([
+      client.readContract({
+        ...contract(module),
+        functionName: 'SETTLEMENT_GRACE',
+      }) as Promise<bigint>,
+      // Unknown, not "unpaused", when the read fails: the paused-only exit is
+      // then simply not offered.
+      (
+        client.readContract({ ...contract(module), functionName: 'paused' }) as Promise<boolean>
+      ).catch(() => undefined),
+    ]);
+    return { binding: true, settlementGraceSeconds: Number(grace), paused };
   } catch (error) {
     if (isContractAnswer(error)) return { binding: false, settlementGraceSeconds: 0 };
     throw error;
@@ -1464,6 +1553,54 @@ export function isContractAnswer(error: unknown): boolean {
       ),
     )
   );
+}
+
+async function readFeeTiers(): Promise<FeeTier[]> {
+  const count = (await client.readContract({
+    ...contract('ReserveManager'),
+    functionName: 'reserveBracketCount',
+  })) as bigint;
+  const brackets = await Promise.all(
+    Array.from({ length: Number(count) }, (_, index) =>
+      client.readContract({
+        ...contract('ReserveManager'),
+        functionName: 'reserveBracket',
+        args: [BigInt(index)],
+      }),
+    ),
+  );
+  const maxUint256 = (1n << 256n) - 1n;
+  const usdLabel = (value: bigint) =>
+    `$${Number(formatUnits(value, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
+  return brackets.map((raw, index) => {
+    /*
+     * viem decodes a Solidity struct as an object keyed by the ABI field
+     * names. Treating it as a tuple worked in TypeScript only because of the
+     * assertion above; at runtime the object was not iterable and every fee
+     * tier request failed.
+     */
+    const bracket = raw as {
+      minPriceUsd: bigint;
+      maxPriceUsd: bigint;
+      reserveBps: number;
+    };
+    const minimum = bracket.minPriceUsd;
+    const maximum = bracket.maxPriceUsd;
+    const reserveBps = bracket.reserveBps;
+    const range =
+      maximum === maxUint256
+        ? `${usdLabel(minimum)} and above`
+        : minimum === 0n
+          ? `Under ${usdLabel(maximum)}`
+          : `${usdLabel(minimum)} - ${usdLabel(maximum)}`;
+    return {
+      tier: `Reserve ${index + 1}`,
+      range,
+      pct: `${Number(reserveBps) / 100}%`,
+      bps: Number(reserveBps),
+    };
+  });
 }
 
 export const chainService: IDataService = {
@@ -1558,7 +1695,7 @@ export const chainService: IDataService = {
     const bidEvents = latestBidEventsForAddress(snapshot.events, address);
     const now = BigInt(Math.floor(Date.now() / 1_000));
     const bidPromise = Promise.all(
-      bidEvents.map(async (event) => {
+      bidEvents.map(async (event): Promise<Bid | undefined> => {
         const gemId = event.args.gemId as bigint;
         const [gem, auction] = await Promise.all([
           readGem(gemId),
@@ -1610,6 +1747,8 @@ export const chainService: IDataService = {
           status: leading ? ('Leading' as const) : ('Outbid' as const),
           statusColor: leading ? 'var(--dc-emerald)' : 'var(--dc-amber)',
           secondsLeft,
+          endTime: auction[3],
+          settled: auction[1] as boolean,
         };
       }),
     ).then((rows) => rows.filter((bid): bid is Bid => Boolean(bid)));
@@ -1694,14 +1833,7 @@ export const chainService: IDataService = {
       // Same shape, same reason. An expired swap still holds the proposer's NFT
       // in escrow until they cancel, so it stays; a cancelled or accepted one is
       // finished with.
-      swaps: normalizedAddress
-        ? swaps.filter(
-            (swap) =>
-              (swap.status === 'Active' || swap.status === 'Expired') &&
-              (swap.proposer.toLowerCase() === normalizedAddress ||
-                swap.requestedOwner.toLowerCase() === normalizedAddress),
-          )
-        : [],
+      swaps: normalizedAddress ? portfolioSwaps(swaps, normalizedAddress).open : [],
       /*
        * Both sides of the redemption, not just the owner's.
        *
@@ -1741,7 +1873,18 @@ export const chainService: IDataService = {
     };
   },
   getLanding: async (): Promise<LandingData> => {
-    const [gems, auctions, split] = await Promise.all([allGems(), getAuctions(), treasurySplit()]);
+    const [gems, auctions, split, tiers] = await Promise.all([
+      allGems(),
+      getAuctions(),
+      treasurySplit(),
+      readFeeTiers().catch(() => undefined),
+    ]);
+    /*
+     * "Reserve funded · On-chain backing per gem" is only true when the schedule
+     * charges a reserve. At 0 bps nothing is held, so the badge names the
+     * policy instead; an unreadable schedule claims nothing either way.
+     */
+    const reserveCharged = tiers?.some((tier) => (tier.bps ?? 0) > 0);
     return {
       featured: gems.slice(0, 3),
       auctions: auctions.filter((auction) => !auction.settled && auction.secondsLeft > 0),
@@ -1751,11 +1894,20 @@ export const chainService: IDataService = {
           sub: 'Contract lifecycle attestation',
           color: 'var(--dc-emerald)',
         },
-        {
-          title: 'Reserve funded',
-          sub: 'On-chain backing per gem',
-          color: 'var(--dc-sapphire)',
-        },
+        reserveCharged
+          ? {
+              title: 'Reserve funded',
+              sub: 'On-chain backing per gem',
+              color: 'var(--dc-sapphire)',
+            }
+          : {
+              title: 'Reserve policy on-chain',
+              sub:
+                tiers === undefined
+                  ? 'Rates set by the reserve contract'
+                  : 'Current rate 0%: no reserve is held',
+              color: 'var(--dc-sapphire)',
+            },
         { title: 'Expert approved', sub: 'No automated valuation', color: 'var(--dc-frost)' },
         {
           title: 'Redeemable asset',
@@ -1776,70 +1928,44 @@ export const chainService: IDataService = {
     ]);
     return { listing, primary };
   },
-  getFeeTiers: async (): Promise<FeeTier[]> => {
-    const count = (await client.readContract({
-      ...contract('ReserveManager'),
-      functionName: 'reserveBracketCount',
-    })) as bigint;
-    const brackets = await Promise.all(
-      Array.from({ length: Number(count) }, (_, index) =>
-        client.readContract({
-          ...contract('ReserveManager'),
-          functionName: 'reserveBracket',
-          args: [BigInt(index)],
-        }),
-      ),
-    );
-    const maxUint256 = (1n << 256n) - 1n;
-    const usdLabel = (value: bigint) =>
-      `$${Number(formatUnits(value, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-
-    return brackets.map((raw, index) => {
-      /*
-       * viem decodes a Solidity struct as an object keyed by the ABI field
-       * names. Treating it as a tuple worked in TypeScript only because of the
-       * assertion above; at runtime the object was not iterable and every fee
-       * tier request failed.
-       */
-      const bracket = raw as {
-        minPriceUsd: bigint;
-        maxPriceUsd: bigint;
-        reserveBps: number;
-      };
-      const minimum = bracket.minPriceUsd;
-      const maximum = bracket.maxPriceUsd;
-      const reserveBps = bracket.reserveBps;
-      const range =
-        maximum === maxUint256
-          ? `${usdLabel(minimum)} and above`
-          : minimum === 0n
-            ? `Under ${usdLabel(maximum)}`
-            : `${usdLabel(minimum)} - ${usdLabel(maximum)}`;
-      return {
-        tier: `Reserve ${index + 1}`,
-        range,
-        pct: `${Number(reserveBps) / 100}%`,
-      };
-    });
-  },
+  getFeeTiers: readFeeTiers,
   getPaymentAssets,
-  getPendingAuctionRefunds: async (address?: string): Promise<PendingRefund[]> => {
+  /*
+   * Both contracts that hold pull-payment credits, per asset. Only the
+   * auction's were read, so a marketplace credit (a listing bid refunded to a
+   * wallet that rejects ETH, sale proceeds that could not be pushed) was
+   * invisible and, with no `claimRefund` call wired to the Marketplace, could
+   * not be withdrawn from the app at all.
+   */
+  getPendingRefunds: async (address?: string): Promise<PendingRefund[]> => {
     if (!address || !isAddress(address)) return [];
-    const assets = await getPaymentAssets();
+    const assets = (await getPaymentAssets()).filter((asset) => !asset.unavailableReason);
+    const sources = [
+      'PrimarySaleAuction',
+      'Marketplace',
+    ] as const satisfies readonly RefundSource[];
     const refunds = await Promise.all(
-      assets.map(async (asset) => {
-        const amount = (await client.readContract({
-          ...contract('PrimarySaleAuction'),
-          functionName: 'pendingRefunds',
-          args: [address, asset.address],
-        })) as bigint;
+      sources.flatMap((source) =>
+        assets.map(async (asset) => ({
+          source,
+          asset,
+          amount: (await client.readContract({
+            ...contract(source),
+            functionName: 'pendingRefunds',
+            args: [address, asset.address],
+          })) as bigint,
+        })),
+      ),
+    ).then((rows) =>
+      rows.map(({ source, asset, amount }) => {
         if (amount === 0n) return;
         return {
+          source,
           paymentAsset: asset.address,
           symbol: asset.symbol,
           amount,
           amountFmt: `${Number(formatUnits(amount, asset.decimals)).toLocaleString('en-US', {
-            maximumFractionDigits: asset.decimals,
+            maximumFractionDigits: Math.min(asset.decimals, 18),
           })} ${asset.symbol}`,
         };
       }),
@@ -1848,7 +1974,7 @@ export const chainService: IDataService = {
   },
   getPendingReserveCredits: async (address?: string): Promise<PendingReserveCredit[]> => {
     if (!address || !isAddress(address)) return [];
-    const assets = await getPaymentAssets();
+    const assets = (await getPaymentAssets()).filter((asset) => !asset.unavailableReason);
     const credits = await Promise.all(
       assets.map(async (asset) => {
         const amount = (await client.readContract({
@@ -1862,7 +1988,7 @@ export const chainService: IDataService = {
           symbol: asset.symbol,
           amount,
           amountFmt: `${Number(formatUnits(amount, asset.decimals)).toLocaleString('en-US', {
-            maximumFractionDigits: asset.decimals,
+            maximumFractionDigits: Math.min(asset.decimals, 18),
           })} ${asset.symbol}`,
         };
       }),
@@ -1898,8 +2024,11 @@ export const chainService: IDataService = {
       functionName: 'shortfallUsd',
       args: [request.gemId, gem.priceUsd],
     })) as bigint;
+    // The contract re-quotes and refunds any surplus, so headroom costs nothing
+    // and keeps an oracle tick from reverting the purchase.
     const amount =
-      request.maximumAmount ?? (await usdToAsset(request.paymentAsset, gem.priceUsd + shortfall));
+      request.maximumAmount ??
+      withPurchaseHeadroom(await usdToAsset(request.paymentAsset, gem.priceUsd + shortfall));
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.PrimarySaleAuction;
     const fromBlock = await client.getBlockNumber();
@@ -1954,8 +2083,11 @@ export const chainService: IDataService = {
       functionName: 'shortfallUsd',
       args: [gemId, gem.priceUsd],
     })) as bigint;
+    // `Marketplace.buy` takes `amount` as a maximum, charges the fresh quote and
+    // refunds the surplus in the same transaction (`_collectFixedPayment`).
     const amount =
-      request.maximumAmount ?? (await usdToAsset(request.paymentAsset, listing[1] + shortfall));
+      request.maximumAmount ??
+      withPurchaseHeadroom(await usdToAsset(request.paymentAsset, listing[1] + shortfall));
     const params = paymentParams(request.paymentAsset, amount);
     if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.Marketplace;
     const fromBlock = await client.getBlockNumber();
@@ -2188,8 +2320,9 @@ export const chainService: IDataService = {
     }),
   claimRefund: (request: ClaimRefundRequest) =>
     runContractTransaction({
-      ...contract('PrimarySaleAuction'),
+      ...contract(request.source ?? 'PrimarySaleAuction'),
       functionName: 'claimRefund',
+      intentKey: `claimRefund:${request.source ?? 'PrimarySaleAuction'}:${request.paymentAsset}`,
       args: [request.paymentAsset],
     }),
   claimReserveCredit: (request: ClaimReserveCreditRequest) =>
@@ -2297,12 +2430,36 @@ export const chainService: IDataService = {
       functionName: 'cancelOffer',
       args: [request.offerId],
     }),
-  refundExpiredOffer: (request: OfferRequest) =>
-    runContractTransaction({
+  /*
+   * `cancelExpiredOffer` pushes the escrow and reverts the whole call when the
+   * push fails, so a bidder whose wallet rejects ETH could never get an expired
+   * offer back. The bidder's own `cancelOffer` releases the same escrow (an
+   * expired offer is never the binding listing bid — that one is "Awaiting
+   * settlement") and credits `pendingRefunds` when the push fails, so it is used
+   * whenever the connected wallet is the bidder. Anyone else can still clear an
+   * expired offer through the permissionless path.
+   */
+  refundExpiredOffer: async (request: OfferRequest) => {
+    const connected = getAccount(wagmiConfig).address;
+    const offer = connected
+      ? ((await client
+          .readContract({
+            ...contract('Marketplace'),
+            functionName: 'offers',
+            args: [request.offerId],
+          })
+          .catch(() => undefined)) as
+          readonly [Address, bigint, Address, bigint, bigint, bigint, boolean] | undefined)
+      : undefined;
+    const ownOffer = Boolean(connected && offer && isAddressEqual(offer[0], connected));
+    const result = await runContractTransaction({
       ...contract('Marketplace'),
-      functionName: 'cancelExpiredOffer',
+      functionName: ownOffer ? 'cancelOffer' : 'cancelExpiredOffer',
       args: [request.offerId],
-    }),
+    });
+    refresh();
+    return result;
+  },
   createSwap: async (request: CreateSwapRequest) => {
     const connected = getAccount(wagmiConfig).address;
     const [cashAmount, fromBlock, offeredOwner, requestedOwner, offeredLocked, requestedLocked] =

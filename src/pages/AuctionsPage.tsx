@@ -10,26 +10,51 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
 import { fmtUsdBaseUnits } from '@/lib/format';
-import type { Auction, DecoratedGem } from '@/services/types';
+import type { Auction, BindingRule, DecoratedGem } from '@/services/types';
 import { useAccount } from 'wagmi';
 import { Link } from 'react-router-dom';
 import { groupAuctions } from '@/services/chain/marketPresentation';
+import { primaryBidWithdrawable } from '@/lib/auctionBid';
 
 // Was `Number(v / 10n ** 18n)` — integer division, so every floor and bid was
 // rounded down to whole dollars and anything under $1 showed as $0.
 const usdFromWad = (v: bigint) => fmtUsdBaseUnits(v);
 
+type Mode = 'live' | 'settle' | 'unsold' | 'past';
+
 interface RowProps {
   auction: Auction;
-  mode: 'live' | 'settle' | 'past';
+  mode: Mode;
   address?: string;
   onBid: (gem: DecoratedGem) => void;
-  /** Upgraded contracts make the leading bid binding, so it has no cancel. */
-  bindingBids: boolean;
+  /** Undefined until the contract answers; the leading bid then counts as binding. */
+  rule?: BindingRule;
 }
 
-function AuctionRow({ auction: a, mode, address, onBid, bindingBids }: RowProps) {
+function WithdrawBidButton({ gemId }: { gemId: bigint }) {
+  return (
+    <TxButton
+      size="sm"
+      variant="secondary"
+      action={() => dataService.cancelAuctionBid({ gemId })}
+      pendingLabel="Withdrawing…"
+      telemetryFlow="auction_bid_withdraw"
+    >
+      Withdraw bid
+    </TxButton>
+  );
+}
+
+function AuctionRow({ auction: a, mode, address, onBid, rule }: RowProps) {
   const mine = Boolean(address && a.highestBidder?.toLowerCase() === address.toLowerCase());
+  /*
+   * A binding bid's only exits are settlement, being outbid, the contract
+   * pausing, or the settlement grace running out. In the last two cases the
+   * bidder must be able to leave from here; nothing else would offer it.
+   */
+  const withdrawable = primaryBidWithdrawable(a, address, rule);
+  // Bidding and settlement are both `whenNotPaused`.
+  const paused = rule?.paused === true;
   return (
     <tr className="border-b border-line/[0.06] transition-colors last:border-b-0 hover:bg-line/[0.02]">
       <td className="px-4 py-3">
@@ -90,33 +115,35 @@ function AuctionRow({ auction: a, mode, address, onBid, bindingBids }: RowProps)
       </td>
       <td className="px-4 py-3 text-right">
         {mode === 'settle' ? (
-          <TxButton
-            size="sm"
-            action={() => dataService.settleAuction({ gemId: a.gem.gemId })}
-            pendingLabel="Settling…"
-            telemetryFlow="settle_auction"
-          >
-            Settle
-          </TxButton>
-        ) : mode === 'live' && mine ? (
           <div className="flex justify-end gap-2">
-            <Button size="sm" onClick={() => onBid(a.gem)}>
-              Raise bid
-            </Button>
-            {bindingBids ? null : (
+            {withdrawable && <WithdrawBidButton gemId={a.gem.gemId} />}
+            {paused ? (
+              <span className="text-[11px] text-ink-dim">Paused</span>
+            ) : (
               <TxButton
                 size="sm"
-                variant="secondary"
-                action={() => dataService.cancelAuctionBid({ gemId: a.gem.gemId })}
-                pendingLabel="Cancelling…"
+                action={() => dataService.settleAuction({ gemId: a.gem.gemId })}
+                pendingLabel="Settling…"
+                telemetryFlow="settle_auction"
               >
-                Cancel bid
+                Settle
               </TxButton>
             )}
           </div>
+        ) : mode === 'unsold' ? (
+          <span className="text-[11px] text-ink-dim">No bids · awaiting a new round</span>
+        ) : mode === 'live' && mine ? (
+          <div className="flex justify-end gap-2">
+            {!paused && (
+              <Button size="sm" onClick={() => onBid(a.gem)}>
+                Raise bid
+              </Button>
+            )}
+            {withdrawable && <WithdrawBidButton gemId={a.gem.gemId} />}
+          </div>
         ) : mode === 'live' ? (
-          <Button size="sm" onClick={() => onBid(a.gem)}>
-            Place bid
+          <Button size="sm" disabled={paused} onClick={() => onBid(a.gem)}>
+            {paused ? 'Paused' : 'Place bid'}
           </Button>
         ) : (
           <Link
@@ -138,13 +165,12 @@ function AuctionTable({
   onBid,
 }: {
   rows: Auction[];
-  mode: 'live' | 'settle' | 'past';
+  mode: Mode;
   address?: string;
   onBid: (gem: DecoratedGem) => void;
 }) {
-  // Until the contract answers, hide the cancel rather than offer one that may revert.
+  // Until the contract answers, hide the withdrawal rather than offer one that may revert.
   const { data: policy } = useBidPolicy();
-  const bindingBids = policy?.primary.binding ?? true;
   const headers = [
     'Stone',
     'Floor',
@@ -179,7 +205,7 @@ function AuctionTable({
               mode={mode}
               address={address}
               onBid={onBid}
-              bindingBids={bindingBids}
+              rule={policy?.primary}
             />
           ))}
         </tbody>
@@ -193,7 +219,12 @@ export default function AuctionsPage() {
   const { address } = useAccount();
   const modals = useGemModals();
 
-  const { live, awaitingSettlement: ended, past } = groupAuctions(auctions ?? []);
+  const {
+    live,
+    awaitingSettlement: ended,
+    endedWithoutBids: unsold,
+    past,
+  } = groupAuctions(auctions ?? []);
   const openBid = (gem: DecoratedGem) => modals.open('bid', gem);
 
   return (
@@ -261,10 +292,25 @@ export default function AuctionsPage() {
                 <p className="mt-1 max-w-[70ch] text-[12px] leading-relaxed text-ink-muted">
                   Anyone can settle an ended auction. The contract re-checks the reserve at the
                   current oracle price first, and refunds the winner instead of minting if coverage
-                  slipped.
+                  slipped. If nobody settles within the grace period, or while the contract is
+                  paused, the leading bidder can withdraw instead.
                 </p>
               </div>
               <AuctionTable rows={ended} mode="settle" address={address} onBid={openBid} />
+            </section>
+          )}
+
+          {unsold.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-baseline gap-2.5">
+                <h3 className="font-display text-[15px] font-medium text-ink">
+                  Ended without a bid
+                </h3>
+                <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-dim">
+                  nothing to settle
+                </span>
+              </div>
+              <AuctionTable rows={unsold} mode="unsold" address={address} onBid={openBid} />
             </section>
           )}
 

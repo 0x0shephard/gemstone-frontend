@@ -8,6 +8,8 @@ import {
   groupActionableSwaps,
   latestBidEventsForAddress,
   auctionBidCount,
+  portfolioSwaps,
+  swapCounterparty,
 } from './marketPresentation';
 import type { Auction, SwapRequest } from '../types';
 
@@ -86,15 +88,57 @@ describe('market presentation', () => {
   it('keeps settled auctions as history instead of mixing them with open rounds', () => {
     const auctions = [
       { settled: false, secondsLeft: 60 },
-      { settled: false, secondsLeft: 0 },
+      { settled: false, secondsLeft: 0, highestBidder: bidder },
       { settled: true, secondsLeft: 0, outcome: 'Minted' },
     ] as Auction[];
 
     expect(groupAuctions(auctions)).toEqual({
       live: [auctions[0]],
       awaitingSettlement: [auctions[1]],
+      endedWithoutBids: [],
       past: [auctions[2]],
     });
+  });
+
+  it('never counts an ended auction without a bid as awaiting settlement', () => {
+    // settleAuction reverts InvalidAuction when nobody bid, so there is nothing to settle.
+    const unbid = { settled: false, secondsLeft: 0 } as Auction;
+    const bid = { settled: false, secondsLeft: 0, highestBidder: bidder } as unknown as Auction;
+
+    const grouped = groupAuctions([unbid, bid]);
+    expect(grouped.awaitingSettlement).toEqual([bid]);
+    expect(grouped.endedWithoutBids).toEqual([unbid]);
+    expect(grouped.live).toEqual([]);
+  });
+
+  it('keeps a swap visible to both parties after it is accepted', () => {
+    const proposer = '0x1111111111111111111111111111111111111111';
+    const accepter = '0x2222222222222222222222222222222222222222';
+    const swaps = [
+      // After acceptance `ownerOf(requested)` is the proposer.
+      { offerId: 1n, proposer, requestedOwner: proposer, accepter, status: 'Accepted', gem: {} },
+      { offerId: 2n, proposer, requestedOwner: accepter, status: 'Active', gem: {} },
+      { offerId: 3n, proposer, requestedOwner: accepter, status: 'Expired', gem: {} },
+      { offerId: 4n, proposer, requestedOwner: accepter, status: 'Cancelled', gem: {} },
+    ] as unknown as SwapRequest[];
+
+    expect(swapCounterparty(swaps[0])).toBe(accepter);
+    for (const viewer of [proposer, accepter]) {
+      const { open, closed } = portfolioSwaps(swaps, viewer);
+      // The open list is exactly what the tab count reports.
+      expect(open.map((swap) => swap.offerId)).toEqual([2n, 3n]);
+      expect(closed.map((swap) => swap.offerId)).toEqual([1n, 4n]);
+    }
+    expect(portfolioSwaps(swaps, '0x3333333333333333333333333333333333333333')).toEqual({
+      open: [],
+      closed: [],
+    });
+  });
+
+  it('still describes swap cash when its USD quote is unavailable', () => {
+    expect(formatSwapCash(5_000_000n, undefined, { symbol: 'USDC', decimals: 6 }, true)).toBe(
+      'Proposer pays 5 USDC (USD value unavailable)',
+    );
   });
 
   it('separates open swaps from expired escrow that only the proposer can clear', () => {

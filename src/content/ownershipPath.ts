@@ -1,4 +1,5 @@
 import type { HowStep } from '@/services/types';
+import { activeChain } from '@/config/chains';
 
 /**
  * Product education, not market data. Keep this independent from the selected
@@ -31,7 +32,7 @@ export const ownershipPathSteps: readonly HowStep[] = [
   {
     num: '02',
     title: 'Auction & Token Minting',
-    body: 'The approved valuation becomes the gemstone’s auction floor price. Auctions run in 24H cycles. The highest bid above the floor price wins. If no qualifying bid is received, the auction automatically opens for another 24-hour cycle. Following a successful auction, the gemstone is represented by a unique ERC-721 token on Etheruem.',
+    body: `The approved valuation becomes the gemstone’s auction floor price. Auctions run in 24H cycles. The highest bid above the floor price wins. If no qualifying bid is received, the auction automatically opens for another 24-hour cycle. Following a successful auction, the gemstone is represented by a unique ERC-721 token on ${activeChain.name}.`,
   },
   {
     num: '03',
@@ -71,6 +72,6 @@ export const ownershipPathSteps: readonly HowStep[] = [
   {
     num: '05',
     title: 'Payments',
-    body: 'Digital Carat supports ETH and USDT crypto-currency payments through the platform.',
+    body: 'Digital Carat supports ETH and USDC crypto-currency payments through the platform.',
   },
 ];

@@ -15,7 +15,7 @@ import { shortenAddress } from '@/lib/format';
 import type { SwapRequest } from '@/services/types';
 import { useAccount } from 'wagmi';
 import type { Address } from 'viem';
-import { groupActionableSwaps } from '@/services/chain/marketPresentation';
+import { groupActionableSwaps, swapCounterparty } from '@/services/chain/marketPresentation';
 import { swapUnavailableReason } from '@/lib/gem';
 import { contractAddresses, giftOperatorAddress } from '@/config/contracts';
 
@@ -81,6 +81,7 @@ export function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address
     swap.status === 'Active' &&
     !requestedRedeeming &&
     viewer?.toLowerCase() === swap.requestedOwner.toLowerCase();
+  const counterparty = swapCounterparty(swap);
 
   return (
     <Card className="p-4 sm:p-5">
@@ -102,8 +103,8 @@ export function SwapCard({ swap, viewer }: { swap: SwapRequest; viewer?: Address
             className="w-[52px] shrink-0"
           />
           <SwapSide
-            role="Requested from"
-            account={swap.requestedOwner}
+            role={swap.status === 'Accepted' ? 'Accepted by' : 'Requested from'}
+            account={counterparty}
             name={swap.gem.name}
             displayId={swap.gem.displayId}
           />

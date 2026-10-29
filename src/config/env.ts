@@ -50,7 +50,9 @@ const schema = z.object({
   VITE_RPC_URL: optionalUrl.default(''),
   VITE_RPC_FALLBACK_URL: optionalUrl.default(''),
   VITE_LOGS_RPC_URL: optionalUrl.default(''),
-  VITE_EXPLORER_BASE_URL: optionalUrl.default('https://sepolia.etherscan.io'),
+  // Empty means "the active chain's own explorer" (see `explorerBaseUrl` in
+  // chains.ts). A Sepolia default sent Arbitrum One links to the wrong chain.
+  VITE_EXPLORER_BASE_URL: optionalUrl.default(''),
   VITE_IPFS_GATEWAY: optionalUrl.default('https://ipfs.io/ipfs/'),
   VITE_WALLETCONNECT_PROJECT_ID: z.string().trim().default(''),
   VITE_SUPABASE_URL: supabaseUrl.default(''),

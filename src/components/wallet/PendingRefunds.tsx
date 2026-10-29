@@ -1,20 +1,28 @@
 import { useAccount } from 'wagmi';
-import { usePendingAuctionRefunds } from '@/hooks/useData';
+import { usePendingRefunds } from '@/hooks/useData';
 import { Card } from '@/components/ui/Card';
 import { TxButton } from '@/components/tx/TxButton';
 import { dataService } from '@/services';
+import type { RefundSource } from '@/services/types';
+
+const SOURCE_LABEL: Record<RefundSource, string> = {
+  PrimarySaleAuction: 'Auction credit',
+  Marketplace: 'Marketplace credit',
+};
 
 /**
- * Outbid auction deposits.
+ * Credits waiting to be withdrawn, from both contracts that hold them.
  *
- * `PrimarySaleAuction` credits refunds rather than pushing them, so a losing
- * bidder's money sits in the contract until they withdraw it. Without this the
- * balance is invisible and effectively stranded, so it is surfaced wherever the
- * user looks at their own position.
+ * `PrimarySaleAuction` credits an outbid or withdrawn bid, and `Marketplace`
+ * credits any refund or sale proceeds it could not push to a wallet (one that
+ * rejects ETH, for example). Either way the money sits in that contract until
+ * its owner calls `claimRefund` there. Without this the balance is invisible and
+ * effectively stranded, so it is surfaced wherever the user looks at their own
+ * position. Each row claims from the contract that holds it.
  */
 export function PendingRefunds() {
   const { address } = useAccount();
-  const { data: refunds, refetch } = usePendingAuctionRefunds(address);
+  const { data: refunds, refetch } = usePendingRefunds(address);
 
   if (!address || !refunds || refunds.length === 0) return null;
 
@@ -23,16 +31,17 @@ export function PendingRefunds() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber">
-            Outbid deposits
+            Credits to withdraw
           </div>
           <div className="mt-1 font-display text-[21px] font-medium text-ink">
             {refunds.length === 1
               ? `${refunds[0].amountFmt} ready to withdraw`
-              : `${refunds.length} deposits ready to withdraw`}
+              : `${refunds.length} credits ready to withdraw`}
           </div>
-          <p className="mt-1 max-w-[52ch] text-[12px] leading-relaxed text-ink-muted">
-            You were outbid, so your escrow was credited back to you. It is held by the auction
-            contract until you withdraw it and it does not expire.
+          <p className="mt-1 max-w-[56ch] text-[12px] leading-relaxed text-ink-muted">
+            Bids that were outbid or withdrawn, and payments the contracts could not send straight
+            to your wallet, are held for you here. They stay in the contract until you withdraw them
+            and they do not expire.
           </p>
         </div>
       </div>
@@ -40,7 +49,7 @@ export function PendingRefunds() {
       <div className="mt-4 divide-y divide-line/[0.06] border-t border-line/[0.06]">
         {refunds.map((refund) => (
           <div
-            key={refund.paymentAsset}
+            key={`${refund.source}:${refund.paymentAsset}`}
             className="flex flex-wrap items-center justify-between gap-3 py-3"
           >
             <div>
@@ -48,7 +57,7 @@ export function PendingRefunds() {
                 {refund.amountFmt}
               </div>
               <div className="mt-0.5 font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-dim">
-                {refund.symbol}
+                {SOURCE_LABEL[refund.source]} · {refund.symbol}
               </div>
             </div>
             <TxButton
@@ -56,11 +65,16 @@ export function PendingRefunds() {
               action={() =>
                 dataService.claimRefund({
                   paymentAsset: refund.paymentAsset,
+                  source: refund.source,
                 })
               }
               onConfirmed={() => refetch().then(() => undefined)}
               pendingLabel="Withdrawing…"
-              telemetryFlow="auction_refund_claim"
+              telemetryFlow={
+                refund.source === 'Marketplace'
+                  ? 'marketplace_refund_claim'
+                  : 'auction_refund_claim'
+              }
             >
               Withdraw {refund.symbol}
             </TxButton>
