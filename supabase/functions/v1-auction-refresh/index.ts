@@ -11,6 +11,11 @@ import {
   writeAndConfirm,
 } from '../_shared/chain.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import {
+  claimOperatorLease,
+  releaseOperatorLease,
+  renewOperatorLease,
+} from '../_shared/operatorLease.ts';
 
 /**
  * Re-opens the 24-hour auction for stones that drew no bid.
@@ -41,6 +46,16 @@ const PROBE_LIMIT = 5_000;
 
 /** Bounded so one slow run cannot exhaust the function's wall clock. */
 const MAX_REOPENS_PER_RUN = 10;
+
+/**
+ * The operator lease is held for the whole sweep and renewed before every send.
+ *
+ * Every write here is signed by the operator key that seller activation, gift
+ * transfers and redemptions also sign with. Without the shared lease a sweep
+ * running during an activation could allocate the same pending nonce, and one
+ * of the two transactions would replace or block the other.
+ */
+const OPERATOR_LEASE_MS = 5 * 60_000;
 
 const ZERO = '0x0000000000000000000000000000000000000000';
 const STATUS_LISTED = 4;
@@ -87,11 +102,27 @@ Deno.serve(async (request) => {
     return json({ error: 'Forbidden' }, 403);
   }
 
+  const admin = adminClient();
+  const leaseHolder = crypto.randomUUID();
+  let leaseClaimed = false;
   try {
-    const admin = adminClient();
     const deployment = await requireProtocolDeployment(admin);
     const chain = operatorChain();
     await assertOperatorChain(chain);
+
+    leaseClaimed = await claimOperatorLease(admin, leaseHolder, OPERATOR_LEASE_MS);
+    if (!leaseClaimed) {
+      // Another operator writer is mid-flight. Nothing is lost by waiting: the
+      // next scheduled run sees the same expired auctions.
+      return json({ skipped: 'The protocol operator is busy; the next run retries' }, 202);
+    }
+    /** Renews before each send and refuses to send if the lease was lost. */
+    const send: typeof writeAndConfirm = async (...args) => {
+      if (!(await renewOperatorLease(admin, leaseHolder, OPERATOR_LEASE_MS))) {
+        throw new Error('The operator lease lapsed; stopping before another send');
+      }
+      return writeAndConfirm(...args);
+    };
 
     const gemIds = await discoverGemIds(chain);
     // The contracts settle on block time, so that is the clock that decides
@@ -151,7 +182,7 @@ Deno.serve(async (request) => {
             }) as Promise<bigint>,
           ]);
           if (listing[0] !== ZERO && offerId > 0n && endTime <= now) {
-            await writeAndConfirm(chain, {
+            await send(chain, {
               address: market,
               abi: marketplaceAbi,
               functionName: 'settleListingAuction',
@@ -209,7 +240,7 @@ Deno.serve(async (request) => {
          */
         let wasSettled = false;
         if (exists && !settled && highestBidder !== ZERO) {
-          await writeAndConfirm(chain, {
+          await send(chain, {
             address: chain.addresses.primarySale,
             abi: primarySaleAbi,
             functionName: 'settleAuction',
@@ -264,14 +295,14 @@ Deno.serve(async (request) => {
         // A settlement that refunded has already marked it settled, so there is
         // nothing left to cancel.
         if (exists && !settled && !wasSettled) {
-          await writeAndConfirm(chain, {
+          await send(chain, {
             address: chain.addresses.primarySale,
             abi: primarySaleAbi,
             functionName: 'cancelAuction',
             args: [gemId],
           });
         }
-        const hash = await writeAndConfirm(chain, {
+        const hash = await send(chain, {
           address: chain.addresses.primarySale,
           abi: primarySaleAbi,
           functionName: 'createDailyAuction',
@@ -314,5 +345,7 @@ Deno.serve(async (request) => {
     });
   } catch (error) {
     return json({ error: safeErrorMessage(error, 'Auction refresh failed') }, 500);
+  } finally {
+    if (leaseClaimed) await releaseOperatorLease(admin, leaseHolder);
   }
 });

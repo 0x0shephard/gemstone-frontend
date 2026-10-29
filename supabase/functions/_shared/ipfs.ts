@@ -234,9 +234,12 @@ export interface PublishedMetadata {
  */
 export async function publishMetadata(
   attributes: PublicAttributes,
-  options: { image?: string; name: string },
+  options: { image?: string; name: string; chainId: number },
 ): Promise<PublishedMetadata> {
-  const metadata = buildPublicMetadata(attributes, { image: options.image });
+  const metadata = buildPublicMetadata(attributes, {
+    image: options.image,
+    chainId: options.chainId,
+  });
   const document = canonicalize(metadata);
 
   const cid = await pinDocument(document, options.name);
@@ -245,6 +248,9 @@ export async function publishMetadata(
 }
 
 /** Canonical bytes for the inline fallback, so both paths serialise identically. */
-export function canonicalDocument(attributes: PublicAttributes, image?: string): string {
-  return canonicalize(buildPublicMetadata(attributes, { image }));
+export function canonicalDocument(
+  attributes: PublicAttributes,
+  options: { image?: string; chainId: number },
+): string {
+  return canonicalize(buildPublicMetadata(attributes, options));
 }

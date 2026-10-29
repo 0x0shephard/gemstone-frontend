@@ -51,7 +51,8 @@ Deno.serve(async (request) => {
     const membership = await operationalMembership(
       admin,
       user.id,
-      action === 'appraise' || action === 'preview' ? 'gemlab.appraise' : 'gemlab.read',
+      // Rejecting is as consequential as pricing, so it takes the same capability.
+      ['appraise', 'preview', 'reject'].includes(action) ? 'gemlab.appraise' : 'gemlab.read',
       organizationId,
     );
 
@@ -154,7 +155,11 @@ Deno.serve(async (request) => {
             supersedesEventId: event.supersedes_event_id,
             correctionReason: event.correction_reason,
           })),
-          nextActions: submission.current_appraisal_id ? [] : ['appraise'],
+          nextActions: submission.current_appraisal_id
+            ? []
+            : ['awaiting_custody', 'awaiting_grading'].includes(submission.status)
+              ? ['appraise', 'reject']
+              : ['appraise'],
         },
         currentAppraisal: null,
         matrix: {
@@ -163,6 +168,78 @@ Deno.serve(async (request) => {
           state: matrix.state,
           hash: matrix.hash,
           document: matrix.document,
+        },
+      });
+    }
+
+    if (action === 'reject') {
+      /*
+       * The versioned counterpart of the retired grade endpoint's rejection,
+       * which answers 410 on this deployment. Nothing on-chain and nothing
+       * pinned: the stone never reaches either. The status change and the
+       * `gem_rejected` workflow event commit together in one RPC.
+       */
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+      if (reason.length < 10 || reason.length > 2_000) {
+        return json({ error: 'A rejection reason of 10 to 2000 characters is required' }, 400);
+      }
+      const idempotencyKey = String(body.idempotencyKey ?? '');
+      const expectedVersion = Number(body.expectedVersion);
+      if (
+        !UUID.test(idempotencyKey) ||
+        !Number.isSafeInteger(expectedVersion) ||
+        expectedVersion < 0
+      ) {
+        return json({ error: 'Valid idempotencyKey and expectedVersion are required' }, 400);
+      }
+      const projection = await loadProjection(admin, deployment.id, 'seller', submissionId);
+      const { error: rejectError } = await admin.rpc('reject_gem_submission', {
+        p_deployment_id: deployment.id,
+        p_submission_id: submissionId,
+        p_organization_id: membership.organizationId,
+        p_rejected_by: user.id,
+        p_reason: reason,
+        p_expected_version: expectedVersion,
+        p_expected_state: projection?.current_state ?? submission.status,
+        p_idempotency_key: idempotencyKey,
+      });
+      if (rejectError) {
+        const status =
+          rejectError.code === 'DC409' ? 409 : rejectError.code === 'DC404' ? 404 : 400;
+        return json({ error: rejectError.message }, status);
+      }
+      await audit(user.id, 'gemlab.rejected', 'seller_submission', submissionId, {
+        organizationId: membership.organizationId,
+        reason,
+      });
+      const resulting = await loadProjection(admin, deployment.id, 'seller', submissionId);
+      return json({
+        submissionId,
+        status: 'rejected',
+        workflow: {
+          workflowId: submissionId,
+          submissionId,
+          state: resulting?.current_state ?? 'rejected',
+          version: resulting ? Number(resulting.version) : expectedVersion + 1,
+          legacyBaseline: resulting?.legacy_baseline ?? expectedVersion === 0,
+          updatedAt: resulting?.updated_at ?? new Date().toISOString(),
+          stoneName: submission.gem_name,
+          declaredCarats: submission.carats,
+          events: (await workflowTimeline(admin, deployment.id, 'seller', submissionId)).map(
+            (event) => ({
+              id: event.id,
+              sequence: Number(event.sequence),
+              type: event.event_type,
+              fromState: event.from_state,
+              toState: event.to_state,
+              occurredAt: event.occurred_at,
+              payload: event.payload,
+              txHash: event.transaction_hash,
+              supersedesEventId: event.supersedes_event_id,
+              correctionReason: event.correction_reason,
+            }),
+          ),
+          nextActions: [],
         },
       });
     }
@@ -193,7 +270,11 @@ Deno.serve(async (request) => {
     if (action === 'appraise') {
       const { data: prior, error: priorError } = await admin
         .from('gem_appraisals')
-        .select('*')
+        // `approved_valuation_usd` is numeric(78,0); as a JSON number an
+        // 18-decimal price loses precision, so it is read back as text.
+        .select(
+          'id,organization_id,appraised_by,primary_image_evidence_id,graded_inputs,matrix_version,matrix_hash,breakdown,created_at,approved_valuation_usd::text',
+        )
         .eq('deployment_id', deployment.id)
         .eq('submission_id', submissionId)
         .eq('client_request_id', idempotencyKey)
@@ -304,7 +385,13 @@ Deno.serve(async (request) => {
       p_expected_version: expectedVersion,
       p_expected_state: expectedState,
     });
-    if (recordError) throw recordError;
+    if (recordError) {
+      // The organisation's daily allowance, enforced inside the same
+      // transaction as the insert so concurrent graders cannot both pass it.
+      if (recordError.code === 'DC001') return json({ error: recordError.message }, 429);
+      if (recordError.code === 'DC409') return json({ error: recordError.message }, 409);
+      throw recordError;
+    }
     await audit(user.id, 'gemlab.appraised', 'seller_submission', submissionId, {
       appraisalId: appraisal.id,
       matrixVersion: appraisal.matrix_version,
@@ -316,7 +403,9 @@ Deno.serve(async (request) => {
       appraisalId: appraisal.id,
       matrixVersion: appraisal.matrix_version,
       matrixHash: appraisal.matrix_hash,
-      approvedValuationUsd: String(appraisal.approved_valuation_usd),
+      // The RPC returns the row as JSON, where numeric(78,0) is a lossy number.
+      // This is the exact value that was inserted.
+      approvedValuationUsd: valuation.approvedValuationUsd.toString(),
       breakdown: appraisal.breakdown,
       workflow: {
         workflowId: submissionId,

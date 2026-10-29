@@ -255,7 +255,7 @@ async function writeBids(
   const gemIds = [...new Set(logs.map((log) => log.gemId.toString()))];
   const { data: submissions, error: submissionError } = await admin
     .from('seller_submissions')
-    .select('onchain_gem_id,attributes,graded_attributes')
+    .select('onchain_gem_id::text,attributes,graded_attributes')
     .eq('deployment_id', protocolDeploymentId())
     .in('onchain_gem_id', gemIds);
   if (submissionError) throw submissionError;
@@ -311,7 +311,7 @@ export async function currentDemand(
 
   const { data, error } = await admin
     .from('demand_bids')
-    .select('gem_id,bidder,observed_at,shape,color,color_grade')
+    .select('gem_id::text,bidder,observed_at,shape,color,color_grade')
     .eq('deployment_id', protocolDeploymentId())
     .gte('observed_at', since.toISOString());
   if (error) throw error;

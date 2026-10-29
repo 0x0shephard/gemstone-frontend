@@ -1,11 +1,12 @@
 import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
-import { activateSellerSubmission } from '../_shared/sellerAutomation.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import { canonicalDocument } from '../_shared/ipfs.ts';
 import { dataUri } from '../_shared/metadataDocument.ts';
 import { verificationMode } from '../_shared/settings.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { configuredChainId } from '../_shared/network.ts';
+import { sellerActivationRefusal } from '../_shared/sellerOnboarding.ts';
 import { sellerWithdrawalBlocker } from '../_shared/sellerWithdrawal.ts';
 import { appendWorkflowEvent, loadProjection } from '../_shared/workflowEvents.ts';
 
@@ -68,11 +69,13 @@ function parseAttributes(value: unknown): SellerAttributes {
 /**
  * Provisional inline metadata recorded at submission time.
  *
- * This is not the document that reaches the chain. `prepareSellerSubmission`
- * republishes it to IPFS and swaps in the resulting `ipfs://` CID immediately
- * before the evidence commitment binds the URI, which is the last point at
- * which it can still change. Publishing here would be premature: a submission
- * may never be approved, and a rejected one should leave nothing pinned.
+ * This is not the document that reaches the chain. It describes the seller's
+ * claim; `prepareSellerSubmission` replaces it with a document built from the
+ * lab's graded attributes, publishes that to IPFS and swaps in the resulting
+ * `ipfs://` CID immediately before the evidence commitment binds the URI,
+ * which is the last point at which it can still change. Publishing here would
+ * be premature: a submission may never be approved, and a rejected one should
+ * leave nothing pinned.
  *
  * No `image` here either: seller media is private until a grader promotes one
  * photograph, which happens at approval. The republished document carries the
@@ -82,7 +85,9 @@ function parseAttributes(value: unknown): SellerAttributes {
  * shared builder rejects them.
  */
 function publicMetadata(attributes: SellerAttributes): string {
-  return dataUri(canonicalDocument(attributes));
+  return dataUri(
+    canonicalDocument(attributes, { chainId: configuredChainId((name) => Deno.env.get(name)) }),
+  );
 }
 
 function responseFor(submission: {
@@ -164,7 +169,9 @@ Deno.serve(async (request) => {
       if (!uuidPattern.test(submissionId)) return json({ error: 'Submission is invalid' }, 400);
       const { data: submission, error: lookupError } = await admin
         .from('seller_submissions')
-        .select('id,status,activation_state,onchain_gem_id,registration_tx_hash,bank_received_at')
+        .select(
+          'id,status,activation_state,onchain_gem_id::text,registration_tx_hash,registration_scan_from_block,bank_received_at',
+        )
         .eq('deployment_id', deployment.id)
         .eq('seller_id', user.id)
         .eq('id', submissionId)
@@ -181,6 +188,9 @@ Deno.serve(async (request) => {
         .eq('status', submission.status)
         .is('onchain_gem_id', null)
         .is('registration_tx_hash', null)
+        // Written immediately before `registerGem` is broadcast, so a
+        // registration may be in flight even though no hash is recorded yet.
+        .is('registration_scan_from_block', null)
         .in('activation_state', ['pending', 'prepared', 'failed'])
         .select('id,status')
         .maybeSingle();
@@ -244,26 +254,18 @@ Deno.serve(async (request) => {
       }
       const mode = await verificationMode(admin);
 
-      // A retry of an already-approved submission resumes activation regardless of
-      // mode: the valuation is whatever was recorded then, and the automatic
-      // fallback stays available only to the path that chose it.
+      /*
+       * An approved submission is waiting for the administrator's "Start
+       * protocol activation" step, which also records the `seller_activated`
+       * workflow event. This branch used to run the activation itself, which let
+       * a seller put their stone on-chain without that step. It now reports the
+       * state, and refuses to act until the administrator has.
+       */
       if (submission.status === 'approved' || submission.status === 'registered') {
-        try {
-          return json(
-            await activateSellerSubmission(admin, submissionId, {
-              allowAutomaticValuation: mode === 'auto',
-            }),
-          );
-        } catch (error) {
-          return json(
-            {
-              ...responseFor(submission),
-              activationState: 'failed',
-              activationError: safeErrorMessage(error, 'Automatic activation failed'),
-            },
-            202,
-          );
-        }
+        const projection = await loadProjection(admin, deployment.id, 'seller', submissionId);
+        const refusal = sellerActivationRefusal(projection?.current_state);
+        if (refusal) return json({ ...responseFor(submission), error: refusal }, 409);
+        return json({ ...responseFor(submission), verificationMode: mode });
       }
 
       // Already queued. Re-submitting must not fabricate a second queue entry, and
@@ -342,22 +344,9 @@ Deno.serve(async (request) => {
         saleMode: submission.sale_mode,
         custodyPreference: submission.custody_preference,
       });
-      try {
-        return json(
-          await activateSellerSubmission(admin, approved.id, {
-            allowAutomaticValuation: true,
-          }),
-        );
-      } catch (error) {
-        return json(
-          {
-            ...responseFor(approved),
-            activationState: 'failed',
-            activationError: safeErrorMessage(error, 'Automatic activation failed'),
-          },
-          202,
-        );
-      }
+      // Activation is not started from here either: it needs an appraisal and a
+      // bank receipt, and then the administrator's activation step.
+      return json({ ...responseFor(approved), verificationMode: mode });
     }
 
     if (body.action !== undefined && body.action !== 'create') {

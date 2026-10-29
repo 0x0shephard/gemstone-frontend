@@ -1,15 +1,19 @@
 /** Wide-range, read-only Sepolia endpoint used for historical log scans. */
 export const DEFAULT_LOGS_RPC_URL = 'https://ethereum-sepolia-rpc.publicnode.com';
 
+/**
+ * Wide-range, read-only public endpoints per chain, used only when no dedicated
+ * `LOGS_RPC_URL` is configured. Nothing signed and no key is ever sent to them;
+ * they serve `eth_getLogs` and block numbers.
+ */
+export const DEFAULT_LOGS_RPC_URLS: Readonly<Record<number, string>> = {
+  11155111: DEFAULT_LOGS_RPC_URL,
+  42161: 'https://arbitrum-one-rpc.publicnode.com',
+  421614: 'https://arbitrum-sepolia-rpc.publicnode.com',
+};
+
 const canonicalRpcUrl = (value: string) => value.trim().replace(/\/+$/, '');
 
-/**
- * Keep historical scans off the operator RPC.
- *
- * The operator endpoint is optimized for reads and writes but its current plan
- * accepts only tiny `eth_getLogs` windows. Treating the same URL as a dedicated
- * logs endpoint makes a successful scheduler fall farther behind every hour.
- */
 /**
  * A local node (the end-to-end suite runs anvil with Sepolia's chain id). The
  * public Sepolia default must never replace it: it would read the real
@@ -24,6 +28,20 @@ function isLocalRpc(url: string): boolean {
   }
 }
 
+/**
+ * Keep historical scans off the operator RPC.
+ *
+ * The operator endpoint is optimized for reads and writes but its plan accepts
+ * only tiny `eth_getLogs` windows and is billed per request. Treating the same
+ * URL as a dedicated logs endpoint makes a successful scheduler fall farther
+ * behind every hour, and on Arbitrum One — where `LOGS_RPC_URL` unset used to
+ * mean "use the operator RPC" — every sweep's history scan spent the operator's
+ * request budget, uncapped, on thousands of narrow windows.
+ *
+ * Production sets `LOGS_RPC_URL`. Without it, a chain with a known public
+ * wide-range endpoint uses that, and only a chain with none falls back to the
+ * operator RPC (the scanner then narrows to whatever window it accepts).
+ */
 export function resolveLogsRpcUrl(
   operatorRpcUrl: string,
   configuredLogsRpcUrl?: string | null,
@@ -34,11 +52,9 @@ export function resolveLogsRpcUrl(
   if (configured && canonicalRpcUrl(configured) !== canonicalRpcUrl(operatorRpcUrl)) {
     return configured;
   }
-  if (chainId === 11155111) {
-    return DEFAULT_LOGS_RPC_URL;
-  }
-  // A Sepolia endpoint cannot safely be used for another deployment. When an
-  // L2 has no dedicated historical endpoint, use its configured RPC and keep
-  // the chain correct even if the provider needs smaller scan windows.
+  // A public endpoint for one chain can never serve another: the same
+  // addresses would read a different network's state.
+  const fallback = DEFAULT_LOGS_RPC_URLS[chainId];
+  if (fallback) return fallback;
   return operatorRpcUrl;
 }

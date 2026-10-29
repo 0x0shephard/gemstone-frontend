@@ -2,11 +2,12 @@ import { adminClient, audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import {
-  canConfirmCustody,
-  NotACustodianError,
-  NotAVerifierError,
-  requireVerifier,
-} from '../_shared/verifier.ts';
+  MissingCapabilityError,
+  isGlobalOperationalAdmin,
+  operationalMembership,
+  type OperationalCapability,
+  type OperationalMembership,
+} from '../_shared/operations.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
 import { dgeNftAbi, dgeNftAddress, gemRegistryAbi, operatorChain } from '../_shared/chain.ts';
 import { CustodyTermInputError, parseCustodyTermInput } from '../_shared/custodyTerm.ts';
@@ -25,6 +26,37 @@ import { getAddress, isAddress, zeroAddress } from 'npm:viem@2';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Who may speak to a stone's physical custody: the bank that receives it, or a
+ * custodian organisation. Global administrators hold both.
+ *
+ * This endpoint used `requireVerifier`, which reads one membership with
+ * `.maybeSingle()` (a member of two organisations got a database error), and
+ * then `canConfirmCustody`, which accepts only admin organisations and the
+ * custodian role. Bank staff, who are the ones shown the missing-custody-term
+ * card, were therefore always refused. It now uses the same capability model as
+ * the rest of the operations console.
+ */
+const CUSTODY_CAPABILITIES: readonly OperationalCapability[] = [
+  'bank.receive',
+  'custodian.fulfill',
+];
+
+async function custodyMembership(
+  admin: ReturnType<typeof adminClient>,
+  profileId: string,
+  organizationId: string | undefined,
+): Promise<OperationalMembership> {
+  for (const capability of CUSTODY_CAPABILITIES) {
+    try {
+      return await operationalMembership(admin, profileId, capability, organizationId);
+    } catch (error) {
+      if (!(error instanceof MissingCapabilityError)) throw error;
+    }
+  }
+  throw new MissingCapabilityError(CUSTODY_CAPABILITIES[0]);
+}
+
 Deno.serve(async (request) => {
   const early = preflight(request);
   if (early) return early;
@@ -34,10 +66,12 @@ Deno.serve(async (request) => {
     const user = await requireUser(request);
     const admin = adminClient();
     const deployment = await requireProtocolDeployment(admin, request);
-    const membership = await requireVerifier(admin, user.id);
-    if (!canConfirmCustody(membership)) throw new NotACustodianError();
-
     const body = (await request.json()) as Record<string, unknown>;
+    const membership = await custodyMembership(
+      admin,
+      user.id,
+      typeof body.organizationId === 'string' ? body.organizationId : undefined,
+    );
     if (body.action === 'record_term') {
       const term = parseCustodyTermInput(body);
       const chain = operatorChain();
@@ -61,13 +95,26 @@ Deno.serve(async (request) => {
         return json({ error: 'That gemstone no longer has a live token' }, 409);
       }
 
-      // An admin organisation represents the platform operator's vault. A
-      // third-party custodian must instead prove the primary wallet recorded
-      // on the gem. Merely belonging to some custody organisation must never
-      // grant authority to set terms for every stone in the protocol.
-      let custodyMatches =
-        membership.kind === 'admin' &&
-        getAddress(gem.custodian) === getAddress(chain.account.address);
+      // An admin organisation represents the platform operator's vault. A bank
+      // may attest only for a stone the operator custodies *and* that this
+      // bank recorded receiving. A third-party custodian must instead prove the
+      // primary wallet recorded on the gem. Merely belonging to some custody
+      // organisation must never grant authority to set terms for every stone in
+      // the protocol.
+      const operatorCustodied = getAddress(gem.custodian) === getAddress(chain.account.address);
+      let custodyMatches = isGlobalOperationalAdmin(membership) && operatorCustodied;
+      if (!custodyMatches && operatorCustodied && membership.kind === 'bank') {
+        const { data: received, error: receivedError } = await admin
+          .from('seller_submissions')
+          .select('id')
+          .eq('deployment_id', deployment.id)
+          .eq('onchain_gem_id', term.gemId)
+          .eq('bank_organization_id', membership.organizationId)
+          .limit(1)
+          .maybeSingle();
+        if (receivedError) throw receivedError;
+        custodyMatches = Boolean(received);
+      }
       if (!custodyMatches) {
         const { data: walletLink, error: walletError } = await admin
           .from('wallet_links')
@@ -228,8 +275,12 @@ Deno.serve(async (request) => {
       reserveEscrowEndsAt: escrowEndsAt.toISOString(),
     });
   } catch (error) {
-    if (error instanceof NotAVerifierError) return json({ error: 'Not found' }, 404);
-    if (error instanceof NotACustodianError) return json({ error: error.message }, 403);
+    if (error instanceof MissingCapabilityError) {
+      return json(
+        { error: 'Confirming custody requires a bank, custodian or administrator membership' },
+        403,
+      );
+    }
     if (error instanceof CustodyTermInputError) return json({ error: error.message }, 400);
     const message = safeErrorMessage(error, 'Custody confirmation failed');
     const authorizationError = message === 'Missing authorization' || message === 'Invalid session';

@@ -77,7 +77,9 @@ Deno.serve(async (request) => {
             .from('seller_submissions')
             .select(
               'id,gem_name,carats,status,bank_location,bank_received_at,current_appraisal_id,' +
-                'gem_appraisals!seller_submissions_current_appraisal_id_fkey(id,approved_valuation_usd,matrix_version,matrix_hash,created_at)',
+                // numeric(78,0) is read as text: as a JSON number an 18-decimal
+                // price loses precision.
+                'gem_appraisals!seller_submissions_current_appraisal_id_fkey(id,approved_valuation_usd::text,matrix_version,matrix_hash,created_at)',
             )
             .eq('deployment_id', deployment.id)
             .in('id', sellerIds)
@@ -235,7 +237,7 @@ Deno.serve(async (request) => {
       const { data: submission, error: lookupError } = await admin
         .from('seller_submissions')
         .select(
-          'id,status,current_appraisal_id,bank_received_at,activation_tx_hash,onchain_gem_id,updated_at',
+          'id,status,current_appraisal_id,bank_received_at,activation_tx_hash,onchain_gem_id::text,updated_at',
         )
         .eq('deployment_id', deployment.id)
         .eq('id', submissionId)
