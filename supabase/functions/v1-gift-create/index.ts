@@ -9,6 +9,7 @@ import { emailConfigured, escapeHtml, sendEmail } from '../_shared/email.ts';
 import { sendGiftInvitation } from '../_shared/giftInvitation.ts';
 import { formatGiftCode, hashGiftCode, normalizeGiftCode } from '../_shared/gift.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
 
 /**
  * Prepares and activates an email-bound escrow gift.
@@ -247,6 +248,7 @@ Deno.serve(async (request) => {
     const deployment = await requireProtocolDeployment(admin, request);
     const body = (await request.json()) as Record<string, unknown>;
     const action = String(body.action ?? 'prepare');
+    assertNoLegacySepoliaFallback();
     const chain = operatorChain();
     const nft = dgeNftAddress();
     const escrowWallet = getAddress(chain.account.address);

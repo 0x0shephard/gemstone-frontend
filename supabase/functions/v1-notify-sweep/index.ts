@@ -1,5 +1,13 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { formatUnits, parseEventLogs, type Address, type Log } from 'npm:viem@2';
+import {
+  formatUnits,
+  keccak256,
+  parseEventLogs,
+  toBytes,
+  type Address,
+  type Hash,
+  type Log,
+} from 'npm:viem@2';
 import { adminClient } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
 import { json, preflight } from '../_shared/cors.ts';
@@ -22,6 +30,11 @@ import { blocksBack, blocksForSeconds } from '../_shared/blockTime.ts';
 import { notifyWallet, reconcileNotificationProfileLinks } from '../_shared/notify.ts';
 import { TIMED_OUT, phaseLog, withDeadline, type PhaseLog } from '../_shared/deadline.ts';
 import { protocolDeploymentId, requireProtocolDeployment } from '../_shared/deployment.ts';
+import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
+import { redemptionOpenedAlerts } from '../_shared/redemptionAlertPlan.ts';
+import { deliverStaffAlerts, storageBank } from '../_shared/redemptionAlerts.ts';
+import { redemptionWriteAbi } from '../_shared/redemptionOperator.ts';
+import { rowsClosedByRedemptionEvent, type ChainPosition } from '../_shared/redemptionSweep.ts';
 
 /**
  * Tells people about protocol state that is waiting on them.
@@ -340,6 +353,121 @@ async function reconcileRedemptionRows(
   return { checked: (rows ?? []).length, updated, unreadable };
 }
 
+/** Admins, the storing bank and any assigned custodian, for a newly opened request. */
+async function alertRedemptionOpened(
+  admin: Admin,
+  counters: Counters,
+  input: { requestId: string; gemId: bigint; requestHash: string },
+): Promise<void> {
+  const deploymentId = protocolDeploymentId();
+  const bank = await storageBank(admin, deploymentId, input.gemId.toString()).catch(() => null);
+  const { data: custodian } = await admin
+    .from('redemption_workflow_assignments')
+    .select('organization_id')
+    .eq('deployment_id', deploymentId)
+    .eq('redemption_request_id', input.requestId)
+    .eq('assignment_role', 'custodian')
+    .maybeSingle();
+  await deliverStaffAlerts(admin, {
+    deploymentId,
+    // Keyed by the on-chain request, so a replayed log is the same alert.
+    entityId: input.requestHash.toLowerCase(),
+    alerts: redemptionOpenedAlerts({
+      gemId: input.gemId.toString(),
+      bankOrganizationId: bank?.id ?? null,
+      custodianOrganizationId: (custodian?.organization_id as string | undefined) ?? null,
+    }),
+    notify: (notification) => send(admin, counters, notification),
+  });
+}
+
+/** Where a row's recorded transaction sits, using its RedemptionOpened log when present. */
+async function transactionPosition(
+  chain: OperatorChain,
+  hash: string,
+  tokenId: bigint,
+): Promise<ChainPosition | null> {
+  const receipt = await chain.logsClient
+    .getTransactionReceipt({ hash: hash as Hash })
+    .catch(() => null);
+  if (!receipt) return null;
+  const manager = redemptionManagerAddress().toLowerCase();
+  const opened = parseEventLogs({
+    abi: redemptionManagerAbi,
+    logs: receipt.logs,
+    eventName: 'RedemptionOpened',
+  }).find((log) => log.address.toLowerCase() === manager && log.args.tokenId === tokenId);
+  return {
+    blockNumber: receipt.blockNumber,
+    transactionIndex: receipt.transactionIndex,
+    // A later step of the same request (a proxy nomination) has no open log;
+    // ordering it first within its own transaction keeps it before the event.
+    logIndex: opened?.logIndex ?? -1,
+  };
+}
+
+/** The open rows a cancel/confirm log closed: never a newer request for the token. */
+async function redemptionRowsClosedBy(
+  admin: Admin,
+  chain: OperatorChain,
+  event: {
+    eventName: 'RedemptionCancelled' | 'RedemptionConfirmed';
+    tokenId: bigint;
+    blockNumber: bigint | null;
+    transactionIndex: number | null;
+    logIndex: number | null;
+  },
+): Promise<string[]> {
+  if (event.blockNumber === null || event.transactionIndex === null || event.logIndex === null) {
+    return [];
+  }
+  const { data: rows, error } = await admin
+    .from('redemption_requests')
+    .select('id,transaction_hash')
+    .eq('deployment_id', protocolDeploymentId())
+    .eq('token_id', String(event.tokenId))
+    .in('status', ['committed', 'onchain_requested']);
+  if (error) throw error;
+  if (!rows?.length) return [];
+
+  const record = await chain.logsClient
+    .readContract({
+      address: redemptionManagerAddress(),
+      abi: redemptionWriteAbi,
+      functionName: 'redemptionRecord',
+      args: [event.tokenId],
+    })
+    .then((value) => {
+      const stored = value as unknown as { workflowIdHash: string; phase: number | bigint };
+      return { workflowIdHash: String(stored.workflowIdHash), phase: Number(stored.phase) };
+    })
+    .catch(() => null);
+  const rowPositions = new Map<string, ChainPosition | null>();
+  for (const row of rows) {
+    rowPositions.set(
+      String(row.id),
+      row.transaction_hash
+        ? await transactionPosition(chain, String(row.transaction_hash), event.tokenId)
+        : null,
+    );
+  }
+  return rowsClosedByRedemptionEvent({
+    eventName: event.eventName,
+    event: {
+      blockNumber: event.blockNumber,
+      transactionIndex: event.transactionIndex,
+      logIndex: event.logIndex,
+    },
+    rows: rows.map((row) => ({
+      id: String(row.id),
+      workflowIdHash: keccak256(toBytes(String(row.id))),
+      transactionHash: (row.transaction_hash as string | null) ?? null,
+    })),
+    chainRecord: record,
+    rowPositions,
+  });
+}
+
 /** Below the platform's own worker timeout, so this answers rather than dies. */
 const HARD_TIMEOUT_MS = 60_000;
 
@@ -377,6 +505,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
   {
     const admin = adminClient();
     await requireProtocolDeployment(admin);
+    assertNoLegacySepoliaFallback();
     const chain = operatorChain();
 
     const counters: Counters = { created: 0, emailed: 0, pushed: 0 };
@@ -699,7 +828,7 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
 
           if (event.eventName === 'RedemptionOpened') {
             const { owner, requestHash } = event.args as { owner: Address; requestHash: string };
-            const { error: requestUpdateError } = await admin
+            const { data: openedRows, error: requestUpdateError } = await admin
               .from('redemption_requests')
               .update({
                 status: 'onchain_requested',
@@ -708,35 +837,23 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
               .eq('deployment_id', protocolDeploymentId())
               .eq('token_id', String(tokenId))
               .eq('request_hash', requestHash.toLowerCase())
-              .in('status', ['committed', 'onchain_requested']);
+              .in('status', ['committed', 'onchain_requested'])
+              .select('id');
             if (requestUpdateError) throw requestUpdateError;
             /*
-             * The custodian is the whole point of this branch. Redemption stops
-             * dead until they call `confirmRedemption`, and nothing else can do
-             * it for them — so this is the message that turns a request into a
-             * shipment rather than a row that sits at "in progress" forever.
+             * Tell the people who move the request on. The gem's on-chain
+             * custodian is the server's operator wallet, so addressing it reached
+             * nobody: the admins accept the request, the bank that stores the
+             * stone dispatches it, and the custodian organization delivers it.
+             * Only a request still waiting to be accepted is announced; a replay
+             * of one that has moved on would be stale news.
              */
-            const gem = (await chain.logsClient
-              .readContract({
-                address: chain.addresses.registry,
-                abi: gemRegistryAbi,
-                functionName: 'getGem',
-                args: [gemId],
-              })
-              .catch(() => null)) as { custodian: Address } | null;
-            if (gem?.custodian && gem.custodian !== ZERO) {
-              await send(admin, counters, {
-                wallet: gem.custodian,
-                kind: 'redemption.opened',
-                title: 'A redemption is waiting on you',
-                body:
-                  `The owner of gemstone #${gemId} has asked to take physical delivery. The ` +
-                  `token is locked until this is settled. Once the stone is with them, confirm ` +
-                  `the handover — nobody else can, and the reserve is released to you when you do.`,
-                actionPath: '/profile?tab=redeem',
-                actionLabel: 'Review the redemption',
-                entityType: 'redemption',
-                entityId: String(tokenId),
+            const openedId = openedRows?.[0]?.id as string | undefined;
+            if (openedId) {
+              await alertRedemptionOpened(admin, counters, {
+                requestId: openedId,
+                gemId,
+                requestHash,
               });
             }
 
@@ -746,8 +863,9 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
               kind: 'redemption.requested',
               title: 'Your redemption request is open',
               body:
-                `Gemstone #${gemId} is now awaiting custodian fulfilment, and the token is ` +
-                `locked while that runs. You can cancel at any time to unlock it.`,
+                `Gemstone #${gemId} is now awaiting review by Digital Carat, and the token is ` +
+                `locked while the redemption runs. You can cancel it to unlock the token until ` +
+                `the bank starts preparing the stone.`,
               actionPath: '/profile?tab=redeem',
               actionLabel: 'Track your redemption',
               entityType: 'redemption',
@@ -760,16 +878,27 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
             event.eventName === 'RedemptionCancelled'
           ) {
             const confirmed = event.eventName === 'RedemptionConfirmed';
-            const { error: requestUpdateError } = await admin
-              .from('redemption_requests')
-              .update({
-                status: confirmed ? 'fulfilled' : 'cancelled',
-                transaction_hash: event.transactionHash,
-              })
-              .eq('deployment_id', protocolDeploymentId())
-              .eq('token_id', String(tokenId))
-              .in('status', ['committed', 'onchain_requested']);
-            if (requestUpdateError) throw requestUpdateError;
+            // Only the request this log closed; see rowsClosedByRedemptionEvent.
+            const closedIds = await redemptionRowsClosedBy(admin, chain, {
+              eventName: event.eventName,
+              tokenId,
+              blockNumber: event.blockNumber,
+              transactionIndex: event.transactionIndex,
+              logIndex: event.logIndex,
+            });
+            if (closedIds.length > 0) {
+              const { error: requestUpdateError } = await admin
+                .from('redemption_requests')
+                .update({
+                  status: confirmed ? 'fulfilled' : 'cancelled',
+                  transaction_hash: event.transactionHash,
+                })
+                .eq('deployment_id', protocolDeploymentId())
+                .eq('token_id', String(tokenId))
+                .in('id', closedIds)
+                .in('status', ['committed', 'onchain_requested']);
+              if (requestUpdateError) throw requestUpdateError;
+            }
 
             /*
              * Neither event carries the owner — only `(tokenId, gemId)` — and by
@@ -798,8 +927,8 @@ async function runSweep(phases: PhaseLog): Promise<Record<string, unknown>> {
                 ? 'Your gemstone has been released'
                 : 'Your redemption was cancelled',
               body: confirmed
-                ? `The custodian has confirmed physical handover of gemstone #${gemId}. The ` +
-                  `token has been burned and the reserve released — the stone is yours outright.`
+                ? `The redemption of gemstone #${gemId} is complete. The token has been burned ` +
+                  `and its reserve released, and the stone is yours outright.`
                 : `The redemption request for gemstone #${gemId} was cancelled. The token is ` +
                   `unlocked and back to normal, and you can request redemption again whenever ` +
                   `you like.`,

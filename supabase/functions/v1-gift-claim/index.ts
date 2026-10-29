@@ -10,9 +10,10 @@ import {
   writeAndConfirm,
 } from '../_shared/chain.ts';
 import { hashGiftCode, maskEmail, normalizeGiftCode } from '../_shared/gift.ts';
-import { reconcileGiftTransfer } from '../_shared/giftMutation.ts';
+import { pendingOperationAgeMs, reconcileGiftTransfer } from '../_shared/giftMutation.ts';
 import { claimGiftTransferLease, releaseGiftTransferLease } from '../_shared/giftTransferLease.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
 
 /**
  * Inspects and claims an email-bound gift.
@@ -136,15 +137,27 @@ Deno.serve(async (request) => {
       .eq('is_primary', true)
       .not('verified_at', 'is', null)
       .maybeSingle();
-    if (!walletLink?.wallet_address || !isAddress(walletLink.wallet_address)) {
+    const currentWallet =
+      walletLink?.wallet_address && isAddress(walletLink.wallet_address)
+        ? getAddress(walletLink.wallet_address)
+        : null;
+    // A pending claim is reconciled against the wallet it was started for. The
+    // recipient may have changed their primary wallet since; the transfer in
+    // flight still goes to the stored one.
+    const pendingWallet =
+      card.status === 'claim_pending' && card.claimed_wallet && isAddress(card.claimed_wallet)
+        ? getAddress(card.claimed_wallet)
+        : null;
+    if (!pendingWallet && !currentWallet) {
       return json(
         { error: 'Connect and verify a wallet to receive the token', state: 'active' },
         400,
       );
     }
-    const recipientWallet = getAddress(walletLink.wallet_address);
+    let recipientWallet = (pendingWallet ?? currentWallet)!;
     const senderWallet = getAddress(card.sender_wallet);
 
+    assertNoLegacySepoliaFallback();
     const chain = operatorChain();
     await assertOperatorChain(chain);
     const operatorWallet = getAddress(chain.account.address);
@@ -157,7 +170,7 @@ Deno.serve(async (request) => {
     if (escrowed && custodyWallet !== operatorWallet) {
       return json({ error: 'The gift escrow wallet is not available' }, 409);
     }
-    if (recipientWallet === custodyWallet) {
+    if (!pendingWallet && recipientWallet === custodyWallet) {
       return json({ error: 'That wallet already holds this token', state: 'active' }, 400);
     }
 
@@ -186,7 +199,35 @@ Deno.serve(async (request) => {
           }),
     ])) as [string, boolean, string];
 
-    async function submitClaimTransfer(initialAttempt: boolean, nonce?: number): Promise<Response> {
+    /** Undoes an attempt that never broadcast, if it is still this attempt's. */
+    async function releaseUnsubmittedClaim(attemptStartedAt: string) {
+      await admin
+        .from('gift_cards')
+        .update({
+          status: 'active',
+          claimed_by: null,
+          claimed_wallet: null,
+          operation_started_at: null,
+          operation_nonce: null,
+        })
+        .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
+        .eq('status', 'claim_pending')
+        .eq('operation_started_at', attemptStartedAt);
+    }
+
+    /**
+     * Sends the escrow transfer for one attempt. `attemptStartedAt` is the
+     * `operation_started_at` this attempt wrote; recording the nonce requires it
+     * to be unchanged, so an attempt that was reset as abandoned can never
+     * broadcast afterwards.
+     */
+    async function submitClaimTransfer(
+      destination: `0x${string}`,
+      attemptStartedAt: string,
+      initialAttempt: boolean,
+      nonce?: number,
+    ): Promise<Response> {
       let submissionAttempted = false;
       let submittedHash: string | null = null;
       let retainLease = false;
@@ -196,38 +237,16 @@ Deno.serve(async (request) => {
         leaseClaimed = await claimGiftTransferLease(admin, leaseHolder);
       } catch (leaseError) {
         if (!initialAttempt) {
-          return json({ ...summary, state: 'claiming', recipientWallet }, 202);
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
         }
-        await admin
-          .from('gift_cards')
-          .update({
-            status: 'active',
-            claimed_by: null,
-            claimed_wallet: null,
-            operation_started_at: null,
-            operation_nonce: null,
-          })
-          .eq('id', card.id)
-          .eq('deployment_id', deployment.id)
-          .eq('status', 'claim_pending');
+        await releaseUnsubmittedClaim(attemptStartedAt);
         throw leaseError;
       }
       if (!leaseClaimed) {
         if (!initialAttempt) {
-          return json({ ...summary, state: 'claiming', recipientWallet }, 202);
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
         }
-        await admin
-          .from('gift_cards')
-          .update({
-            status: 'active',
-            claimed_by: null,
-            claimed_wallet: null,
-            operation_started_at: null,
-            operation_nonce: null,
-          })
-          .eq('id', card.id)
-          .eq('deployment_id', deployment.id)
-          .eq('status', 'claim_pending');
+        await releaseUnsubmittedClaim(attemptStartedAt);
         return json({ error: 'Gift transfers are busy. Try the claim again shortly.' }, 409);
       }
       try {
@@ -237,7 +256,7 @@ Deno.serve(async (request) => {
             address: nft,
             abi: dgeNftAbi,
             functionName: 'safeTransferFrom',
-            args: [custodyWallet, recipientWallet, tokenId],
+            args: [custodyWallet, destination, tokenId],
           },
           {
             nonce,
@@ -251,6 +270,7 @@ Deno.serve(async (request) => {
                 .eq('id', card.id)
                 .eq('deployment_id', deployment.id)
                 .eq('status', 'claim_pending')
+                .eq('operation_started_at', attemptStartedAt)
                 .select('id')
                 .maybeSingle();
               if (error) throw error;
@@ -280,26 +300,15 @@ Deno.serve(async (request) => {
               ...summary,
               state: 'claiming',
               transactionHash: submittedHash ?? undefined,
-              recipientWallet,
+              recipientWallet: destination,
             },
             202,
           );
         }
         if (!initialAttempt) {
-          return json({ ...summary, state: 'claiming', recipientWallet }, 202);
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
         }
-        await admin
-          .from('gift_cards')
-          .update({
-            status: 'active',
-            claimed_by: null,
-            claimed_wallet: null,
-            operation_started_at: null,
-            operation_nonce: null,
-          })
-          .eq('id', card.id)
-          .eq('deployment_id', deployment.id)
-          .eq('status', 'claim_pending');
+        await releaseUnsubmittedClaim(attemptStartedAt);
         throw transferError;
       } finally {
         if (!retainLease) await releaseGiftTransferLease(admin, leaseHolder);
@@ -326,13 +335,18 @@ Deno.serve(async (request) => {
         ...summary,
         state: 'claimed',
         transactionHash: submittedHash,
-        recipientWallet,
+        recipientWallet: destination,
       });
     }
 
-    // A prior call may have timed out after broadcasting. Reconcile that exact
-    // operation before any path is allowed to submit another transfer.
-    if (card.status === 'claim_pending') {
+    /**
+     * A prior call may have timed out after broadcasting. Reconcile that exact
+     * operation, against the wallet it was started for, before any path is
+     * allowed to submit another transfer. Returns null only when the attempt
+     * was abandoned before anything was broadcast and has been reset, so a
+     * fresh claim may start.
+     */
+    async function reconcilePendingClaim(destination: `0x${string}`): Promise<Response | null> {
       const receipt = card.claim_tx_hash
         ? await chain.publicClient
             .getTransactionReceipt({ hash: card.claim_tx_hash as `0x${string}` })
@@ -350,7 +364,7 @@ Deno.serve(async (request) => {
             event.address.toLowerCase() === nft.toLowerCase() &&
             event.args.tokenId === tokenId &&
             getAddress(event.args.from) === custodyWallet &&
-            getAddress(event.args.to) === recipientWallet,
+            getAddress(event.args.to) === destination,
         );
       const operationNonce = card.operation_nonce === null ? null : Number(card.operation_nonce);
       const [senderPendingNonce, senderLatestNonce] =
@@ -368,16 +382,14 @@ Deno.serve(async (request) => {
           : [null, null];
       const reconciliation = reconcileGiftTransfer({
         currentOwner: owner,
-        destinationOwner: recipientWallet,
+        destinationOwner: destination,
         transactionHash: card.claim_tx_hash,
         receiptStatus: receipt?.status ?? null,
         receiptMatchesTransfer,
         operationNonce,
         senderPendingNonce,
         senderLatestNonce,
-        operationAgeMs: card.operation_started_at
-          ? Date.now() - new Date(card.operation_started_at).getTime()
-          : 0,
+        operationAgeMs: pendingOperationAgeMs(card.operation_started_at),
       });
       if (reconciliation === 'complete') {
         const claimedAt = card.claimed_at ?? new Date().toISOString();
@@ -402,7 +414,7 @@ Deno.serve(async (request) => {
           ...summary,
           state: 'claimed',
           transactionHash: card.claim_tx_hash ?? undefined,
-          recipientWallet,
+          recipientWallet: destination,
         });
       }
       if (reconciliation === 'failed') {
@@ -422,15 +434,46 @@ Deno.serve(async (request) => {
           .eq('status', 'claim_pending');
         return json({ error: 'The claim transaction reverted. It is safe to try again.' }, 409);
       }
+      if (reconciliation === 'reset_unsubmitted') {
+        // Nothing was broadcast: no nonce, no hash. Reopen the card only if it
+        // is still exactly the abandoned attempt that was read.
+        let reset = admin
+          .from('gift_cards')
+          .update({
+            status: 'active',
+            claimed_by: null,
+            claimed_wallet: null,
+            claimed_at: null,
+            operation_started_at: null,
+            operation_nonce: null,
+          })
+          .eq('id', card.id)
+          .eq('deployment_id', deployment.id)
+          .eq('status', 'claim_pending')
+          .is('operation_nonce', null)
+          .is('claim_tx_hash', null);
+        reset = card.operation_started_at
+          ? reset.eq('operation_started_at', card.operation_started_at)
+          : reset.is('operation_started_at', null);
+        const { data: reopened } = await reset.select('id').maybeSingle();
+        if (!reopened) {
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
+        }
+        await audit(user.id, 'gift.claim_reset', 'gift_card', card.id, {
+          tokenId: card.token_id,
+          abandonedAt: card.operation_started_at,
+        });
+        return null;
+      }
       if (
         (reconciliation === 'retry_same_nonce' || reconciliation === 'retry_fresh_nonce') &&
         operationNonce !== null
       ) {
         if (getAddress(owner) !== custodyWallet || locked) {
-          return json({ ...summary, state: 'claiming', recipientWallet }, 202);
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
         }
         if (!escrowed && getAddress(approved) !== operatorWallet) {
-          return json({ ...summary, state: 'claiming', recipientWallet }, 202);
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
         }
         const retryStartedAt = new Date().toISOString();
         let retryLease = admin
@@ -443,8 +486,12 @@ Deno.serve(async (request) => {
           ? retryLease.eq('operation_started_at', card.operation_started_at)
           : retryLease.is('operation_started_at', null);
         const { data: leased } = await retryLease.select('id').maybeSingle();
-        if (!leased) return json({ ...summary, state: 'claiming', recipientWallet }, 202);
+        if (!leased) {
+          return json({ ...summary, state: 'claiming', recipientWallet: destination }, 202);
+        }
         return submitClaimTransfer(
+          destination,
+          retryStartedAt,
           false,
           reconciliation === 'retry_same_nonce' ? operationNonce : undefined,
         );
@@ -454,10 +501,30 @@ Deno.serve(async (request) => {
           ...summary,
           state: 'claiming',
           transactionHash: card.claim_tx_hash ?? undefined,
-          recipientWallet,
+          recipientWallet: destination,
         },
         202,
       );
+    }
+
+    if (card.status === 'claim_pending') {
+      const settled = await reconcilePendingClaim(recipientWallet);
+      if (settled) return settled;
+      // The abandoned attempt was reset; start a fresh claim to the recipient's
+      // current wallet, as for any active card.
+      if (new Date(card.expires_at).getTime() <= Date.now()) {
+        return json({ error: 'This gift card has expired', state: 'expired' }, 409);
+      }
+      if (!currentWallet) {
+        return json(
+          { error: 'Connect and verify a wallet to receive the token', state: 'active' },
+          400,
+        );
+      }
+      recipientWallet = currentWallet;
+      if (recipientWallet === custodyWallet) {
+        return json({ error: 'That wallet already holds this token', state: 'active' }, 400);
+      }
     }
 
     if (getAddress(owner) !== custodyWallet) {
@@ -495,7 +562,7 @@ Deno.serve(async (request) => {
       return json({ error: 'This gift claim is already being processed', state: 'claiming' }, 409);
     }
 
-    return submitClaimTransfer(true);
+    return submitClaimTransfer(recipientWallet, operationStartedAt, true);
   } catch (error) {
     return json({ error: safeErrorMessage(error, 'Could not claim the gift card') }, 400);
   }

@@ -8,10 +8,15 @@ import {
   type Hash,
   type Log,
 } from 'npm:viem@2';
+import { deploymentRpcUrl } from './legacySepoliaEnv.ts';
 import {
   assertReceiptEnvelope,
+  assertReceiptOutcome,
   assertRedemptionEventArgs,
+  missingTransactionMessage,
   redemptionManagerLogs,
+  verifyRecoveryReceipt,
+  type RecoveryStep,
 } from './receiptValidation.ts';
 
 export { assertReceiptEnvelope, assertRedemptionEventArgs, redemptionManagerLogs };
@@ -32,36 +37,100 @@ export const redemptionLifecycleAbi = parseAbi([
   'function recoveryProposal(uint256 tokenId) view returns ((bytes32 proposalHash,bytes32 evidenceDigest,uint64 proposedAt,uint64 executeAfter,uint8 requiredApprovals,uint8 approvals,bool executed))',
 ]);
 
-function client() {
-  const rpcUrl = Deno.env.get('RPC_URL')?.trim() || Deno.env.get('SEPOLIA_RPC_URL')?.trim();
-  if (!rpcUrl) throw new Error('RPC_URL is not configured');
-  return createPublicClient({ transport: http(rpcUrl, { timeout: 15_000, retryCount: 1 }) });
+/** The deployment's read client. Off Sepolia it never falls back to SEPOLIA_RPC_URL. */
+export function redemptionReadClient() {
+  return createPublicClient({
+    transport: http(deploymentRpcUrl(), { timeout: 15_000, retryCount: 1 }),
+  });
 }
 
+/**
+ * The receipt for a hash a person submitted, with a clear error when the hash
+ * is not a mined transaction (most often a Safe's off-chain safeTxHash).
+ */
+async function minedReceipt(publicClient: ReturnType<typeof redemptionReadClient>, hash: Hash) {
+  try {
+    return await publicClient.getTransactionReceipt({ hash });
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== 'TransactionReceiptNotFoundError') throw error;
+    const pending = await publicClient
+      .getTransaction({ hash })
+      .then(() => true)
+      .catch(() => false);
+    throw new Error(missingTransactionMessage(pending));
+  }
+}
+
+function managerEvents(logs: Log[], manager: Address) {
+  return parseEventLogs({
+    abi: redemptionLifecycleAbi,
+    logs: redemptionManagerLogs(logs, manager) as Log[],
+    strict: true,
+  });
+}
+
+/**
+ * The manager's events in a confirmed transaction.
+ *
+ * With `expectedSender` the transaction must be that wallet's direct call to
+ * the manager; server-signed steps are checked this way. With
+ * `senderAttestedByEvents` the envelope is not checked, because the caller
+ * binds the actor through event arguments the contract takes from `msg.sender`
+ * (or through ownership the contract enforces). That also holds when a Safe or
+ * a smart account executes the call, where `to`/`from` are not the wallet.
+ */
 export async function confirmedRedemptionEvents(input: {
   transactionHash: Hash;
   manager: Address;
   expectedSender?: Address;
+  senderAttestedByEvents?: boolean;
   expectedChainId: number;
 }) {
-  const publicClient = client();
+  const publicClient = redemptionReadClient();
   const chainId = await publicClient.getChainId();
-  const receipt = await publicClient.getTransactionReceipt({ hash: input.transactionHash });
-  assertReceiptEnvelope({
+  const receipt = await minedReceipt(publicClient, input.transactionHash);
+  if (input.senderAttestedByEvents) {
+    assertReceiptOutcome({
+      chainId,
+      expectedChainId: input.expectedChainId,
+      status: receipt.status,
+    });
+  } else {
+    assertReceiptEnvelope({
+      chainId,
+      expectedChainId: input.expectedChainId,
+      status: receipt.status,
+      to: receipt.to,
+      manager: input.manager,
+      from: receipt.from,
+      expectedSender: input.expectedSender,
+    });
+  }
+  return { receipt, logs: managerEvents(receipt.logs, input.manager) };
+}
+
+/** A recovery step validated from the manager's events, for an EOA or a Safe. */
+export async function confirmedRecoveryStep(input: {
+  transactionHash: Hash;
+  manager: Address;
+  approver: Address;
+  expectedChainId: number;
+  step: RecoveryStep;
+}) {
+  const publicClient = redemptionReadClient();
+  const chainId = await publicClient.getChainId();
+  const receipt = await minedReceipt(publicClient, input.transactionHash);
+  return verifyRecoveryReceipt({
     chainId,
     expectedChainId: input.expectedChainId,
     status: receipt.status,
-    to: receipt.to,
-    manager: input.manager,
     from: receipt.from,
-    expectedSender: input.expectedSender,
+    manager: input.manager,
+    approver: input.approver,
+    rawLogs: receipt.logs,
+    managerLogs: managerEvents(receipt.logs, input.manager),
+    step: input.step,
   });
-  const logs = parseEventLogs({
-    abi: redemptionLifecycleAbi,
-    logs: redemptionManagerLogs(receipt.logs, input.manager) as Log[],
-    strict: true,
-  });
-  return { receipt, logs };
 }
 
 export function findEvent<T extends string>(
@@ -74,7 +143,7 @@ export function findEvent<T extends string>(
 }
 
 export async function hasRedemptionRole(manager: Address, role: Hash, wallet: Address) {
-  return client().readContract({
+  return redemptionReadClient().readContract({
     address: getAddress(manager),
     abi: redemptionLifecycleAbi,
     functionName: 'hasRole',
@@ -83,7 +152,7 @@ export async function hasRedemptionRole(manager: Address, role: Hash, wallet: Ad
 }
 
 export async function recoveryProposal(manager: Address, tokenId: bigint) {
-  return client().readContract({
+  return redemptionReadClient().readContract({
     address: getAddress(manager),
     abi: redemptionLifecycleAbi,
     functionName: 'recoveryProposal',

@@ -5,6 +5,7 @@ import { NotACustodianError, canConfirmCustody, requireVerifier } from '../_shar
 import { getAddress, isAddress } from 'npm:viem@2';
 import { gemRegistryAbi, operatorChain } from '../_shared/chain.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
 
 /**
  * Delivery details for an open redemption, for the custodian who must fulfil it.
@@ -64,6 +65,7 @@ Deno.serve(async (request) => {
       return json({ error: 'No open redemption request for that token' }, 404);
     }
 
+    assertNoLegacySepoliaFallback();
     const chain = operatorChain();
     let record: (typeof records)[number] | undefined;
     let custodian: string | undefined;

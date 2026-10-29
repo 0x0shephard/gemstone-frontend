@@ -9,9 +9,14 @@ import {
   operatorChain,
   writeAndConfirm,
 } from '../_shared/chain.ts';
-import { reconcileGiftTransfer } from '../_shared/giftMutation.ts';
+import {
+  UNSUBMITTED_OPERATION_RESET_MS,
+  pendingOperationAgeMs,
+  reconcileGiftTransfer,
+} from '../_shared/giftMutation.ts';
 import { claimGiftTransferLease, releaseGiftTransferLease } from '../_shared/giftTransferLease.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
+import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
 
 /** Cancel a pending/live gift and return an escrowed NFT to its sender. */
 
@@ -21,10 +26,11 @@ interface GiftRow {
   id: string;
   sender_wallet: string;
   token_id: string;
-  status: 'pending_escrow' | 'active' | 'cancel_pending';
+  status: 'pending_escrow' | 'active' | 'claim_pending' | 'cancel_pending';
   custody_mode: 'approval' | 'operator_escrow';
   escrow_wallet: string | null;
   return_tx_hash: string | null;
+  claim_tx_hash: string | null;
   cancel_from_status: 'pending_escrow' | 'active' | null;
   operation_nonce: number | string | null;
   operation_started_at: string | null;
@@ -46,20 +52,62 @@ Deno.serve(async (request) => {
     const { data } = await admin
       .from('gift_cards')
       .select(
-        'id,sender_wallet,token_id::text,status,custody_mode,escrow_wallet,return_tx_hash,cancel_from_status,operation_nonce,operation_started_at',
+        'id,sender_wallet,token_id::text,status,custody_mode,escrow_wallet,return_tx_hash,claim_tx_hash,cancel_from_status,operation_nonce,operation_started_at',
       )
       .eq('id', giftId)
       .eq('deployment_id', deployment.id)
       .eq('sender_id', user.id)
-      .in('status', ['pending_escrow', 'active', 'cancel_pending'])
+      .in('status', ['pending_escrow', 'active', 'claim_pending', 'cancel_pending'])
       .maybeSingle();
     const card = data as GiftRow | null;
     if (!card) {
       return json({ error: 'That gift card is not open, or is not yours to cancel' }, 409);
     }
 
+    /*
+     * A claim that recorded neither a nonce nor a hash never broadcast: the
+     * worker died between taking the card and `onSubmitting`. Past the reset
+     * window the sender may reopen and cancel it, instead of the card staying
+     * "being claimed" until the recipient happens to retry.
+     */
+    if (card.status === 'claim_pending') {
+      const abandoned =
+        !card.claim_tx_hash &&
+        card.operation_nonce === null &&
+        pendingOperationAgeMs(card.operation_started_at) >= UNSUBMITTED_OPERATION_RESET_MS;
+      if (!abandoned) {
+        return json({ error: 'This gift is being claimed and cannot be cancelled now' }, 409);
+      }
+      let reopen = admin
+        .from('gift_cards')
+        .update({
+          status: 'active',
+          claimed_by: null,
+          claimed_wallet: null,
+          claimed_at: null,
+          operation_started_at: null,
+          operation_nonce: null,
+        })
+        .eq('id', card.id)
+        .eq('deployment_id', deployment.id)
+        .eq('status', 'claim_pending')
+        .is('operation_nonce', null)
+        .is('claim_tx_hash', null);
+      reopen = card.operation_started_at
+        ? reopen.eq('operation_started_at', card.operation_started_at)
+        : reopen.is('operation_started_at', null);
+      const { data: reopened } = await reopen.select('id').maybeSingle();
+      if (!reopened) {
+        return json({ error: 'This gift is being claimed and cannot be cancelled now' }, 409);
+      }
+      card.status = 'active';
+      card.operation_nonce = null;
+      card.operation_started_at = null;
+    }
+
     let returnTxHash: string | null = null;
     if (card.custody_mode === 'operator_escrow') {
+      assertNoLegacySepoliaFallback();
       const chain = operatorChain();
       await assertOperatorChain(chain);
       const operatorWallet = getAddress(chain.account.address);
@@ -87,7 +135,32 @@ Deno.serve(async (request) => {
       ])) as [string, boolean];
       const ownerAddress = getAddress(owner);
 
-      async function submitReturn(initialAttempt: boolean, nonce?: number): Promise<Response> {
+      /** Undoes an attempt that never broadcast, if it is still this attempt's. */
+      async function releaseUnsubmittedReturn(attemptStartedAt: string) {
+        await admin
+          .from('gift_cards')
+          .update({
+            status: card!.status,
+            operation_started_at: null,
+            operation_nonce: null,
+            cancel_from_status: null,
+          })
+          .eq('id', card!.id)
+          .eq('deployment_id', deployment.id)
+          .eq('status', 'cancel_pending')
+          .eq('operation_started_at', attemptStartedAt);
+      }
+
+      /**
+       * Sends the escrow return for one attempt. Recording the nonce requires
+       * `operation_started_at` to still be `attemptStartedAt`, so an attempt
+       * reset as abandoned can never broadcast afterwards.
+       */
+      async function submitReturn(
+        attemptStartedAt: string,
+        initialAttempt: boolean,
+        nonce?: number,
+      ): Promise<Response> {
         let submissionAttempted = false;
         let submittedHash: string | null = null;
         let retainLease = false;
@@ -107,17 +180,7 @@ Deno.serve(async (request) => {
               202,
             );
           }
-          await admin
-            .from('gift_cards')
-            .update({
-              status: card.status,
-              operation_started_at: null,
-              operation_nonce: null,
-              cancel_from_status: null,
-            })
-            .eq('id', card.id)
-            .eq('deployment_id', deployment.id)
-            .eq('status', 'cancel_pending');
+          await releaseUnsubmittedReturn(attemptStartedAt);
           throw leaseError;
         }
         if (!leaseClaimed) {
@@ -132,17 +195,7 @@ Deno.serve(async (request) => {
               202,
             );
           }
-          await admin
-            .from('gift_cards')
-            .update({
-              status: card.status,
-              operation_started_at: null,
-              operation_nonce: null,
-              cancel_from_status: null,
-            })
-            .eq('id', card.id)
-            .eq('deployment_id', deployment.id)
-            .eq('status', 'cancel_pending');
+          await releaseUnsubmittedReturn(attemptStartedAt);
           return json({ error: 'Gift transfers are busy. Try cancellation again shortly.' }, 409);
         }
         try {
@@ -166,6 +219,7 @@ Deno.serve(async (request) => {
                   .eq('id', card.id)
                   .eq('deployment_id', deployment.id)
                   .eq('status', 'cancel_pending')
+                  .eq('operation_started_at', attemptStartedAt)
                   .select('id')
                   .maybeSingle();
                 if (error) throw error;
@@ -208,17 +262,7 @@ Deno.serve(async (request) => {
               202,
             );
           }
-          await admin
-            .from('gift_cards')
-            .update({
-              status: card.status,
-              operation_started_at: null,
-              operation_nonce: null,
-              cancel_from_status: null,
-            })
-            .eq('id', card.id)
-            .eq('deployment_id', deployment.id)
-            .eq('status', 'cancel_pending');
+          await releaseUnsubmittedReturn(attemptStartedAt);
           throw returnError;
         } finally {
           if (!retainLease) await releaseGiftTransferLease(admin, leaseHolder);
@@ -293,103 +337,144 @@ Deno.serve(async (request) => {
           operationNonce,
           senderPendingNonce,
           senderLatestNonce,
-          operationAgeMs: card.operation_started_at
-            ? Date.now() - new Date(card.operation_started_at).getTime()
-            : 0,
+          operationAgeMs: pendingOperationAgeMs(card.operation_started_at),
         });
-        if (reconciliation === 'complete') {
-          const returnedAt = new Date().toISOString();
-          await admin
+        if (reconciliation === 'reset_unsubmitted') {
+          // Nothing was broadcast: no nonce, no hash. Restore the card's open
+          // state, only if it is still exactly the abandoned attempt that was
+          // read, and cancel afresh below.
+          const restored = card.cancel_from_status ?? 'active';
+          let reopen = admin
             .from('gift_cards')
             .update({
+              status: restored,
+              operation_started_at: null,
+              operation_nonce: null,
+              cancel_from_status: null,
+            })
+            .eq('id', card.id)
+            .eq('deployment_id', deployment.id)
+            .eq('status', 'cancel_pending')
+            .is('operation_nonce', null)
+            .is('return_tx_hash', null);
+          reopen = card.operation_started_at
+            ? reopen.eq('operation_started_at', card.operation_started_at)
+            : reopen.is('operation_started_at', null);
+          const { data: reopened } = await reopen.select('id').maybeSingle();
+          if (!reopened) {
+            return json(
+              {
+                giftId: card.id,
+                status: 'cancel_pending',
+                tokenId: card.token_id,
+                returnTxHash: null,
+              },
+              202,
+            );
+          }
+          card.status = restored;
+          card.cancel_from_status = null;
+          card.operation_nonce = null;
+          card.operation_started_at = null;
+        } else {
+          if (reconciliation === 'complete') {
+            const returnedAt = new Date().toISOString();
+            await admin
+              .from('gift_cards')
+              .update({
+                status: 'cancelled',
+                returned_at: returnedAt,
+                operation_started_at: null,
+                operation_nonce: null,
+                cancel_from_status: null,
+              })
+              .eq('id', card.id)
+              .eq('deployment_id', deployment.id)
+              .eq('status', 'cancel_pending');
+            await audit(user.id, 'gift.cancelled', 'gift_card', card.id, {
+              tokenId: card.token_id,
+              custodyMode: card.custody_mode,
+              returnTransactionHash: card.return_tx_hash,
+              reconciled: true,
+            });
+            return json({
+              giftId: card.id,
               status: 'cancelled',
-              returned_at: returnedAt,
-              operation_started_at: null,
-              operation_nonce: null,
-              cancel_from_status: null,
-            })
-            .eq('id', card.id)
-            .eq('deployment_id', deployment.id)
-            .eq('status', 'cancel_pending');
-          await audit(user.id, 'gift.cancelled', 'gift_card', card.id, {
-            tokenId: card.token_id,
-            custodyMode: card.custody_mode,
-            returnTransactionHash: card.return_tx_hash,
-            reconciled: true,
-          });
-          return json({
-            giftId: card.id,
-            status: 'cancelled',
-            tokenId: card.token_id,
-            returnTxHash: card.return_tx_hash,
-          });
-        }
-        if (reconciliation === 'failed') {
-          await admin
-            .from('gift_cards')
-            .update({
-              status: card.cancel_from_status ?? 'active',
-              return_tx_hash: null,
-              operation_started_at: null,
-              operation_nonce: null,
-              cancel_from_status: null,
-            })
-            .eq('id', card.id)
-            .eq('deployment_id', deployment.id)
-            .eq('status', 'cancel_pending');
-          return json({ error: 'The return transaction reverted. It is safe to try again.' }, 409);
-        }
-        if (
-          (reconciliation === 'retry_same_nonce' || reconciliation === 'retry_fresh_nonce') &&
-          operationNonce !== null
-        ) {
-          if (ownerAddress !== escrowWallet || locked) {
+              tokenId: card.token_id,
+              returnTxHash: card.return_tx_hash,
+            });
+          }
+          if (reconciliation === 'failed') {
+            await admin
+              .from('gift_cards')
+              .update({
+                status: card.cancel_from_status ?? 'active',
+                return_tx_hash: null,
+                operation_started_at: null,
+                operation_nonce: null,
+                cancel_from_status: null,
+              })
+              .eq('id', card.id)
+              .eq('deployment_id', deployment.id)
+              .eq('status', 'cancel_pending');
             return json(
-              {
-                giftId: card.id,
-                status: 'cancel_pending',
-                tokenId: card.token_id,
-                returnTxHash: null,
-              },
-              202,
+              { error: 'The return transaction reverted. It is safe to try again.' },
+              409,
             );
           }
-          const retryStartedAt = new Date().toISOString();
-          let retryLease = admin
-            .from('gift_cards')
-            .update({ operation_started_at: retryStartedAt })
-            .eq('id', card.id)
-            .eq('deployment_id', deployment.id)
-            .eq('status', 'cancel_pending');
-          retryLease = card.operation_started_at
-            ? retryLease.eq('operation_started_at', card.operation_started_at)
-            : retryLease.is('operation_started_at', null);
-          const { data: leased } = await retryLease.select('id').maybeSingle();
-          if (!leased) {
-            return json(
-              {
-                giftId: card.id,
-                status: 'cancel_pending',
-                tokenId: card.token_id,
-                returnTxHash: null,
-              },
-              202,
+          if (
+            (reconciliation === 'retry_same_nonce' || reconciliation === 'retry_fresh_nonce') &&
+            operationNonce !== null
+          ) {
+            if (ownerAddress !== escrowWallet || locked) {
+              return json(
+                {
+                  giftId: card.id,
+                  status: 'cancel_pending',
+                  tokenId: card.token_id,
+                  returnTxHash: null,
+                },
+                202,
+              );
+            }
+            const retryStartedAt = new Date().toISOString();
+            let retryLease = admin
+              .from('gift_cards')
+              .update({ operation_started_at: retryStartedAt })
+              .eq('id', card.id)
+              .eq('deployment_id', deployment.id)
+              .eq('status', 'cancel_pending');
+            retryLease = card.operation_started_at
+              ? retryLease.eq('operation_started_at', card.operation_started_at)
+              : retryLease.is('operation_started_at', null);
+            const { data: leased } = await retryLease.select('id').maybeSingle();
+            if (!leased) {
+              return json(
+                {
+                  giftId: card.id,
+                  status: 'cancel_pending',
+                  tokenId: card.token_id,
+                  returnTxHash: null,
+                },
+                202,
+              );
+            }
+            return submitReturn(
+              retryStartedAt,
+              false,
+              reconciliation === 'retry_same_nonce' ? operationNonce : undefined,
             );
           }
-          return submitReturn(
-            false,
-            reconciliation === 'retry_same_nonce' ? operationNonce : undefined,
+          return json(
+            {
+              giftId: card.id,
+              status: 'cancel_pending',
+              tokenId: card.token_id,
+              returnTxHash: card.return_tx_hash,
+            },
+            202,
           );
         }
-        return json(
-          {
-            giftId: card.id,
-            status: 'cancel_pending',
-            tokenId: card.token_id,
-            returnTxHash: card.return_tx_hash,
-          },
-          202,
-        );
       }
       if (
         card.status === 'active' &&
@@ -413,12 +498,13 @@ Deno.serve(async (request) => {
 
       // Win the race against a claim before moving the NFT. Restore the open
       // state if the return transaction fails.
+      const attemptStartedAt = new Date().toISOString();
       const { data: cancelled } = await admin
         .from('gift_cards')
         .update({
           status: ownerAddress === escrowWallet ? 'cancel_pending' : 'cancelled',
           cancel_from_status: ownerAddress === escrowWallet ? card.status : null,
-          operation_started_at: ownerAddress === escrowWallet ? new Date().toISOString() : null,
+          operation_started_at: ownerAddress === escrowWallet ? attemptStartedAt : null,
           returned_at: ownerAddress === escrowWallet ? null : new Date().toISOString(),
         })
         .eq('id', card.id)
@@ -429,7 +515,7 @@ Deno.serve(async (request) => {
       if (!cancelled) return json({ error: 'This gift card was already claimed' }, 409);
 
       if (ownerAddress === escrowWallet) {
-        return submitReturn(true);
+        return submitReturn(attemptStartedAt, true);
       }
 
       await admin

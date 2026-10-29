@@ -33,7 +33,10 @@ export const ChainPhase = {
 
 export interface ChainRedemptionRecord {
   owner: Address;
+  requestHash: Hash;
   workflowIdHash: Hash;
+  /** What the owner last set with `setCollectorCommitment`; the finalize digest binds it. */
+  collectorCommitment: Hash;
   proofDigest: Hash;
   approvalId: Hash;
   approvalVersion: bigint;
