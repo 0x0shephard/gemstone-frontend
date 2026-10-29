@@ -21,8 +21,7 @@ export const qk = {
   feeTiers: ['feeTiers'] as const,
   bidPolicy: ['bidPolicy'] as const,
   paymentAssets: ['paymentAssets'] as const,
-  pendingAuctionRefunds: (address?: string) =>
-    ['pendingAuctionRefunds', address ?? 'disconnected'] as const,
+  pendingRefunds: (address?: string) => ['pendingRefunds', address ?? 'disconnected'] as const,
   pendingReserveCredits: (address?: string) =>
     ['pendingReserveCredits', address ?? 'disconnected'] as const,
   pendingTreasuryPayout: (address?: string) =>
@@ -39,11 +38,15 @@ export const useGem = (id: string) =>
 export const useListings = () =>
   useQuery({ queryKey: qk.listings, queryFn: () => dataService.getListings() });
 /** A contract constant, so it is read once per session. */
+/**
+ * The grace period is a contract constant, but the policy also carries whether
+ * each contract is paused, which is not, so it is refreshed every minute.
+ */
 export const useBidPolicy = () =>
   useQuery({
     queryKey: qk.bidPolicy,
     queryFn: () => dataService.getBidPolicy(),
-    staleTime: Infinity,
+    staleTime: 60_000,
   });
 export const useAuctions = () =>
   useQuery({ queryKey: qk.auctions, queryFn: () => dataService.getAuctions() });
@@ -79,10 +82,11 @@ export const useFeeTiers = () =>
   useQuery({ queryKey: qk.feeTiers, queryFn: () => dataService.getFeeTiers() });
 export const usePaymentAssets = () =>
   useQuery({ queryKey: qk.paymentAssets, queryFn: () => dataService.getPaymentAssets() });
-export const usePendingAuctionRefunds = (address?: string) =>
+/** Auction and marketplace credits the address can withdraw, per contract and asset. */
+export const usePendingRefunds = (address?: string) =>
   useQuery({
-    queryKey: qk.pendingAuctionRefunds(address),
-    queryFn: () => dataService.getPendingAuctionRefunds(address),
+    queryKey: qk.pendingRefunds(address),
+    queryFn: () => dataService.getPendingRefunds(address),
     enabled: Boolean(address),
   });
 export const usePendingReserveCredits = (address?: string) =>

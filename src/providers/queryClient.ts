@@ -23,7 +23,9 @@ const CHAIN_QUERY_ROOTS = new Set([
   'landing',
   'feeTiers',
   'paymentAssets',
-  'pendingAuctionRefunds',
+  'pendingRefunds',
+  'pendingReserveCredits',
+  'bidPolicy',
   'pendingTreasuryPayout',
 ]);
 let foregroundRefresh: Promise<void> | undefined;

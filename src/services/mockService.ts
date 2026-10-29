@@ -47,6 +47,8 @@ function buildAuctions(): Auction[] {
       bids: count,
       secondsLeft,
       floorUsd: BigInt(Math.round(gem.value * 0.85)) * 10n ** 18n,
+      startTime: BigInt(Math.floor(Date.now() / 1000) - 3_600),
+      endTime: BigInt(Math.floor(Date.now() / 1000) + secondsLeft),
       settled: false,
     };
   });
@@ -178,9 +180,10 @@ export const mockService: IDataService = {
     return delay({ listing: rule, primary: rule });
   },
   getPaymentAssets: () => delay(paymentAssets),
-  getPendingAuctionRefunds: () =>
+  getPendingRefunds: () =>
     delay([
       {
+        source: 'PrimarySaleAuction' as const,
         paymentAsset: paymentAssets[0].address,
         symbol: paymentAssets[0].symbol,
         amount: 125000000000000000n,

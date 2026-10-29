@@ -6,11 +6,12 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 import { displayVaultCount } from './vaultStats';
+import { activeChain } from '@/config/chains';
 
 const REASONS: { title: string; body: string; color: string }[] = [
   {
     title: 'Not an empty token',
-    body: 'You are not trading with virtual value but with a real-life asset. The blockchain is just the vehicle. Instead of trading with a paper or bank receipt, your ownership is recorded on Ethereum.',
+    body: `You are not trading with virtual value but with a real-life asset. The blockchain is just the vehicle. Instead of trading with a paper or bank receipt, your ownership is recorded on ${activeChain.name}.`,
     color: 'var(--dc-emerald)',
   },
   {

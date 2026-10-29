@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
-import { metaForPath } from './pageMeta';
+import { OPS_ROUTE_CAPABILITY, metaForPath, type OpsAccess } from './pageMeta';
+import { useOperationsAccess } from '@/hooks/useOperationsAccess';
 import { ChainSyncStatus } from '@/components/chain/ChainSyncStatus';
 import { MobileDock } from './MobileDock';
 import { groupForPath } from './navigation';
@@ -10,6 +11,15 @@ import { AccountMenu } from '@/components/auth/AccountMenu';
 import { MusdcFaucetButton } from '@/components/wallet/MusdcFaucetButton';
 import { NotificationBell } from '@/components/notifications/NotificationBell';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
+
+/** Mirrors `OperationsAccessGate`'s decision for the header, without revealing the route. */
+function useOpsRouteAccess(pathname: string): OpsAccess {
+  const { user, authLoading, isLoading, isError, data, has } = useOperationsAccess();
+  const capability = OPS_ROUTE_CAPABILITY[pathname];
+  if (!capability) return 'granted';
+  if (authLoading || (user && isLoading) || (user && isError && !data)) return 'pending';
+  return user && data && has(capability) ? 'granted' : 'denied';
+}
 
 /** App layout: hidden navigation drawer + sticky content header + routed <Outlet/>. */
 export function AppShell() {
@@ -23,8 +33,11 @@ export function AppShell() {
    * LandingPage sits outside this shell and keeps its own call.
    */
   useScrollReveal([pathname]);
-  const { title, subtitle } = metaForPath(pathname);
-  const group = groupForPath(pathname);
+  const opsAccess = useOpsRouteAccess(pathname);
+  const { title, subtitle } = metaForPath(pathname, opsAccess);
+  // The "Operations" eyebrow would give a hidden route away just as its title did.
+  const group =
+    OPS_ROUTE_CAPABILITY[pathname] && opsAccess !== 'granted' ? '' : groupForPath(pathname);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -87,9 +100,11 @@ export function AppShell() {
             <div className="min-w-0 flex-1">
               {/* The eyebrow is the first thing to go: at 390px it costs a line
                   of height and pushes the title into an ellipsis. */}
-              <div className="mb-1 hidden text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier sm:block">
-                {group}
-              </div>
+              {group && (
+                <div className="mb-1 hidden text-[9.5px] font-semibold uppercase tracking-[0.16em] text-atelier sm:block">
+                  {group}
+                </div>
+              )}
               <h1 className="truncate font-display text-[16px] font-medium tracking-[-0.02em] text-ink sm:text-[20px]">
                 {title}
               </h1>

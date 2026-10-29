@@ -18,10 +18,11 @@ const mocks = vi.hoisted(() => ({
   getTransaction: vi.fn(),
   runContractTransaction: vi.fn(),
   syncProjection: vi.fn(),
+  connectedAddress: undefined as `0x${string}` | undefined,
 }));
 
 vi.mock('@wagmi/core', () => ({
-  getAccount: () => ({ address: undefined }),
+  getAccount: () => ({ address: mocks.connectedAddress }),
   getPublicClient: () => ({
     readContract: mocks.readContract,
     multicall: mocks.multicall,
@@ -91,7 +92,7 @@ vi.mock('@/services/offchain/custody', () => ({
 }));
 
 import { requireDeploymentManifest } from '@/config/contracts';
-import { chainService, isContractAnswer, occurredAtForBlock } from './chainService';
+import { chainService, isContractAnswer, occurredAtForBlock, tokenDecimals } from './chainService';
 
 const manifest = requireDeploymentManifest();
 const usdc = manifest.usdc!;
@@ -132,6 +133,7 @@ function mockMatchingTransaction(call: RecoverableCall, account: `0x${string}`) 
 }
 
 beforeEach(() => {
+  mocks.connectedAddress = undefined;
   window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
   mocks.readContract.mockReset();
   mocks.multicall.mockReset();
@@ -235,6 +237,250 @@ describe('chain payment-asset reads', () => {
       },
     ]);
     await expect(chainService.getPendingReserveCredits()).resolves.toEqual([]);
+  });
+});
+
+describe('pull-payment credits', () => {
+  const holder = '0x5f8db7637281c6d614ea4344d21752d5ba96d3e2' as const;
+
+  it('reads credits from both the auction and the marketplace, per asset', async () => {
+    mocks.readContract.mockImplementation(
+      async ({
+        address,
+        functionName,
+        args,
+      }: {
+        address: string;
+        functionName: string;
+        args?: readonly unknown[];
+      }) => {
+        if (functionName === 'paymentTokenCount') return 2n;
+        if (functionName === 'paymentTokenAt') return args?.[0] === 0n ? zeroAddress : usdc;
+        if (functionName === 'isEnabled') return true;
+        if (functionName === 'quoteTokenToUsd') return usd(1);
+        if (functionName === 'symbol') return 'USDC';
+        if (functionName === 'name') return 'USD Coin';
+        if (functionName === 'pendingRefunds') {
+          expect(args?.[0]).toBe(holder);
+          if (address === manifest.addresses.PrimarySaleAuction) {
+            return args?.[1] === zeroAddress ? 125_000_000_000_000_000n : 0n;
+          }
+          if (address === manifest.addresses.Marketplace) {
+            return args?.[1] === usdc ? 40_000_000n : 0n;
+          }
+        }
+        throw new Error(`Unexpected read: ${functionName} on ${address}`);
+      },
+    );
+
+    await expect(chainService.getPendingRefunds(holder)).resolves.toEqual([
+      {
+        source: 'PrimarySaleAuction',
+        paymentAsset: zeroAddress,
+        symbol: 'ETH',
+        amount: 125_000_000_000_000_000n,
+        amountFmt: '0.125 ETH',
+      },
+      {
+        source: 'Marketplace',
+        paymentAsset: usdc,
+        symbol: 'USDC',
+        amount: 40_000_000n,
+        amountFmt: '40 USDC',
+      },
+    ]);
+    await expect(chainService.getPendingRefunds()).resolves.toEqual([]);
+  });
+
+  it('claims each credit from the contract that holds it', async () => {
+    await chainService.claimRefund({ paymentAsset: usdc, source: 'Marketplace' });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address: manifest.addresses.Marketplace,
+        functionName: 'claimRefund',
+        args: [usdc],
+      }),
+    );
+    await chainService.claimRefund({ paymentAsset: zeroAddress, source: 'PrimarySaleAuction' });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address: manifest.addresses.PrimarySaleAuction,
+        functionName: 'claimRefund',
+        args: [zeroAddress],
+      }),
+    );
+  });
+
+  it("refunds the bidder's own expired offer through the credit-safe cancelOffer", async () => {
+    // cancelExpiredOffer pushes and reverts for a wallet that rejects ETH;
+    // the bidder's cancelOffer credits pendingRefunds instead.
+    mocks.connectedAddress = holder;
+    mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {
+      if (functionName === 'offers') {
+        return [holder, 8n, zeroAddress, 1n, usd(500), 1n, true];
+      }
+      throw new Error(`Unexpected read: ${functionName}`);
+    });
+
+    await chainService.refundExpiredOffer({ offerId: 21n });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        address: manifest.addresses.Marketplace,
+        functionName: 'cancelOffer',
+        args: [21n],
+      }),
+    );
+
+    // Someone else clearing it still uses the permissionless path.
+    mocks.connectedAddress = manifest.addresses.Treasury;
+    await chainService.refundExpiredOffer({ offerId: 21n });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ functionName: 'cancelExpiredOffer', args: [21n] }),
+    );
+  });
+});
+
+describe('payment-token decimals', () => {
+  const other = `0x${'bb'.repeat(20)}` as const;
+
+  it('uses the known six decimals for USDC without asking the token', async () => {
+    mocks.readContract.mockRejectedValue(new Error('should not be read'));
+    await expect(tokenDecimals(usdc)).resolves.toBe(6);
+    await expect(tokenDecimals('0xaf88d065e77c8cC2239327C5EDb3A432268e5831')).resolves.toBe(6);
+    expect(mocks.readContract).not.toHaveBeenCalled();
+  });
+
+  it('retries a failed decimals read instead of assuming 18', async () => {
+    mocks.readContract.mockRejectedValueOnce(new Error('flaky RPC')).mockResolvedValueOnce(8);
+    await expect(tokenDecimals(other)).resolves.toBe(8);
+    expect(mocks.readContract).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports an asset whose decimals cannot be read as unusable, never as 18 decimals', async () => {
+    mocks.readContract.mockImplementation(
+      async ({
+        address,
+        functionName,
+        args,
+      }: {
+        address: string;
+        functionName: string;
+        args?: readonly unknown[];
+      }) => {
+        if (functionName === 'paymentTokenCount') return 2n;
+        if (functionName === 'paymentTokenAt') return args?.[0] === 0n ? zeroAddress : other;
+        if (functionName === 'isEnabled') return true;
+        if (functionName === 'quoteTokenToUsd') return usd(1);
+        if (functionName === 'symbol') return 'OTH';
+        if (functionName === 'name') return 'Other';
+        if (functionName === 'decimals' && address === other) throw new Error('RPC down');
+        throw new Error(`Unexpected read: ${functionName}`);
+      },
+    );
+
+    const assets = await chainService.getPaymentAssets();
+    const unusable = assets.find((asset) => asset.address === other);
+    expect(unusable).toMatchObject({ enabled: false, usdPrice: 0 });
+    expect(unusable?.unavailableReason).toMatch(/decimals could not be read/);
+    expect(unusable?.decimals).not.toBe(18);
+    expect(assets.find((asset) => asset.address === zeroAddress)).toMatchObject({
+      enabled: true,
+      usdPrice: 1,
+    });
+  });
+});
+
+describe('swap board resilience', () => {
+  const proposer = '0x5f8db7637281c6d614ea4344d21752d5ba96d3e2' as const;
+  const requestedOwner = '0x1111111111111111111111111111111111111111' as const;
+  const brokenAsset = `0x${'cc'.repeat(20)}` as const;
+  const created = (offerId: bigint, cashAsset: string, blockNumber: bigint) => ({
+    id: `${blockNumber}:0`,
+    module: 'SwapEscrow',
+    eventName: 'OfferCreated',
+    args: {
+      offerId,
+      proposer,
+      offeredTokenId: 11n,
+      requestedTokenId: 12n,
+      cashAsset,
+      cashAmount: 5_000_000n,
+      proposerPaysCash: true,
+      expiry: 4_000_000_000n,
+    },
+    blockNumber,
+    transactionHash: `0x${blockNumber.toString(16).padStart(64, '0')}`,
+    logIndex: 0,
+    finalized: true,
+  });
+
+  it('keeps every swap, and its cancel, when one swap cannot be quoted', async () => {
+    mocks.syncProjection.mockResolvedValue({
+      events: [created(1n, usdc, 10n), created(2n, brokenAsset, 11n)],
+      status: {
+        latestBlock: 20n,
+        scannedThrough: 20n,
+        finalizedThrough: 0n,
+        cached: false,
+        partiallySynced: false,
+      },
+    });
+    mocks.readContract.mockImplementation(
+      async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+        if (functionName === 'paymentTokenCount') return 2n;
+        if (functionName === 'paymentTokenAt') return args?.[0] === 0n ? zeroAddress : usdc;
+        if (functionName === 'isEnabled') return true;
+        if (functionName === 'symbol') return 'USDC';
+        if (functionName === 'name') return 'USD Coin';
+        if (functionName === 'quoteTokenToUsd') {
+          // The registry no longer quotes the second swap's cash asset.
+          if (args?.[0] === brokenAsset) throw new Error('TokenNotEnabled');
+          return args?.[1] === 5_000_000n ? usd(5) : usd(1);
+        }
+        if (functionName === 'offers') {
+          const offerId = args?.[0] as bigint;
+          return [
+            proposer,
+            11n,
+            12n,
+            offerId === 2n ? brokenAsset : usdc,
+            5_000_000n,
+            true,
+            4_000_000_000n,
+            true,
+          ];
+        }
+        if (functionName === 'tokenGem') return args?.[0] === 11n ? 1n : 2n;
+        if (functionName === 'getGem') {
+          return { ...registryGem(usd(1_000)), tokenId: args?.[0] === 1n ? 11n : 12n, status: 5 };
+        }
+        if (functionName === 'ownerOf') {
+          return args?.[0] === 11n ? manifest.addresses.SwapEscrow : requestedOwner;
+        }
+        if (functionName === 'transferLocked') return false;
+        if (
+          functionName === 'reserveBalanceUsd' ||
+          functionName === 'shortfallUsd' ||
+          functionName === 'requiredReserveUsd'
+        ) {
+          return 0n;
+        }
+        if (functionName === 'secondaryFeeBps') return 200;
+        if (functionName === 'listings') return [zeroAddress, 0n];
+        throw new Error(`Unexpected read: ${functionName}`);
+      },
+    );
+    // Publish this test's event history before reading it.
+    window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const swaps = await chainService.getSwapRequests();
+    expect(swaps.map((swap) => swap.offerId).sort()).toEqual([1n, 2n]);
+    const broken = swaps.find((swap) => swap.offerId === 2n)!;
+    expect(broken.status).toBe('Active');
+    expect(broken.proposer).toBe(proposer);
+    expect(broken.diff).toMatch(/USD value unavailable/);
+    expect(swaps.find((swap) => swap.offerId === 1n)!.diff).toMatch(/\$5/);
   });
 });
 
@@ -380,8 +626,8 @@ describe('chain fee tier reads', () => {
     );
 
     await expect(chainService.getFeeTiers()).resolves.toEqual([
-      { tier: 'Reserve 1', range: 'Under $1,000', pct: '10%' },
-      { tier: 'Reserve 2', range: '$1,000 and above', pct: '4%' },
+      { tier: 'Reserve 1', range: 'Under $1,000', pct: '10%', bps: 1_000 },
+      { tier: 'Reserve 2', range: '$1,000 and above', pct: '4%', bps: 400 },
     ]);
   });
 });
@@ -441,19 +687,21 @@ describe('chain transaction construction', () => {
 
     await chainService.buyNow({ gemId: 2n, paymentAsset: usdc });
 
+    // The quote plus 0.5% headroom; `buyNow` refunds whatever is not needed.
+    const withHeadroom = 1_055_250_000n;
     expect(mocks.runContractTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         address: manifest.addresses.PrimarySaleAuction,
         functionName: 'buyNow',
-        args: [2n, usdc, musdc(1_050)],
+        args: [2n, usdc, withHeadroom],
         paymentAsset: usdc,
-        paymentAmount: musdc(1_050),
+        paymentAmount: withHeadroom,
         approvals: [
           {
             kind: 'erc20',
             token: usdc,
             spender: manifest.addresses.PrimarySaleAuction,
-            amountOrTokenId: musdc(1_050),
+            amountOrTokenId: withHeadroom,
           },
         ],
       }),
@@ -471,11 +719,12 @@ describe('chain transaction construction', () => {
 
     await chainService.buyNow({ gemId: 3n, paymentAsset: manifest.nativeAsset });
 
+    const sent = nativeAmount + nativeAmount / 200n;
     expect(mocks.runContractTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         functionName: 'buyNow',
-        args: [3n, manifest.nativeAsset, nativeAmount],
-        value: nativeAmount,
+        args: [3n, manifest.nativeAsset, sent],
+        value: sent,
         approvals: [],
       }),
     );
@@ -525,12 +774,19 @@ describe('chain transaction construction', () => {
       throw new Error(`Unexpected read: ${functionName}`);
     });
     await chainService.buy({ tokenId: 4n, paymentAsset: usdc });
+    // Marketplace.buy takes a maximum and refunds the surplus, so 0.5% rides on top.
     expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
       expect.objectContaining({
         address: manifest.addresses.Marketplace,
         functionName: 'buy',
-        args: [4n, usdc, musdc(610)],
+        args: [4n, usdc, 613_050_000n],
       }),
+    );
+
+    // An explicit maximum is the caller's decision and is sent unchanged.
+    await chainService.buy({ tokenId: 4n, paymentAsset: usdc, maximumAmount: musdc(700) });
+    expect(mocks.runContractTransaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ functionName: 'buy', args: [4n, usdc, musdc(700)] }),
     );
 
     await chainService.cancelListing({ tokenId: 4n });

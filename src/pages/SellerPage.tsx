@@ -8,6 +8,7 @@ import { GemCard } from '@/components/gem/GemCard';
 import { useGems } from '@/hooks/useData';
 import { useAuth } from '@/providers/AuthProvider';
 import { env } from '@/config/env';
+import { activeChain } from '@/config/chains';
 import { fmtUsdBaseUnits } from '@/lib/format';
 import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
@@ -31,7 +32,7 @@ const SUBMIT_OUTCOME: Record<string, string> = {
   awaiting_custody:
     'was accepted. Send the stone to the custodian — grading begins once it arrives and is logged.',
   awaiting_grading: 'is queued for gemological review. A grading lab will price it before listing.',
-  approved: 'passed automatic verification and entered Sepolia activation.',
+  approved: 'passed automatic verification and is being activated on-chain.',
   registered: 'passed automatic verification and is now listed.',
 };
 
@@ -226,7 +227,7 @@ export default function SellerPage() {
       await activateSellerGem(submissionId);
       setResult({
         ok: true,
-        message: 'Sepolia activation completed.',
+        message: `Activation on ${activeChain.name} completed.`,
       });
       await reloadSubmissions();
     } catch (error) {
@@ -464,8 +465,8 @@ export default function SellerPage() {
               <div>
                 <h3 className="text-[14px] font-semibold text-ink">Activation queue</h3>
                 <p className="mt-0.5 text-[11.5px] text-ink-muted">
-                  A grading lab prices the stone, then it is registered, valued and listed on
-                  Sepolia in one step.
+                  A grading lab prices the stone, then it is registered, valued and listed on{' '}
+                  {activeChain.name} in one step.
                 </p>
               </div>
               <span className="font-mono text-[10.5px] text-ink-dim">

@@ -58,6 +58,11 @@ export function SummaryRow({
  */
 export function assetAmountPreview(usd: number, asset?: PaymentAsset): string {
   if (!asset) return '';
+  // An unread quote is 0, and dividing by it rendered "≈ ∞ ETH". The contract
+  // quotes at confirmation regardless; the preview just cannot.
+  if (!Number.isFinite(asset.usdPrice) || asset.usdPrice <= 0) {
+    return `${asset.symbol} price unavailable · quoted when you confirm`;
+  }
   const amt = usd / asset.usdPrice;
   if (amt === 0) return `≈ 0 ${asset.symbol}`;
   const decimals = asset.isNative ? 4 : 2;

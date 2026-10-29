@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { GemThumb } from '@/components/gem/GemThumb';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Skeleton } from '@/components/ui/States';
+import { EmptyState, Skeleton } from '@/components/ui/States';
 import { GemActionModals } from '@/components/modals/GemActionModals';
 import { useGemModals } from '@/hooks/useGemModals';
 import { cn } from '@/lib/cn';
@@ -100,7 +100,11 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function RedeemPage() {
   const { user } = useAuth();
-  const { data: profile, isLoading } = useProfile();
+  const { address } = useAccount();
+  // The connected wallet's holdings. Without an address the profile is the
+  // empty one, which rendered as a blank card.
+  const { data: profile, isLoading } = useProfile(address);
+  const redeemable = (profile?.owned ?? []).filter((gem) => !gem.listingSeller);
   const { data: redemptions } = useRedemptions();
   const {
     data: redemptionWorkflows = [],
@@ -208,57 +212,65 @@ export default function RedeemPage() {
       {/* Redeemable holdings */}
       <div className="space-y-3">
         <h3 className="text-[16px] font-semibold text-ink">Redeemable holdings</h3>
-        {isLoading ? (
+        {!address ? (
+          <EmptyState
+            title="Connect a wallet to see redeemable holdings"
+            hint="Redemption reads the tokens held by the connected wallet. Connect the wallet that holds the token you want to redeem."
+          />
+        ) : isLoading ? (
           <Skeleton className="h-40" />
+        ) : redeemable.length === 0 ? (
+          <EmptyState
+            title="No redeemable tokens in this wallet"
+            hint="Tokens you hold appear here. A listed token must be unlisted before it can be redeemed."
+          />
         ) : (
           <Card className="divide-y divide-line/[0.06] overflow-hidden">
-            {profile?.owned
-              .filter((gem) => !gem.listingSeller)
-              .map((gem) => {
-                const canRedeem = redemptionReserveEligible(gem) && gem.redeem === 'Eligible';
-                return (
-                  <div
-                    key={gem.gemId.toString()}
-                    className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
-                  >
-                    <GemThumb
-                      gem={gem}
-                      height={44}
-                      rounded="rounded-[4px]"
-                      showTag={false}
-                      showCarat={false}
-                      className="w-11"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[14px] font-semibold text-ink">{gem.name}</div>
-                      <div className="font-mono text-[11.5px] text-ink-dim">{gem.displayId}</div>
-                    </div>
-                    <div>
-                      {canRedeem ? (
-                        <StatusBadge tone="success" dot>
-                          Eligible
-                        </StatusBadge>
-                      ) : gem.redeem === 'Blocked' ? (
-                        <StatusBadge tone="danger">Blocked</StatusBadge>
-                      ) : (
-                        <StatusBadge tone="warning" dot>
-                          Reserve short
-                        </StatusBadge>
-                      )}
-                    </div>
-                    <div>
-                      <Button
-                        size="sm"
-                        variant={canRedeem ? 'primary' : 'ghost'}
-                        disabled={!canRedeem}
-                        onClick={() => modals.open('redeem', gem)}
-                      >
-                        Start redemption
-                      </Button>
-                    </div>
+            {redeemable.map((gem) => {
+              const canRedeem = redemptionReserveEligible(gem) && gem.redeem === 'Eligible';
+              return (
+                <div
+                  key={gem.gemId.toString()}
+                  className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
+                >
+                  <GemThumb
+                    gem={gem}
+                    height={44}
+                    rounded="rounded-[4px]"
+                    showTag={false}
+                    showCarat={false}
+                    className="w-11"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[14px] font-semibold text-ink">{gem.name}</div>
+                    <div className="font-mono text-[11.5px] text-ink-dim">{gem.displayId}</div>
                   </div>
-                );
-              })}
+                  <div>
+                    {canRedeem ? (
+                      <StatusBadge tone="success" dot>
+                        Eligible
+                      </StatusBadge>
+                    ) : gem.redeem === 'Blocked' ? (
+                      <StatusBadge tone="danger">Blocked</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="warning" dot>
+                        Reserve short
+                      </StatusBadge>
+                    )}
+                  </div>
+                  <div>
+                    <Button
+                      size="sm"
+                      variant={canRedeem ? 'primary' : 'ghost'}
+                      disabled={!canRedeem}
+                      onClick={() => modals.open('redeem', gem)}
+                    >
+                      Start redemption
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
           </Card>
         )}
       </div>
@@ -610,56 +622,62 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
         </div>
       )}
 
-      {capabilities.has('prepare_proxy_nomination') && !preparedProxy && (
-        <div className="space-y-3 border-t border-line/[0.07] pt-4">
-          <div>
-            <h5 className="text-[13px] font-semibold text-ink">Nominate a pickup proxy</h5>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              The owner signs the exact request-bound nomination. Identity evidence stays private;
-              only its commitment is written on-chain. A proxy can collect but can never burn the
-              owner&apos;s token.
-            </p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field
-              label="Proxy legal name"
-              value={proxyName}
-              onChange={(e) => setProxyName(e.target.value)}
+      {/*
+        Not in `accepted`: the server refuses a proxy nomination until the vault
+        custodian has collected the stone, so the form could only ever fail there.
+      */}
+      {capabilities.has('prepare_proxy_nomination') &&
+        request.status !== 'accepted' &&
+        !preparedProxy && (
+          <div className="space-y-3 border-t border-line/[0.07] pt-4">
+            <div>
+              <h5 className="text-[13px] font-semibold text-ink">Nominate a pickup proxy</h5>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+                The owner signs the exact request-bound nomination. Identity evidence stays private;
+                only its commitment is written on-chain. A proxy can collect but can never burn the
+                owner&apos;s token.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Proxy legal name"
+                value={proxyName}
+                onChange={(e) => setProxyName(e.target.value)}
+              />
+              <Field
+                label="Proxy wallet"
+                value={proxyWallet}
+                onChange={(e) => setProxyWallet(e.target.value)}
+                placeholder="0x…"
+              />
+            </div>
+            <EvidenceUpload
+              requestId={request.id}
+              category="proxy_identity"
+              label="Proxy identity evidence"
+              onUploaded={setIdentityEvidence}
             />
-            <Field
-              label="Proxy wallet"
-              value={proxyWallet}
-              onChange={(e) => setProxyWallet(e.target.value)}
-              placeholder="0x…"
-            />
+            {proxyMutation.error && (
+              <p role="alert" className="text-[12px] text-ruby">
+                {proxyMutation.error instanceof Error
+                  ? proxyMutation.error.message
+                  : 'Proxy nomination could not be prepared.'}
+              </p>
+            )}
+            <Button
+              size="sm"
+              onClick={() => proxyMutation.mutate()}
+              disabled={
+                proxyMutation.isPending ||
+                !identityEvidence ||
+                !proxyName.trim() ||
+                !isAddress(proxyWallet)
+              }
+            >
+              {proxyMutation.isPending ? 'Preparing nomination…' : 'Sign proxy nomination'}
+            </Button>
           </div>
-          <EvidenceUpload
-            requestId={request.id}
-            category="proxy_identity"
-            label="Proxy identity evidence"
-            onUploaded={setIdentityEvidence}
-          />
-          {proxyMutation.error && (
-            <p role="alert" className="text-[12px] text-ruby">
-              {proxyMutation.error instanceof Error
-                ? proxyMutation.error.message
-                : 'Proxy nomination could not be prepared.'}
-            </p>
-          )}
-          <Button
-            size="sm"
-            onClick={() => proxyMutation.mutate()}
-            disabled={
-              proxyMutation.isPending ||
-              !identityEvidence ||
-              !proxyName.trim() ||
-              !isAddress(proxyWallet)
-            }
-          >
-            {proxyMutation.isPending ? 'Preparing nomination…' : 'Sign proxy nomination'}
-          </Button>
-        </div>
-      )}
+        )}
 
       {preparedProxy && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">

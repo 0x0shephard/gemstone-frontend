@@ -36,6 +36,8 @@ import { GemActionModals } from '@/components/modals/GemActionModals';
 import { GiftCardList } from '@/components/gift/GiftCardList';
 import { useGemModals } from '@/hooks/useGemModals';
 import { dataService } from '@/services';
+import { portfolioSwaps } from '@/services/chain/marketPresentation';
+import { listingBidReleased, primaryBidWithdrawable } from '@/lib/auctionBid';
 import { isAddress, isAddressEqual, type Address } from 'viem';
 
 const TABS = ['owned', 'bids', 'offers', 'swaps', 'gifts', 'redeem', 'history'] as const;
@@ -302,7 +304,7 @@ export default function ProfilePage() {
               />
             ))}
 
-          {tab === 'bids' && <BidsTable rows={profile.bids} />}
+          {tab === 'bids' && <BidsTable rows={profile.bids} address={address} />}
           {tab === 'offers' && <OffersTable rows={profile.offers} address={address} />}
 
           {/*
@@ -458,8 +460,11 @@ export function ReserveCreditsCard({
   );
 }
 
-/** `rule` is undefined until the contract answers; bids then count as binding. */
-export const bidColumns = (rule?: BindingRule): Column<Bid>[] => [
+/**
+ * `rule` is undefined until the contract answers; bids then count as binding.
+ * `viewer` is the connected wallet, needed to offer a released bid back to it.
+ */
+export const bidColumns = (rule?: BindingRule, viewer?: string): Column<Bid>[] => [
   {
     key: 'gem',
     header: 'Gem',
@@ -492,10 +497,28 @@ export const bidColumns = (rule?: BindingRule): Column<Bid>[] => [
     header: '',
     align: 'right',
     // Only the leader has funds escrowed; an outbid bid was already refunded. On
-    // upgraded contracts the leading bid is binding, so there is nothing to cancel.
+    // upgraded contracts the leading bid is binding, and leaves only once the
+    // contract pauses or the settlement grace has run out unsettled.
     render: (r) =>
       r.status !== 'Leading' ? null : (rule?.binding ?? true) ? (
-        <span className="text-[11px] text-ink-dim">Binding until settled</span>
+        r.endTime !== undefined &&
+        primaryBidWithdrawable(
+          { settled: r.settled ?? false, endTime: r.endTime, highestBidder: viewer as Address },
+          viewer,
+          rule,
+        ) ? (
+          <TxButton
+            size="sm"
+            variant="secondary"
+            action={() => dataService.cancelAuctionBid({ gemId: r.gem.gemId })}
+            pendingLabel="Withdrawing…"
+            telemetryFlow="auction_bid_withdraw"
+          >
+            Withdraw bid
+          </TxButton>
+        ) : (
+          <span className="text-[11px] text-ink-dim">Binding until settled</span>
+        )
       ) : r.secondsLeft > 0 ? (
         <TxButton
           size="sm"
@@ -509,11 +532,11 @@ export const bidColumns = (rule?: BindingRule): Column<Bid>[] => [
   },
 ];
 
-function BidsTable({ rows }: { rows: Bid[] }) {
+function BidsTable({ rows, address }: { rows: Bid[]; address?: string }) {
   const { data: policy } = useBidPolicy();
   return (
     <DataTable
-      columns={bidColumns(policy?.primary)}
+      columns={bidColumns(policy?.primary, address)}
       rows={rows}
       rowKey={(r) => r.gem.gemId.toString()}
       empty="No active bids."
@@ -591,11 +614,10 @@ export function offerColumns(
       render: (r) => {
         const isBidder = normalized === r.bidder.toLowerCase();
         const isOwner = normalized === r.tokenOwner.toLowerCase();
-        // A binding winning bid nobody settled within the grace period may leave.
-        const released =
-          rule?.binding === true &&
-          r.automatic &&
-          BigInt(Math.floor(Date.now() / 1000)) >= r.expiry + BigInt(rule.settlementGraceSeconds);
+        // A binding winning bid may leave once nobody settled it within the
+        // grace period, or at any time while the Marketplace is paused.
+        const released = listingBidReleased(r, rule);
+        const paused = rule?.paused === true;
         if (r.status === 'Awaiting settlement' && r.gem.tokenId) {
           return (
             <div className="flex justify-end gap-2">
@@ -610,19 +632,28 @@ export function offerColumns(
                   Withdraw bid
                 </TxButton>
               ) : null}
-              <TxButton
-                size="sm"
-                variant="secondary"
-                action={() => dataService.settleListingAuction({ tokenId: r.gem.tokenId! })}
-                pendingLabel="Settling…"
-                telemetryFlow="listed_token_auction_settle"
-              >
-                Settle now
-              </TxButton>
+              {/* Settlement is `whenNotPaused`; offering it while paused only reverts. */}
+              {paused ? null : (
+                <TxButton
+                  size="sm"
+                  variant="secondary"
+                  action={() => dataService.settleListingAuction({ tokenId: r.gem.tokenId! })}
+                  pendingLabel="Settling…"
+                  telemetryFlow="listed_token_auction_settle"
+                >
+                  Settle now
+                </TxButton>
+              )}
             </div>
           );
         }
         if (r.status === 'Expired' && isBidder) {
+          /*
+           * Sent as the bidder's own `cancelOffer`, which credits the escrow to
+           * the Marketplace's pending refunds when the wallet cannot receive it
+           * (`cancelExpiredOffer` pushes and reverts instead). A credit then
+           * appears under "Credits to withdraw".
+           */
           return (
             <TxButton
               size="sm"
@@ -635,8 +666,9 @@ export function offerColumns(
             </TxButton>
           );
         }
-        // The winning bid on a listing is binding on upgraded contracts.
-        if (r.status === 'Pending' && isBidder && (!r.automatic || !binding)) {
+        // The winning bid on a listing is binding on upgraded contracts, except
+        // while the Marketplace is paused.
+        if (r.status === 'Pending' && isBidder && (!r.automatic || !binding || paused)) {
           return (
             <TxButton
               size="sm"
@@ -687,18 +719,33 @@ function OffersTable({ rows, address }: { rows: Offer[]; address?: string }) {
 function PortfolioSwaps({ viewer }: { viewer?: Address }) {
   const { data: swaps, isLoading } = useSwaps();
   if (isLoading && !swaps) return <CardGridSkeleton count={2} />;
-  const mine = (swaps ?? []).filter(
-    (swap) =>
-      viewer &&
-      (swap.proposer.toLowerCase() === viewer.toLowerCase() ||
-        swap.requestedOwner.toLowerCase() === viewer.toLowerCase()),
-  );
-  if (!mine.length) return <EmptyState title="No swap requests" />;
+  /*
+   * Open swaps first, filtered exactly as the tab count is, then the record
+   * of finished ones for both parties. Listing every status unfiltered made
+   * the count disagree with the list, and an accepted swap vanished for the
+   * accepter, whose `ownerOf` match moved to the proposer with the token.
+   */
+  const { open, closed } = portfolioSwaps(swaps ?? [], viewer);
+  if (!open.length && !closed.length) return <EmptyState title="No swap requests" />;
   return (
-    <div className="space-y-3">
-      {mine.map((swap) => (
-        <SwapCard key={swap.offerId.toString()} swap={swap} viewer={viewer} />
-      ))}
+    <div className="space-y-6">
+      {open.length > 0 ? (
+        <div className="space-y-3">
+          {open.map((swap) => (
+            <SwapCard key={swap.offerId.toString()} swap={swap} viewer={viewer} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState title="No open swaps" hint="Finished swaps are listed below." />
+      )}
+      {closed.length > 0 && (
+        <section className="space-y-3" aria-label="Completed and cancelled swaps">
+          <h3 className="font-display text-[15px] font-medium text-ink">Completed and cancelled</h3>
+          {closed.map((swap) => (
+            <SwapCard key={swap.offerId.toString()} swap={swap} viewer={viewer} />
+          ))}
+        </section>
+      )}
     </div>
   );
 }

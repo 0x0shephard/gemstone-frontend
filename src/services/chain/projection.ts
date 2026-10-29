@@ -9,15 +9,67 @@ import {
 import { contracts } from '@/contracts';
 
 const DATABASE_VERSION = 1;
-const FINALITY_CONFIRMATIONS = 12n;
 const RECENT_RESCAN_BLOCKS = 64n;
 /**
- * The dedicated historical-log endpoint accepts 50,000-block windows. That
- * keeps a fresh browser sync bounded to six windows instead of hundreds.
+ * The first window tried. Public endpoints commonly accept 50,000 blocks; the
+ * scan widens from here while the provider keeps accepting.
  */
-const INITIAL_RANGE = 50_000n;
+export const INITIAL_RANGE = 50_000n;
+/**
+ * The widest window ever requested. Alchemy's Arbitrum One endpoint has
+ * accepted 9M-block spans for these low-volume contracts; capping at the
+ * initial 50,000 made a month-old deployment cost ~2,000 `eth_getLogs` calls on
+ * Arbitrum's quarter-second blocks.
+ */
+export const MAX_RANGE = 16_000_000n;
 const MIN_RANGE = 64n;
 const ADDRESS_BATCH_SIZE = 4;
+/** Consecutive transient failures tolerated before a scan gives up. */
+const MAX_TRANSIENT_FAILURES = 10;
+const BACKOFF_BASE_MS = 300;
+const BACKOFF_MAX_MS = 5_000;
+
+/**
+ * Blocks behind the head treated as final when the RPC cannot report its own
+ * `finalized` block, per chain. Twelve was an Ethereum-era rule of thumb; on
+ * Arbitrum's 0.25 s blocks it labelled events "finalized" three seconds after
+ * inclusion, long before the batch carrying them is final on L1.
+ */
+const FALLBACK_CONFIRMATIONS: Readonly<Record<number, bigint>> = {
+  1: 64n, // Ethereum: two epochs.
+  11155111: 64n, // Sepolia.
+  42161: 4_800n, // Arbitrum One: ~20 minutes at 0.25 s, roughly L1 finality of its batch.
+  421614: 4_800n, // Arbitrum Sepolia.
+  10: 600n, // OP Mainnet: ~20 minutes at 2 s.
+  11155420: 600n,
+  8453: 600n, // Base.
+  84532: 600n,
+};
+
+export function fallbackConfirmations(chainId: number): bigint {
+  return FALLBACK_CONFIRMATIONS[chainId] ?? 64n;
+}
+
+/**
+ * The newest block the chain itself reports as final (`eth_getBlockByNumber`
+ * with the `finalized` tag, which Arbitrum and other L2s answer with the L2
+ * block whose batch is final on L1), or a per-chain confirmation count behind
+ * the head when the RPC does not support the tag.
+ */
+export async function finalizedBlock(
+  client: Pick<PublicClient, 'getBlock'>,
+  latestBlock: bigint,
+  chainId: number,
+): Promise<bigint> {
+  try {
+    const block = await client.getBlock({ blockTag: 'finalized' });
+    if (typeof block?.number === 'bigint' && block.number <= latestBlock) return block.number;
+  } catch {
+    // Unsupported tag or transient failure: fall through to the conservative count.
+  }
+  const confirmations = fallbackConfirmations(chainId);
+  return latestBlock > confirmations ? latestBlock - confirmations : 0n;
+}
 
 export interface ProjectedEvent {
   id: string;
@@ -43,14 +95,22 @@ export interface ProjectionSnapshot {
   status: ProjectionStatus;
 }
 
-interface PersistedMeta {
+export interface PersistedMeta {
   key: 'meta';
   scannedThrough: string;
   latestBlock: string;
 }
 
+/** Durable store for the projection. IndexedDB in the browser; injectable for tests. */
+export interface ProjectionCache {
+  read(): Promise<{ events: ProjectedEvent[]; meta?: PersistedMeta }>;
+  replaceRange(fromBlock: bigint, events: ProjectedEvent[], meta: PersistedMeta): Promise<void>;
+  reset(): Promise<void>;
+}
+
 interface SyncOptions {
   signal?: AbortSignal;
+  cache?: ProjectionCache;
   onProgress?: (scannedThrough: bigint, latestBlock: bigint) => void;
   logClients?: PublicClient[];
   onChunk?: (
@@ -242,6 +302,22 @@ function decodeLog(
 const SUFFIX: Record<string, bigint> = { '': 1n, k: 1_000n, m: 1_000_000n };
 
 /**
+ * Whether a failure says the request was too big, as opposed to the provider
+ * being briefly unavailable. Only a size rejection lowers the scan's ceiling;
+ * a 429 or a timeout says nothing about what span the provider accepts.
+ */
+export function isRangeRejection(error: unknown): boolean {
+  if (providerRangeHint(error) !== undefined) return true;
+  const errors = error instanceof AggregateError ? error.errors : [error];
+  return errors.some((candidate) => {
+    const message = candidate instanceof Error ? candidate.message : String(candidate);
+    return /block range|response size|range (?:is )?too (?:large|wide)|too many (?:blocks|results|logs)|more than \d+ (?:results|logs)|query returned more than|exceed(?:s|ed)? (?:the )?(?:max|limit)/i.test(
+      message,
+    );
+  });
+}
+
+/**
  * The widest `eth_getLogs` span a provider's rejection says it will accept, if it
  * says. Formats seen:
  * - PublicNode: "Maximum allowed number of requested blocks is 50000"
@@ -282,11 +358,20 @@ export async function scanLogs(
   let cursor = fromBlock;
   let range = INITIAL_RANGE;
   /**
-   * Largest span this provider has accepted so far. A rejected span is never
-   * retried within a scan: growing back into a known-rejected width made every
-   * successful chunk cost a second, failing request plus a backoff sleep.
+   * Widest span the provider may still accept. It starts at {@link MAX_RANGE}
+   * so a permissive provider is used at full width, and drops only when the
+   * provider rejects a span as too large. A rejected span is then never
+   * retried within the scan: growing back into a known-rejected width made
+   * every successful chunk cost a second, failing request plus a backoff sleep.
    */
-  let ceiling = INITIAL_RANGE;
+  let ceiling = MAX_RANGE;
+  /**
+   * Transient failures (rate limits, timeouts, dropped connections) narrow the
+   * next request without touching the ceiling, so the window grows back once
+   * the provider recovers. They used to halve the ceiling for good: one burst
+   * of 429s left the rest of the scan crawling at a fraction of the width.
+   */
+  let transientFailures = 0;
   const addresses = contractModules.map((moduleName) => contractAddresses[moduleName]!);
 
   const requestLogs = async (address: Address, from: bigint, to: bigint) => {
@@ -333,59 +418,83 @@ export async function scanLogs(
           chunkEvents.push(projected);
         }
       }
-      // Cold replays checkpoint only complete address/range batches. A phone
-      // suspended halfway through a 466k-block replay can resume from here
-      // instead of discarding every successful request made so far.
+      // Replays checkpoint only complete address/range batches. A phone
+      // suspended halfway through a long replay can resume from here instead
+      // of discarding every successful request made so far.
       await options.onChunk?.(chunkFrom, toBlock, chunkEvents);
       cursor = toBlock + 1n;
+      transientFailures = 0;
       options.onProgress?.(toBlock, latestBlock);
-      if (logs.length < 1_000 && range < ceiling) range *= 2n;
+      if (logs.length < 1_000 && range < ceiling) {
+        range = range * 2n > ceiling ? ceiling : range * 2n;
+      }
     } catch (error) {
-      if (range <= MIN_RANGE) throw error;
-      const providerRange = providerRangeHint(error);
-      const narrower = providerRange && providerRange < range ? providerRange : range / 2n;
-      ceiling = narrower < MIN_RANGE ? MIN_RANGE : narrower;
-      range = ceiling;
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      if (isRangeRejection(error)) {
+        if (range <= MIN_RANGE) throw error;
+        const providerRange = providerRangeHint(error);
+        const narrower = providerRange && providerRange < range ? providerRange : range / 2n;
+        ceiling = narrower < MIN_RANGE ? MIN_RANGE : narrower;
+        range = ceiling;
+        await new Promise((resolve) => setTimeout(resolve, BACKOFF_BASE_MS));
+        continue;
+      }
+      transientFailures += 1;
+      if (transientFailures > MAX_TRANSIENT_FAILURES) throw error;
+      // A timeout may still be the span's fault, so the retry is narrower;
+      // the ceiling is left alone for the window to grow back into.
+      const halved = range / 2n;
+      range = halved < MIN_RANGE ? MIN_RANGE : halved;
+      const delay = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (transientFailures - 1));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
   return events;
 }
+
+const indexedDbCache: ProjectionCache = {
+  read: readCache,
+  replaceRange,
+  reset: recoverCorruptedCache,
+};
 
 export async function syncProjection(
   client: PublicClient,
   options: SyncOptions = {},
 ): Promise<ProjectionSnapshot> {
   const manifest = requireDeploymentManifest();
-  let cached: Awaited<ReturnType<typeof readCache>>;
+  const cache = options.cache ?? indexedDbCache;
+  let cached: Awaited<ReturnType<ProjectionCache['read']>>;
   try {
-    cached = await readCache();
+    cached = await cache.read();
   } catch {
-    await recoverCorruptedCache();
+    await cache.reset();
     cached = { events: [] };
   }
 
   try {
     const latestBlock = await client.getBlockNumber();
     announce({ state: 'syncing', latestBlock: latestBlock.toString() });
-    const finalizedThrough =
-      latestBlock > FINALITY_CONFIRMATIONS ? latestBlock - FINALITY_CONFIRMATIONS : 0n;
+    const finalizedThrough = await finalizedBlock(client, latestBlock, manifest.chainId);
     const prior = cached.meta ? BigInt(cached.meta.scannedThrough) : manifest.deploymentBlock;
     const fromBlock =
       prior > RECENT_RESCAN_BLOCKS + manifest.deploymentBlock
         ? prior - RECENT_RESCAN_BLOCKS
         : manifest.deploymentBlock;
-    const coldStart = !cached.meta;
     const rescanned = await scanLogs(client, fromBlock, latestBlock, finalizedThrough, {
       ...options,
+      /*
+       * Every sync checkpoints, not only a cold one. A warm sync after a week
+       * away is itself a long replay, and without checkpoints a failure part
+       * way through threw all of it away and started again from the old mark.
+       * Each chunk replaces everything from its first block, so the cache stays
+       * a contiguous, correct prefix ending at `scannedThrough`.
+       */
       onChunk: async (chunkFrom, scannedThrough, chunkEvents) => {
-        if (coldStart) {
-          await replaceRange(chunkFrom, chunkEvents, {
-            key: 'meta',
-            scannedThrough: scannedThrough.toString(),
-            latestBlock: latestBlock.toString(),
-          });
-        }
+        await cache.replaceRange(chunkFrom, chunkEvents, {
+          key: 'meta',
+          scannedThrough: scannedThrough.toString(),
+          latestBlock: latestBlock.toString(),
+        });
         await options.onChunk?.(chunkFrom, scannedThrough, chunkEvents);
       },
       onProgress: (scannedThrough, latest) => {
@@ -397,12 +506,12 @@ export async function syncProjection(
         });
       },
     });
-    await replaceRange(fromBlock, rescanned, {
+    await cache.replaceRange(fromBlock, rescanned, {
       key: 'meta',
       scannedThrough: latestBlock.toString(),
       latestBlock: latestBlock.toString(),
     });
-    const fresh = await readCache();
+    const fresh = await cache.read();
     announce({ state: 'synced', latestBlock: latestBlock.toString(), cached: false });
     return {
       events: fresh.events.sort(
@@ -421,7 +530,7 @@ export async function syncProjection(
     // A cold replay may have published durable chunks before a later provider
     // request failed. Re-read those checkpoints and expose an explicit partial
     // snapshot instead of throwing away progress or presenting fake emptiness.
-    const durable = await readCache().catch(() => cached);
+    const durable = await cache.read().catch(() => cached);
     if (durable.events.length === 0 && !durable.meta) {
       announce({ state: 'error' });
       throw error;
@@ -437,7 +546,9 @@ export async function syncProjection(
         latestBlock: BigInt(durable.meta?.latestBlock ?? scannedThrough),
         scannedThrough,
         finalizedThrough:
-          scannedThrough > FINALITY_CONFIRMATIONS ? scannedThrough - FINALITY_CONFIRMATIONS : 0n,
+          scannedThrough > fallbackConfirmations(manifest.chainId)
+            ? scannedThrough - fallbackConfirmations(manifest.chainId)
+            : 0n,
         cached: true,
         partiallySynced: true,
       },

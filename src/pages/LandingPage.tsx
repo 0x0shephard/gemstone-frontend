@@ -10,6 +10,7 @@ import { ownershipPathSteps } from '@/content/ownershipPath';
 import { useFeeTiers, useLanding } from '@/hooks/useData';
 import { useScrollReveal } from '@/hooks/useScrollReveal';
 import { displayVaultCount } from './vaultStats';
+import { reserveScheduleState } from './reserveSchedule';
 
 import { SceneBoundary } from '@/components/three/SceneBoundary';
 
@@ -46,6 +47,11 @@ const REDEMPTION_STEPS: [string, string, boolean?][] = [
   ],
 ];
 
+/*
+ * The fee rates here are business claims awaiting the owner's confirmation and
+ * are deliberately unchanged. What changed is what the copy around them says:
+ * the reserve "covers" them only while the live schedule actually charges one.
+ */
 const RESERVE_COSTS = [
   'Vault fees: 0.05% per month',
   'Insurance fees: 0.1% per month',
@@ -57,6 +63,8 @@ export default function LandingPage() {
   const { data } = useLanding();
   const { data: feeTiers, isLoading: feeTiersLoading, isError: feeTiersError } = useFeeTiers();
   useScrollReveal([data, feeTiers]);
+  // 'unknown' while loading or unreadable: the copy then claims no rate at all.
+  const reserve = reserveScheduleState(feeTiers);
 
   return (
     <div className="min-h-[100dvh] bg-vault">
@@ -228,24 +236,23 @@ export default function LandingPage() {
               <h2 className="max-w-[19ch] font-display text-[30px] font-medium tracking-[-0.035em] text-ink md:text-[36px]">
                 How the reserve works
               </h2>
+              {/*
+                The rates come from the live contract schedule beside this, not
+                from copy: the page used to state 15% / 10% while the deployed
+                contract charged 0%.
+              */}
               <p className="mt-4 max-w-[54ch] text-[14px] leading-relaxed text-ink-muted">
-                When a gemstone is first tokenized, a reserve is added to its approved value:
+                {reserve === 'zero'
+                  ? 'The reserve contract can add a reserve to a gemstone’s approved value when it is first tokenized. The live schedule currently sets every rate to 0%, so no reserve is added or held.'
+                  : reserve === 'charged'
+                    ? 'When a gemstone is first tokenized, a reserve is added to its approved value at the rate shown in the active contract schedule.'
+                    : 'A reserve can be added to a gemstone’s approved value when it is first tokenized, at the rate set by the active contract schedule.'}
               </p>
 
-              <div className="mt-7 border-y border-line/[0.1]">
-                <p className="grid gap-1 py-4 text-[12.5px] text-ink-soft sm:grid-cols-[1fr_auto] sm:items-baseline sm:gap-6">
-                  <span>Gemstones under 1,000 $</span>
-                  <span className="font-mono font-semibold text-emerald">-&gt; 15% reserve</span>
-                </p>
-                <p className="grid gap-1 border-t border-line/[0.08] py-4 text-[12.5px] text-ink-soft sm:grid-cols-[1fr_auto] sm:items-baseline sm:gap-6">
-                  <span>Gemstones of 1,000 $ and above</span>
-                  <span className="font-mono font-semibold text-emerald">-&gt; 10%</span>
-                </p>
-              </div>
-
               <p className="mt-6 max-w-[54ch] text-[13px] leading-relaxed text-ink-muted">
-                This reserve is held to cover costs associated with the Token throughout its
-                lifecycle.
+                {reserve === 'zero'
+                  ? 'While the rate is 0%, the costs listed here are not prepaid from a reserve.'
+                  : 'A reserve is held to cover costs associated with the Token throughout its lifecycle.'}
               </p>
             </div>
 
@@ -254,7 +261,9 @@ export default function LandingPage() {
                 One Reserve, Multiple Cost
               </h3>
               <p className="mt-3 text-[12.5px] leading-relaxed text-ink-muted">
-                The reserve can be used to cover:
+                {reserve === 'zero'
+                  ? 'When a reserve rate is set, the reserve can be used to cover:'
+                  : 'The reserve can be used to cover:'}
               </p>
 
               <ul className="mt-6 grid border-y border-line/[0.1] sm:grid-cols-2">
@@ -336,8 +345,9 @@ export default function LandingPage() {
               What happens to the remaining reserve?
             </h4>
             <p className="max-w-[68ch] text-[12.5px] leading-relaxed text-ink-muted">
-              When a gemstone is redeemed, any remaining reserve balance is returned to the token
-              holder’s wallet when the token is burned.
+              {reserve === 'zero'
+                ? 'At the current 0% rate there is no reserve balance to return. Where a reserve is held, any remaining balance becomes a credit the token holder can claim from their portfolio once the token is burned.'
+                : 'When a gemstone is redeemed, any remaining reserve balance becomes a credit the token holder can claim from their portfolio once the token is burned.'}
             </p>
           </div>
         </div>
@@ -356,11 +366,26 @@ export default function LandingPage() {
             View all →
           </Link>
         </div>
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {data?.featured.map((gem, i) => (
-            <GemCard key={gem.gemId.toString()} gem={gem} revealDelay={i * 100} />
-          ))}
-        </div>
+        {data && data.featured.length === 0 ? (
+          <div
+            data-reveal
+            className="rounded-[4px] border border-line/[0.08] bg-card px-6 py-10 text-center"
+          >
+            <h3 className="font-display text-[18px] font-medium text-ink">
+              The first stones are on their way
+            </h3>
+            <p className="mx-auto mt-2 max-w-[52ch] text-[13px] leading-relaxed text-ink-muted">
+              No gemstones are in the vault yet. Each one appears here once it has been
+              independently graded, valued and placed in custody.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {data?.featured.map((gem, i) => (
+              <GemCard key={gem.gemId.toString()} gem={gem} revealDelay={i * 100} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Redemption burns the claim */}

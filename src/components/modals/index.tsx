@@ -20,6 +20,14 @@ import { fmtUsd } from '@/lib/format';
 import { useAuctions, useBidSummaries, useGems, useProfile, useRedemptions } from '@/hooks/useData';
 import { WinningBid } from '@/components/gem/WinningBid';
 import { MIN_BID_INCREMENT_USD, minimumBidUsd } from '@/lib/auctionBid';
+import {
+  BID_HEADROOM_BPS,
+  PURCHASE_SLIPPAGE_BPS,
+  bidWithinHeadroom,
+  headroomPercent,
+  suggestedBidUsd,
+  usdInputString,
+} from '@/lib/slippage';
 import { contractAddresses, giftOperatorAddress, NATIVE_ASSET } from '@/config/contracts';
 import { formatUnits, keccak256, toHex, zeroHash } from 'viem';
 import { useAccount } from 'wagmi';
@@ -54,23 +62,50 @@ function ApprovalNote({ asset }: { asset?: PaymentAsset }) {
   );
 }
 
+/** Shown when a bid sits so close to its minimum that a price tick can reject it. */
+function HeadroomWarning({ suggestedFmt }: { suggestedFmt?: string }) {
+  return (
+    <p className="text-[11.5px] leading-relaxed text-amber">
+      This is within {headroomPercent(BID_HEADROOM_BPS)} of the minimum. If the payment asset&apos;s
+      price dips before the bid confirms, the contract rejects it as too low and nothing is taken.
+      {suggestedFmt ? ` Bidding ${suggestedFmt} or more avoids that.` : ''}
+    </p>
+  );
+}
+
 /* ------------------------------ Bid ------------------------------ */
 export function BidModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
-  const [amount, setAmount] = useState('');
+  const { data: auctions } = useAuctions();
+  const auction = auctions?.find((candidate) => candidate.gem.gemId === gem.gemId);
+  const minimumUsd = auction ? minimumBidUsd(auction) : undefined;
+  /*
+   * A bid's escrow is the bid, so nothing is added to it silently. Instead the
+   * field starts at the minimum plus a small, visible headroom: a bid sent at
+   * exactly the minimum is rejected (`BidTooLow`) by any downward price tick
+   * between the quote and the block.
+   */
+  const suggestedUsd = minimumUsd === undefined ? undefined : suggestedBidUsd(minimumUsd);
+  // Undefined until the bidder types, so the suggestion fills in once the
+  // auction has loaded instead of being fixed at whatever was known on open.
+  const [typed, setTyped] = useState<string>();
+  const amount = typed ?? (suggestedUsd === undefined ? '' : usdInputString(suggestedUsd));
   // Parsed exactly from the string, never via a float: the figure that goes
   // on-chain has to be the figure that was typed.
   const saleAmountUsd = parseUsdInput(amount);
   const saleUsd = Number(amount) || 0;
   const shortfall = reserveShortfallUsd(gem);
   const total = saleUsd + shortfall;
-  const { data: auctions } = useAuctions();
-  const auction = auctions?.find((candidate) => candidate.gem.gemId === gem.gemId);
-  const minimumUsd = auction ? minimumBidUsd(auction) : undefined;
   const minimumFmt =
     minimumUsd === undefined ? undefined : fmtUsd(Number(formatUnits(minimumUsd, 18)));
+  const suggestedFmt =
+    suggestedUsd === undefined ? undefined : fmtUsd(Number(formatUnits(suggestedUsd, 18)));
   const belowMinimum =
     saleAmountUsd !== null && minimumUsd !== undefined && saleAmountUsd < minimumUsd;
+  const tight =
+    saleAmountUsd !== null &&
+    minimumUsd !== undefined &&
+    bidWithinHeadroom(saleAmountUsd, minimumUsd);
   return (
     <Modal
       open={open}
@@ -86,20 +121,27 @@ export function BidModal({ gem, open, onClose }: BaseModalProps) {
             value={auction.highestBidder ? auction.highestBidFmt : 'No bids yet'}
           />
           <SummaryRow label="Minimum bid" value={minimumFmt ?? '—'} />
+          {suggestedFmt && (
+            <SummaryRow
+              label={`Suggested (minimum + ${headroomPercent(BID_HEADROOM_BPS)})`}
+              value={suggestedFmt}
+            />
+          )}
         </div>
       )}
       <Field
         label="Bid amount (USD)"
         inputMode="decimal"
-        placeholder={minimumFmt ? `${minimumFmt} or more` : '0'}
+        placeholder={suggestedFmt ? `${suggestedFmt} or more` : '0'}
         value={amount}
-        onChange={(e) => setAmount(e.target.value)}
+        onChange={(e) => setTyped(e.target.value)}
         error={
           belowMinimum
-            ? `Bid at least ${minimumFmt}. The reserve top-up is added on top.`
+            ? `Bid at least ${minimumFmt}; ${suggestedFmt} leaves room for price moves. The reserve top-up is added on top.`
             : undefined
         }
       />
+      {tight && !belowMinimum && <HeadroomWarning suggestedFmt={suggestedFmt} />}
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">Payment asset</span>
         <PaymentAssetSelector value={asset?.address} onChange={setAsset} />
@@ -234,6 +276,15 @@ export function BuyModal({
           {assetAmountPreview(total, asset)}
         </p>
       </div>
+      {/*
+        Said, not hidden: the wallet will show slightly more than the total.
+        The contract charges the fresh quote and refunds the rest at once.
+      */}
+      <p className="text-[11.5px] leading-relaxed text-ink-dim">
+        To absorb small price moves, your wallet is asked for up to{' '}
+        {headroomPercent(PURCHASE_SLIPPAGE_BPS)} more than this quote. The contract charges the
+        price at confirmation and returns any unused amount in the same transaction.
+      </p>
       <ApprovalNote asset={asset} />
       <TxButton
         block
@@ -258,11 +309,6 @@ export function BuyModal({
 /* ----------------------------- Offer ----------------------------- */
 export function OfferModal({ gem, open, onClose }: BaseModalProps) {
   const [asset, setAsset] = useState<PaymentAsset>();
-  const [amount, setAmount] = useState(gem.listedPrice ? String(gem.listedPrice) : '');
-  const offerAmountUsd = parseUsdInput(amount);
-  const usd = Number(amount) || 0;
-  const shortfall = reserveShortfallUsd(gem);
-  const total = usd + shortfall;
   const automaticAuction = Boolean(gem.listingSeller);
   const bids = useBidSummaries();
   const current = gem.tokenId ? bids.get(gem.tokenId.toString()) : undefined;
@@ -273,12 +319,29 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
    * an unlisted token have no minimum; the top offer is shown for context.
    */
   const leader = current?.kind === 'listing-auction' ? current.winning : undefined;
-  const minimumUsd = leader
-    ? Number(formatUnits(leader.saleUsd + MIN_BID_INCREMENT_USD, 18))
+  const minimumBase = leader
+    ? leader.saleUsd + MIN_BID_INCREMENT_USD
     : automaticAuction
-      ? gem.listedPrice
+      ? gem.listedPriceUsd
       : undefined;
+  // As with primary bids: the escrow is the bid, so the headroom is a visible
+  // starting value, never something added without the bidder seeing it.
+  const suggestedBase = minimumBase === undefined ? undefined : suggestedBidUsd(minimumBase);
+  const [typed, setTyped] = useState<string>();
+  const amount = typed ?? (suggestedBase === undefined ? '' : usdInputString(suggestedBase));
+  const offerAmountUsd = parseUsdInput(amount);
+  const usd = Number(amount) || 0;
+  const shortfall = reserveShortfallUsd(gem);
+  const total = usd + shortfall;
+  const minimumUsd = minimumBase === undefined ? undefined : Number(formatUnits(minimumBase, 18));
+  const suggestedFmt =
+    suggestedBase === undefined ? undefined : fmtUsd(Number(formatUnits(suggestedBase, 18)));
   const belowAsk = minimumUsd !== undefined && usd > 0 && usd < minimumUsd;
+  const tight =
+    !belowAsk &&
+    offerAmountUsd !== null &&
+    minimumBase !== undefined &&
+    bidWithinHeadroom(offerAmountUsd, minimumBase);
   return (
     <Modal
       open={open}
@@ -295,11 +358,16 @@ export function OfferModal({ gem, open, onClose }: BaseModalProps) {
       <Field
         label="Offer amount (USD)"
         inputMode="decimal"
-        placeholder="0"
+        placeholder={suggestedFmt ? `${suggestedFmt} or more` : '0'}
         value={amount}
-        onChange={(e) => setAmount(e.target.value)}
-        error={belowAsk ? `Bid must be at least ${fmtUsd(minimumUsd!)}.` : undefined}
+        onChange={(e) => setTyped(e.target.value)}
+        error={
+          belowAsk
+            ? `Bid must be at least ${fmtUsd(minimumUsd!)}; ${suggestedFmt} leaves room for price moves.`
+            : undefined
+        }
       />
+      {tight && <HeadroomWarning suggestedFmt={suggestedFmt} />}
       <div>
         <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">Payment asset</span>
         <PaymentAssetSelector value={asset?.address} onChange={setAsset} />

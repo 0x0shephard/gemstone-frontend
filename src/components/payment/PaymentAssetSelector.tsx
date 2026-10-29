@@ -18,12 +18,15 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
   // settle a payment, and listing it would produce a transaction that reverts
   // after the buyer has already approved an allowance.
   const assets = allAssets.filter((asset) => asset.enabled);
+  // Listed by the registry but unusable here (its decimals could not be read).
+  // Shown disabled with the reason rather than silently missing.
+  const unusable = allAssets.filter((asset) => !asset.enabled && asset.unavailableReason);
 
   if (isLoading) {
     return <div className="h-[58px] animate-pulse rounded-[4px] bg-line/[0.04]" />;
   }
 
-  if (assets.length === 0) {
+  if (assets.length === 0 && unusable.length === 0) {
     return (
       <p className="rounded-[4px] border border-line/[0.09] bg-inset px-3.5 py-3 text-[12px] leading-relaxed text-ink-muted">
         No payment asset is currently accepted. The registry has every option disabled, so payments
@@ -52,7 +55,11 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
             <span>
               <span className="block text-[13px] font-semibold">{asset.symbol}</span>
               <span className="mt-0.5 block text-[10.5px] text-ink-dim">
-                {asset.isNative ? 'Native payment' : 'Stablecoin'}
+                {asset.usdPrice > 0
+                  ? asset.isNative
+                    ? 'Native payment'
+                    : 'Stablecoin'
+                  : 'Price unavailable'}
               </span>
             </span>
             <span
@@ -69,6 +76,21 @@ export function PaymentAssetSelector({ value, onChange, className }: PaymentAsse
           </button>
         );
       })}
+      {unusable.map((asset) => (
+        <div
+          key={asset.address}
+          aria-disabled="true"
+          title={asset.unavailableReason}
+          className="flex min-h-[58px] items-center rounded-[4px] border border-line/[0.06] bg-inset px-3.5 py-2.5 text-left text-ink-dim opacity-70"
+        >
+          <span>
+            <span className="block text-[13px] font-semibold">{asset.symbol}</span>
+            <span className="mt-0.5 block text-[10.5px]">
+              Unavailable: {asset.unavailableReason}
+            </span>
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
