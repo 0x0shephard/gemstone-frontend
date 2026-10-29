@@ -24,11 +24,13 @@
   command = "npm run check"
 
 # Production is selected by one immutable release file. A rollback must first
-# reactivate the matching legacy database deployment and Edge contract secrets,
-# then change this value to `sepolia-11155111-40fe3f22` and publish the legacy
-# frontend bundle.
+# reactivate the matching database deployment and Edge contract secrets, then
+# change this value back (Sepolia: `sepolia-fresh-11828947`, with the Sepolia
+# explorer and the Netlify RPC variables pointed back at Sepolia) and publish.
+# The build refuses RPC or explorer URLs that belong to another network.
 [context.production.environment]
-  VITE_DEPLOYMENT_RELEASE = "sepolia-fresh-11828947"
+  VITE_DEPLOYMENT_RELEASE = "arbitrum-one-519342582"
+  VITE_EXPLORER_BASE_URL = "https://arbiscan.io"
 
 # Content-hashed filenames: the name changes whenever the bytes do, so these can
 # be cached indefinitely. Without this every asset costs a revalidation
