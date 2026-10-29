@@ -3,7 +3,22 @@ import { canonicalSiteOrigin } from './origins.ts';
 import { EmailNotConfiguredError, emailConfigured, escapeHtml, sendEmail } from './email.ts';
 import { PushGoneError, pushConfigured, sendPush } from './webpush.ts';
 import { protocolDeploymentId } from './deployment.ts';
-import { configuredChainId, walletLinkTrustedOn } from './authPolicy.ts';
+import { configuredChainId, rpcCodelessCheck, walletLinkTrustedOn } from './authPolicy.ts';
+
+/**
+ * Per-isolate `eth_getCode` results, so a sweep checks each legacy wallet once.
+ * Only legacy links (no recorded signature kind, proven on another chain) ever
+ * reach the RPC; every other link is decided from the row alone.
+ */
+const codelessCache = new Map<string, boolean>();
+
+/** `eth_getCode` on the deployment RPC (`RPC_URL`, or the legacy `SEPOLIA_RPC_URL`). */
+function codelessCheck() {
+  return rpcCodelessCheck(
+    Deno.env.get('RPC_URL')?.trim() || Deno.env.get('SEPOLIA_RPC_URL')?.trim(),
+    codelessCache,
+  );
+}
 
 /**
  * Delivering a notification to whoever holds a wallet.
@@ -89,11 +104,15 @@ export async function notifyWallet(
    * A contract wallet proven on another chain is not this chain's owner of the
    * address, so its account must not receive this chain's notices (they name
    * offers, deadlines and redemption details). The row is still written, to the
-   * wallet alone, and attaches once the address is linked on this chain.
+   * wallet alone, and attaches once the address is linked on this chain. A
+   * legacy link (no recorded signature kind) from another chain counts as an EOA
+   * link only if the address has no code here (`eth_getCode`).
    */
-  const trusted = walletLinkTrustedOn(
+  const trusted = await walletLinkTrustedOn(
     link as { chain_id: number | null; signature_kind: string | null } | null,
     configuredChainId(Deno.env.get('CHAIN_ID')),
+    wallet,
+    codelessCheck(),
   );
   const profileId = trusted ? ((link?.profile_id as string | null) ?? null) : null;
 
@@ -448,6 +467,7 @@ export async function reconcileNotificationProfileLinks(
   if (linkError) throw linkError;
 
   const chainId = configuredChainId(Deno.env.get('CHAIN_ID'));
+  const isCodeless = codelessCheck();
   let linked = 0;
   await Promise.all(
     (links ?? []).map(async (link) => {
@@ -456,7 +476,7 @@ export async function reconcileNotificationProfileLinks(
       if (!wallet || !profileId) return;
       // Same rule as `notifyWallet`: a contract wallet linked on another chain
       // does not own this chain's notices.
-      if (!walletLinkTrustedOn(link, chainId)) return;
+      if (!(await walletLinkTrustedOn(link, chainId, wallet, isCodeless))) return;
       const { data, error } = await admin
         .from('notifications')
         .update({ profile_id: profileId })

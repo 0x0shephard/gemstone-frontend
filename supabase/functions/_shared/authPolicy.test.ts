@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   SIWE_CLOCK_SKEW_MS,
+  codeIsCodeless,
   configuredChainId,
   isAnonymousUser,
+  rpcCodelessCheck,
   siweTimesValid,
+  walletLinkTrust,
   walletLinkTrustedOn,
 } from './authPolicy.ts';
 
@@ -90,26 +93,63 @@ describe('siweTimesValid', () => {
   });
 });
 
-describe('walletLinkTrustedOn', () => {
+const ADDRESS = '0x1111111111111111111111111111111111111111';
+const yes = async () => true;
+const no = async () => false;
+const unknown = async () => null;
+
+describe('walletLinkTrust', () => {
   it('trusts an EOA link on any chain', () => {
-    expect(walletLinkTrustedOn({ chain_id: 11155111, signature_kind: 'eoa' }, 42161)).toBe(true);
+    expect(walletLinkTrust({ chain_id: 11155111, signature_kind: 'eoa' }, 42161)).toBe('trusted');
   });
 
   it('trusts a contract link only on the chain it was proven on', () => {
-    expect(walletLinkTrustedOn({ chain_id: 42161, signature_kind: 'contract' }, 42161)).toBe(true);
-    expect(walletLinkTrustedOn({ chain_id: 11155111, signature_kind: 'contract' }, 42161)).toBe(
-      false,
+    expect(walletLinkTrust({ chain_id: 42161, signature_kind: 'contract' }, 42161)).toBe('trusted');
+    expect(walletLinkTrust({ chain_id: 11155111, signature_kind: 'contract' }, 42161)).toBe(
+      'untrusted',
     );
   });
 
-  it('treats a link with no recorded kind as a contract link', () => {
-    expect(walletLinkTrustedOn({ chain_id: '42161', signature_kind: null }, 42161)).toBe(true);
-    expect(walletLinkTrustedOn({ chain_id: 11155111 }, 42161)).toBe(false);
+  it('leaves a legacy link from another chain to the code check', () => {
+    expect(walletLinkTrust({ chain_id: '42161', signature_kind: null }, 42161)).toBe('trusted');
+    expect(walletLinkTrust({ chain_id: 11155111, signature_kind: null }, 42161)).toBe('legacy');
+    expect(walletLinkTrust({ chain_id: 11155111 }, 42161)).toBe('legacy');
   });
 
   it('fails closed without a chain or a link', () => {
-    expect(walletLinkTrustedOn({ chain_id: 42161, signature_kind: 'contract' }, null)).toBe(false);
-    expect(walletLinkTrustedOn(null, 42161)).toBe(false);
+    expect(walletLinkTrust({ chain_id: 42161, signature_kind: 'contract' }, null)).toBe(
+      'untrusted',
+    );
+    expect(walletLinkTrust({ chain_id: 42161, signature_kind: null }, null)).toBe('untrusted');
+    expect(walletLinkTrust(null, 42161)).toBe('untrusted');
+  });
+});
+
+describe('walletLinkTrustedOn', () => {
+  const legacy = { chain_id: 11155111, signature_kind: null };
+
+  it('trusts a legacy link from another chain only when the address has no code here', async () => {
+    await expect(walletLinkTrustedOn(legacy, 42161, ADDRESS, yes)).resolves.toBe(true);
+    await expect(walletLinkTrustedOn(legacy, 42161, ADDRESS, no)).resolves.toBe(false);
+  });
+
+  it('does not trust it when the check cannot answer', async () => {
+    await expect(walletLinkTrustedOn(legacy, 42161, ADDRESS, unknown)).resolves.toBe(false);
+    await expect(walletLinkTrustedOn(legacy, 42161, ADDRESS, null)).resolves.toBe(false);
+    const failing = async (): Promise<boolean | null> => {
+      throw new Error('rpc down');
+    };
+    await expect(walletLinkTrustedOn(legacy, 42161, ADDRESS, failing)).resolves.toBe(false);
+  });
+
+  it('never calls the RPC for a link the row already decides', async () => {
+    const check = vi.fn(yes);
+    await walletLinkTrustedOn({ chain_id: 42161, signature_kind: null }, 42161, ADDRESS, check);
+    await walletLinkTrustedOn({ chain_id: 1, signature_kind: 'eoa' }, 42161, ADDRESS, check);
+    await expect(
+      walletLinkTrustedOn({ chain_id: 1, signature_kind: 'contract' }, 42161, ADDRESS, check),
+    ).resolves.toBe(false);
+    expect(check).not.toHaveBeenCalled();
   });
 
   it('is recorded by v1-siwe-verify and applied by the notification lookup', () => {
@@ -118,6 +158,64 @@ describe('walletLinkTrustedOn', () => {
     expect(verify).toContain('recoverMessageAddress');
     const notify = source('supabase/functions/_shared/notify.ts');
     expect(notify).toContain(".select('profile_id,chain_id,signature_kind')");
-    expect(notify.match(/walletLinkTrustedOn\(/g)?.length).toBe(2);
+    expect(notify.match(/await walletLinkTrustedOn\(/g)?.length).toBe(2);
+    expect(notify).toContain(
+      "Deno.env.get('RPC_URL')?.trim() || Deno.env.get('SEPOLIA_RPC_URL')?.trim()",
+    );
+  });
+});
+
+describe('codeIsCodeless', () => {
+  it('reads empty code and an EIP-7702 delegation as an EOA', () => {
+    expect(codeIsCodeless('0x')).toBe(true);
+    expect(codeIsCodeless(`0xef0100${'ab'.repeat(20)}`)).toBe(true);
+  });
+
+  it('reads deployed bytecode as a contract and junk as unknown', () => {
+    expect(codeIsCodeless('0x6080604052')).toBe(false);
+    expect(codeIsCodeless(`0xef0100${'ab'.repeat(21)}`)).toBe(false);
+    expect(codeIsCodeless(undefined)).toBeNull();
+    expect(codeIsCodeless('nope')).toBeNull();
+  });
+});
+
+describe('rpcCodelessCheck', () => {
+  const rpc = (result: unknown, status = 200) =>
+    vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), { status }),
+    );
+
+  it('is unavailable without an RPC URL', () => {
+    expect(rpcCodelessCheck(undefined)).toBeNull();
+    expect(rpcCodelessCheck('  ')).toBeNull();
+  });
+
+  it('asks eth_getCode at latest and caches a definite answer', async () => {
+    const fetcher = rpc('0x');
+    const check = rpcCodelessCheck('https://arb.example/rpc', new Map(), fetcher)!;
+    await expect(check(ADDRESS)).resolves.toBe(true);
+    await expect(check(ADDRESS)).resolves.toBe(true);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('https://arb.example/rpc');
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      method: 'eth_getCode',
+      params: [ADDRESS, 'latest'],
+    });
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a contract, and returns unknown (uncached) on RPC failure', async () => {
+    const contract = rpcCodelessCheck('https://rpc', new Map(), rpc('0x6080'))!;
+    await expect(contract(ADDRESS)).resolves.toBe(false);
+    const cache = new Map<string, boolean>();
+    await expect(rpcCodelessCheck('https://rpc', cache, rpc('0x', 500))!(ADDRESS)).resolves.toBe(
+      null,
+    );
+    const throwing = vi.fn<typeof fetch>(async () => {
+      throw new TypeError('network');
+    });
+    await expect(rpcCodelessCheck('https://rpc', cache, throwing)!(ADDRESS)).resolves.toBeNull();
+    expect(cache.size).toBe(0);
   });
 });

@@ -8,12 +8,20 @@
 --
 -- Rule: a link is trusted on chain C when `chain_id = C` or
 -- `signature_kind = 'eoa'`. v1-siwe-verify now records signature_kind for
--- every link. Older rows have none and are treated as contract links.
+-- every new link.
 --
--- Every server reader asks for the primary link (`is_primary`), so the rule is
--- enforced by demoting links that fail it: now, for the active deployment, and
--- again on every future activation of a deployment on another chain. A demoted
--- link is not deleted; the owner signs once more (on this chain) to restore it.
+-- Known contract links from another chain are demoted from primary, so every
+-- server reader (they all ask for `is_primary`) stops trusting them: now, for
+-- the active deployment, and again on every future activation of a deployment
+-- on another chain. A demoted link is not deleted; the owner signs once more,
+-- on this chain, to restore it.
+--
+-- Legacy links (signature_kind null, written before it was recorded) are left
+-- primary. Nearly all are EOAs, and forcing every Sepolia-era user to re-sign
+-- costs more than the small risk of a legacy contract-wallet link. Where the
+-- server decides from a link itself (notify.ts), a legacy link from another
+-- chain counts as an EOA link only if the address has no code on the active
+-- chain (`eth_getCode`).
 
 alter table public.wallet_links
   add column if not exists signature_kind text;
@@ -31,7 +39,7 @@ end
 $$;
 
 comment on column public.wallet_links.signature_kind is
-  'eoa: proven by an ECDSA signature from the address itself, valid on every chain. contract: ERC-1271/6492, valid only on chain_id. Null: linked before this was recorded; treated as contract.';
+  'eoa: proven by an ECDSA signature from the address itself, valid on every chain. contract: ERC-1271/6492, valid only on chain_id. Null: linked before this was recorded; kept primary, and trusted off its chain only where the address has no code.';
 
 update public.wallet_links as wl
 set is_primary = false
@@ -39,7 +47,7 @@ from public.protocol_deployments as pd
 where pd.status = 'active'
   and wl.is_primary
   and wl.chain_id <> pd.chain_id
-  and wl.signature_kind is distinct from 'eoa';
+  and wl.signature_kind = 'contract';
 
 create or replace function public.demote_cross_chain_wallet_links()
 returns trigger
@@ -52,7 +60,7 @@ begin
     set is_primary = false
     where is_primary
       and chain_id <> new.chain_id
-      and signature_kind is distinct from 'eoa';
+      and signature_kind = 'contract';
   end if;
   return new;
 end;

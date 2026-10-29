@@ -270,9 +270,9 @@ describe('202610300305 wallet link chain proof', () => {
     );
   });
 
-  it('demotes non-EOA links proven on a chain other than the active one', () => {
+  it('demotes only known contract links proven on a chain other than the active one', () => {
     expect(sql).toMatch(
-      /update public\.wallet_links as wl\s+set is_primary = false\s+from public\.protocol_deployments as pd\s+where pd\.status = 'active'\s+and wl\.is_primary\s+and wl\.chain_id <> pd\.chain_id\s+and wl\.signature_kind is distinct from 'eoa';/,
+      /update public\.wallet_links as wl\s+set is_primary = false\s+from public\.protocol_deployments as pd\s+where pd\.status = 'active'\s+and wl\.is_primary\s+and wl\.chain_id <> pd\.chain_id\s+and wl\.signature_kind = 'contract';/,
     );
   });
 
@@ -280,9 +280,18 @@ describe('202610300305 wallet link chain proof', () => {
     expect(sql).toMatch(
       /create trigger protocol_deployments_demote_cross_chain_links\s+after update of status on public\.protocol_deployments/,
     );
-    expect(sql).toMatch(
-      /and chain_id <> new\.chain_id\s+and signature_kind is distinct from 'eoa';/,
-    );
+    expect(sql).toMatch(/and chain_id <> new\.chain_id\s+and signature_kind = 'contract';/);
+  });
+
+  it('leaves legacy links (no recorded kind) primary', () => {
+    const statements = sql.replace(/--[^\n]*/g, '');
+    expect(statements).not.toMatch(/is distinct from 'eoa'/);
+    const updates = statements.match(/set is_primary = false[\s\S]*?;/g) ?? [];
+    expect(updates).toHaveLength(2);
+    for (const update of updates) {
+      expect(update).not.toMatch(/signature_kind is null/);
+      expect(update).toContain("signature_kind = 'contract'");
+    }
   });
 
   it('deletes no links', () => {

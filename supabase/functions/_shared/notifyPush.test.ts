@@ -190,4 +190,42 @@ describe('notifyWallet push delivery', () => {
     );
     await expect(notifyWallet(admin, input)).resolves.toMatchObject({ pushed: 1 });
   });
+
+  describe('a legacy link (no recorded kind) proven on another chain', () => {
+    const legacyLink = { profile_id: 'profile-1', chain_id: 11155111, signature_kind: null };
+    const rpcAnswering = (result: string) =>
+      vi.fn<typeof fetch>(
+        async () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result })),
+      );
+
+    afterEach(() => environment.delete('RPC_URL'));
+
+    it('is delivered to when the address has no code on this chain', async () => {
+      environment.set('RPC_URL', 'https://arb-rpc.example/codeless');
+      const rpc = rpcAnswering('0x');
+      vi.stubGlobal('fetch', rpc);
+      sendPush.mockResolvedValue(undefined);
+      const { admin } = fakeAdmin(respondWith(legacyLink, devices(1)));
+
+      await expect(notifyWallet(admin, input)).resolves.toMatchObject({ pushed: 1 });
+      const body = JSON.parse(String(rpc.mock.calls[0][1]?.body));
+      expect(body).toMatchObject({ method: 'eth_getCode', params: [WALLET, 'latest'] });
+    });
+
+    it('is not delivered to when the address is a contract on this chain', async () => {
+      environment.set('RPC_URL', 'https://arb-rpc.example/contract');
+      vi.stubGlobal('fetch', rpcAnswering('0x6080604052'));
+      const { admin, calls } = fakeAdmin(respondWith(legacyLink, devices(1)));
+
+      await expect(notifyWallet(admin, input)).resolves.toMatchObject({ reason: 'no-account' });
+      const insert = calls.find((call) => call.table === 'notifications' && call.op === 'insert');
+      expect(insert?.values?.profile_id).toBeNull();
+      expect(sendPush).not.toHaveBeenCalled();
+    });
+
+    it('is not delivered to when no RPC is configured', async () => {
+      const { admin } = fakeAdmin(respondWith(legacyLink, devices(1)));
+      await expect(notifyWallet(admin, input)).resolves.toMatchObject({ reason: 'no-account' });
+    });
+  });
 });
