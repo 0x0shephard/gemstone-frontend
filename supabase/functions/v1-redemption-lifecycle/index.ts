@@ -37,11 +37,18 @@ import {
 } from '../_shared/redemptionAuthorization.ts';
 import {
   assertRedemptionEventArgs,
+  confirmedRecoveryStep,
   confirmedRedemptionEvents,
   findEvent,
   hasRedemptionRole,
   recoveryProposal as loadChainRecoveryProposal,
+  redemptionReadClient,
 } from '../_shared/redemptionChain.ts';
+import { finalizeAuthorizationBinding } from '../_shared/redemptionFinalizeBinding.ts';
+import { ownerCodeEmailKey } from '../_shared/ownerCodeDelivery.ts';
+import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
+import { redemptionAcceptedAlerts } from '../_shared/redemptionAlertPlan.ts';
+import { deliverStaffAlerts, storageBank } from '../_shared/redemptionAlerts.ts';
 import {
   effectiveWorkflowTimeline,
   appendWorkflowEvent,
@@ -50,14 +57,11 @@ import {
 } from '../_shared/workflowEvents.ts';
 import { canonicalize } from 'npm:json-canonicalize@1.1.0';
 import {
-  createPublicClient,
   getAddress,
-  http,
   isAddress,
   keccak256,
   parseAbi,
   toBytes,
-  verifyMessage,
   zeroHash,
   type Address,
   type Hash,
@@ -195,32 +199,6 @@ async function hasAssignment(
   }
 }
 
-/**
- * The bank that recorded the stone's arrival in the seller cycle, when it is an
- * active bank organization. Redemption sends the stone back out from there.
- */
-async function storageBank(
-  admin: ReturnType<typeof adminClient>,
-  deploymentId: string,
-  gemId: string | number,
-): Promise<{ id: string; name: string } | null> {
-  const { data, error } = await admin
-    .from('seller_submissions')
-    .select('bank_organization_id,verifier_organizations!bank_organization_id(id,name,kind,active)')
-    .eq('deployment_id', deploymentId)
-    .eq('onchain_gem_id', String(gemId))
-    .not('bank_organization_id', 'is', null)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw error;
-  const organization = (data as Record<string, unknown> | null)?.verifier_organizations as
-    { id: string; name: string; kind: string; active: boolean } | null | undefined;
-  return organization?.active && organization.kind === 'bank'
-    ? { id: organization.id, name: organization.name }
-    : null;
-}
-
 function currentActions(
   row: RedemptionRow,
   owner: boolean,
@@ -234,9 +212,12 @@ function currentActions(
   const actions = ['request_evidence_upload', 'confirm_evidence_upload'];
   if (owner && ['draft', 'committed'].includes(row.status)) actions.push('discard_redemption');
   if (owner && row.status === 'committed') actions.push('mark_onchain_requested');
-  if (owner && OWNER_CANCELLABLE_STATES.includes(status)) {
-    actions.push('prepare_proxy_nomination', 'nominate_proxy', 'cancel_redemption');
+  // A proxy can be nominated only before Digital Carat accepts the request;
+  // the server refuses a new nomination after that (see `nominate_proxy`).
+  if (owner && row.status === 'onchain_requested') {
+    actions.push('prepare_proxy_nomination', 'nominate_proxy');
   }
+  if (owner && OWNER_CANCELLABLE_STATES.includes(status)) actions.push('cancel_redemption');
   if (capabilities.has('redemption.approve') && status === 'onchain_requested') {
     actions.push('accept_redemption');
   }
@@ -470,12 +451,23 @@ async function codeSettings(admin: ReturnType<typeof adminClient>) {
   };
 }
 
+/**
+ * Emails the holder's owner code.
+ *
+ * `resendKey` marks a holder-requested resend. The provider deduplicates by
+ * idempotency key, so reusing the generation's key for a resend made Resend
+ * accept the call and send nothing. A resend therefore deliberately re-sends
+ * the same unexpired code (keeping its failed-attempt lockout) under a key of
+ * its own, derived from the resend request's idempotency key so a retried
+ * request still sends once.
+ */
 async function deliverOwnerCode(
   admin: ReturnType<typeof adminClient>,
   deploymentId: string,
   row: RedemptionRow,
-  forceNew = false,
+  resendKey?: string,
 ) {
+  const forceNew = Boolean(resendKey);
   const secret = Deno.env.get('REDEMPTION_CODE_SECRET')?.trim();
   if (!secret) throw new Error('Redemption owner-code delivery is not configured');
   const settings = await codeSettings(admin);
@@ -500,7 +492,8 @@ async function deliverOwnerCode(
       throw new Error('Wait before requesting another owner-code email');
     }
   }
-  if (!existing || Date.parse(existing.expires_at) <= now) {
+  const reusingCode = Boolean(existing && Date.parse(existing.expires_at) > now);
+  if (!reusingCode) {
     if (existing) {
       const { error } = await admin
         .from('redemption_owner_codes')
@@ -532,7 +525,11 @@ async function deliverOwnerCode(
     subject: 'Your Digital Carat redemption authorization code',
     text: `Your one-time redemption authorization code is ${code}. It expires at ${codeRow.expires_at}. Never share it with a custodian or courier.`,
     html: `<p>Your one-time redemption authorization code is <strong>${escapeHtml(code)}</strong>.</p><p>It expires at ${escapeHtml(codeRow.expires_at)}. Never share it with a custodian or courier.</p>`,
-    idempotencyKey: `redemption-owner-code/${deploymentId}/${codeRow.generation_id}`,
+    idempotencyKey: ownerCodeEmailKey(
+      deploymentId,
+      codeRow.generation_id,
+      reusingCode ? resendKey : undefined,
+    ),
   });
   const { error: updateError } = await admin
     .from('redemption_owner_codes')
@@ -546,12 +543,7 @@ async function verifiedCurrentOwner(
   deployment: ProtocolDeployment,
   row: RedemptionRow,
 ): Promise<Address> {
-  const rpcUrl = Deno.env.get('RPC_URL')?.trim() || Deno.env.get('SEPOLIA_RPC_URL')?.trim();
-  if (!rpcUrl) throw new Error('RPC_URL is not configured');
-  const client = createPublicClient({
-    transport: http(rpcUrl, { timeout: 15_000, retryCount: 1 }),
-  });
-  return (await client.readContract({
+  return (await redemptionReadClient().readContract({
     address: getAddress(deployment.dge_nft_address),
     abi: OWNER_OF_ABI,
     functionName: 'ownerOf',
@@ -583,10 +575,11 @@ function assertEventValue(actual: unknown, expected: string | bigint, label: str
   assertRedemptionEventArgs({ [label]: actual }, { [label]: expected });
 }
 
+/** A server-signed step: the signer's own direct call to the manager. */
 async function receiptEvents(
   deployment: ProtocolDeployment,
   transactionHash: Hash,
-  expectedSender?: Address,
+  expectedSender: Address,
 ) {
   return confirmedRedemptionEvents({
     transactionHash,
@@ -594,6 +587,29 @@ async function receiptEvents(
     expectedSender,
     expectedChainId: Number(deployment.chain_id),
   });
+}
+
+/**
+ * An owner step. The owner may be a smart account or a Safe, whose calls reach
+ * the manager through the EntryPoint or `execTransaction`, so the envelope is
+ * not checked. Every caller binds the owner through the contract instead:
+ * `RedemptionOpened.owner` is `msg.sender`, and `setCollectorCommitment` and
+ * `finalizeRedemption` revert unless `msg.sender` is the recorded owner. A
+ * cancel names no actor, so it is checked against the manager's record.
+ */
+async function ownerReceiptEvents(deployment: ProtocolDeployment, transactionHash: Hash) {
+  return confirmedRedemptionEvents({
+    transactionHash,
+    manager: getAddress(deployment.redemption_manager_address),
+    senderAttestedByEvents: true,
+    expectedChainId: Number(deployment.chain_id),
+  });
+}
+
+/** Verifies an EOA, ERC-1271 or ERC-6492 signature, as SIWE does. */
+async function verifiedWalletSignature(address: Address, message: string, signature: Hash) {
+  if (!/^0x[0-9a-f]+$/i.test(signature)) return false;
+  return redemptionReadClient().verifyMessage({ address, message, signature });
 }
 
 const AUTHORIZER_ROLE = keccak256(toBytes('AUTHORIZER_ROLE'));
@@ -639,12 +655,54 @@ async function assertRecoveryApprover(deployment: ProtocolDeployment, wallet: Ad
   }
 }
 
+/**
+ * Aligns the proxy nomination with the collector commitment found on-chain: a
+ * pending nomination whose transaction landed unrecorded becomes approved, and
+ * one the owner replaced on-chain is revoked. Best-effort; the authorization
+ * has already been issued against the chain's value.
+ */
+async function reconcileProxyNomination(
+  admin: ReturnType<typeof adminClient>,
+  deploymentId: string,
+  requestId: string,
+  onchainCommitment: Hash,
+  userId: string,
+) {
+  try {
+    const { data: nomination } = await admin
+      .from('redemption_proxy_nominations')
+      .select('id,collector_commitment,state')
+      .eq('deployment_id', deploymentId)
+      .eq('redemption_request_id', requestId)
+      .maybeSingle();
+    if (!nomination) return;
+    const matches =
+      String(nomination.collector_commitment).toLowerCase() === onchainCommitment.toLowerCase();
+    if (matches && nomination.state === 'pending') {
+      await admin
+        .from('redemption_proxy_nominations')
+        .update({ state: 'approved', reviewed_by: userId, reviewed_at: new Date().toISOString() })
+        .eq('id', nomination.id)
+        .eq('state', 'pending');
+    } else if (!matches && ['pending', 'approved'].includes(String(nomination.state))) {
+      await admin
+        .from('redemption_proxy_nominations')
+        .update({ state: 'revoked' })
+        .eq('id', nomination.id)
+        .eq('state', nomination.state);
+    }
+  } catch {
+    // Reconciliation is advisory; the signed authorization stands.
+  }
+}
+
 function manager(deployment: ProtocolDeployment): Address {
   return getAddress(deployment.redemption_manager_address);
 }
 
 /** The operator chain, refusing an RPC that points at a different network. */
 function serverChain(deployment: ProtocolDeployment): OperatorChain {
+  assertNoLegacySepoliaFallback();
   const chain = operatorChain();
   if (String(chain.chainId) !== String(deployment.chain_id)) {
     throw new Error('Operator RPC chain does not match the protocol deployment');
@@ -1216,7 +1274,12 @@ Deno.serve(async (request) => {
 
     if (action === 'prepare_proxy_nomination' || action === 'nominate_proxy') {
       if (!owner || !row.request_hash) return json({ error: 'Not found' }, 404);
-      if (row.status !== 'onchain_requested') {
+      // A new nomination is accepted only before Digital Carat accepts the
+      // request. A receipt for one already sent is still recorded once the
+      // request is accepted: the chain stays in its Requested phase until the
+      // bank starts fulfilment, so the commitment may well have landed.
+      const recordingReceipt = action === 'nominate_proxy' && Boolean(body.transactionHash);
+      if (row.status !== 'onchain_requested' && !(recordingReceipt && row.status === 'accepted')) {
         return json({ error: 'Proxy nomination is closed for this redemption' }, 409);
       }
       const proxyName = String(body.proxyName ?? '').trim();
@@ -1252,11 +1315,11 @@ Deno.serve(async (request) => {
       }
       const signature = String(body.ownerSignature ?? '') as Hash;
       if (
-        !(await verifyMessage({
-          address: getAddress(row.requester_wallet),
-          message: nomination.message,
+        !(await verifiedWalletSignature(
+          getAddress(row.requester_wallet),
+          nomination.message,
           signature,
-        }))
+        ))
       ) {
         return json({ error: 'Owner signature is invalid' }, 403);
       }
@@ -1306,11 +1369,7 @@ Deno.serve(async (request) => {
           args: { tokenId: String(row.token_id), collectorCommitment: nomination.commitment },
         });
       }
-      const chain = await receiptEvents(
-        deployment,
-        transactionHash,
-        getAddress(row.requester_wallet),
-      );
+      const chain = await ownerReceiptEvents(deployment, transactionHash);
       const nominationEvent = findEvent(chain.logs, 'CollectorCommitmentSet');
       assertEventValue(nominationEvent.args.tokenId, String(row.token_id), 'token');
       assertEventValue(
@@ -1318,11 +1377,17 @@ Deno.serve(async (request) => {
         nomination.commitment,
         'collector commitment',
       );
+      // The receipt is chain fact, so it is recorded against the workflow as it
+      // is now, which may have been accepted since the nomination was prepared.
+      const recordedVersion =
+        row.status === 'accepted'
+          ? (await projectionVersion(admin, deployment.id, requestId)).version
+          : expectedVersion;
       row = await complete({
         admin,
         deploymentId: deployment.id,
         row,
-        expectedVersion,
+        expectedVersion: recordedVersion,
         expectedState: row.status,
         eventType: 'proxy_nominated',
         toState: row.status,
@@ -1335,7 +1400,7 @@ Deno.serve(async (request) => {
         transactionHash,
         idempotencyKey,
       });
-      return json({ request: tracker(row, expectedVersion + 1) });
+      return json({ request: tracker(row, recordedVersion + 1) });
     }
 
     const idempotencyKey = requiredUuid(body.idempotencyKey, 'idempotencyKey');
@@ -1368,11 +1433,7 @@ Deno.serve(async (request) => {
           workflowIdHash: workflowIdHash(requestId),
         },
       });
-      const chain = await receiptEvents(
-        deployment,
-        transactionHash,
-        getAddress(row.requester_wallet),
-      );
+      const chain = await ownerReceiptEvents(deployment, transactionHash);
       const opened = findEvent(chain.logs, 'RedemptionOpened');
       const bound = findEvent(chain.logs, 'RedemptionWorkflowBound');
       assertEventValue(opened.args.tokenId, String(row.token_id), 'token');
@@ -1454,14 +1515,24 @@ Deno.serve(async (request) => {
           args: { tokenId: String(row.token_id) },
         });
       }
-      const chain = await receiptEvents(
-        deployment,
-        transactionHash,
-        getAddress(row.requester_wallet),
-      );
+      const chain = await ownerReceiptEvents(deployment, transactionHash);
       const cancelled = findEvent(chain.logs, 'RedemptionCancelled');
       assertEventValue(cancelled.args.tokenId, String(row.token_id), 'token');
       assertEventValue(cancelled.args.gemId, String(row.gem_id), 'gem');
+      // The event names only the token, so an older request's cancel would also
+      // match. Refuse while the manager still shows this workflow open.
+      const current = await readRedemptionRecord(
+        serverChain(deployment),
+        manager(deployment),
+        BigInt(row.token_id),
+      );
+      if (
+        current.phase !== ChainPhase.None &&
+        current.phase !== ChainPhase.Completed &&
+        current.workflowIdHash.toLowerCase() === workflowIdHash(requestId).toLowerCase()
+      ) {
+        return json({ error: 'That transaction did not cancel this redemption' }, 409);
+      }
       row = await complete({
         admin,
         deploymentId: deployment.id,
@@ -1569,6 +1640,18 @@ Deno.serve(async (request) => {
         },
         idempotencyKey,
       });
+      // The bank and the custodian act next; tell their members.
+      await deliverStaffAlerts(admin, {
+        deploymentId: deployment.id,
+        entityId: requestId,
+        alerts: redemptionAcceptedAlerts({
+          gemId: String(row.gem_id),
+          bankOrganizationId: bank.id,
+          bankName: bank.name,
+          custodianOrganizationId: custodian.id,
+          custodianName: custodian.name,
+        }),
+      }).catch(() => undefined);
       return json({ request: tracker(row, expectedVersion + 1) });
     }
 
@@ -1874,7 +1957,7 @@ Deno.serve(async (request) => {
     if (action === 'resend_owner_code') {
       if (!owner || !['proof_approved', 'owner_authorized'].includes(row.status))
         return json({ error: 'Not found' }, 404);
-      const delivered = await deliverOwnerCode(admin, deployment.id, row, true);
+      const delivered = await deliverOwnerCode(admin, deployment.id, row, idempotencyKey);
       return json({
         request: tracker(row, expectedVersion),
         ownerCodeDelivery: { status: 'sent', expiresAt: delivered.expiresAt },
@@ -1955,28 +2038,20 @@ Deno.serve(async (request) => {
             args: { tokenId: String(row.token_id), evidenceDigest },
           });
         }
-        const chain = await receiptEvents(deployment, transactionHash, recoveryWallet);
-        const proposed = findEvent(chain.logs, 'RecoveryProposed');
-        const firstApproval = findEvent(chain.logs, 'RecoveryApproved');
-        assertEventValue(proposed.args.tokenId, String(row.token_id), 'token');
-        assertEventValue(proposed.args.evidenceDigest, evidenceDigest, 'recovery evidence');
-        assertEventValue(proposed.args.proposer, recoveryWallet, 'recovery proposer');
-        assertEventValue(firstApproval.args.tokenId, String(row.token_id), 'approval token');
-        assertEventValue(
-          firstApproval.args.proposalHash,
-          proposed.args.proposalHash as string,
-          'proposal hash',
-        );
-        assertEventValue(firstApproval.args.approver, recoveryWallet, 'first recovery approver');
+        // Validated by the manager's events, not the envelope: a Safe's
+        // execution has `to` = the Safe and `from` = the owner who executed it.
+        const proposed = await confirmedRecoveryStep({
+          transactionHash,
+          manager: manager(deployment),
+          approver: recoveryWallet,
+          expectedChainId: Number(deployment.chain_id),
+          step: { kind: 'propose', tokenId: String(row.token_id), evidenceDigest },
+        });
         const chainProposal = await loadChainRecoveryProposal(
           getAddress(deployment.redemption_manager_address),
           BigInt(row.token_id),
         );
-        assertEventValue(
-          chainProposal.proposalHash,
-          proposed.args.proposalHash as string,
-          'stored proposal hash',
-        );
+        assertEventValue(chainProposal.proposalHash, proposed.proposalHash, 'stored proposal hash');
         assertEventValue(chainProposal.evidenceDigest, evidenceDigest, 'stored recovery evidence');
         const proposalId = activeProposal?.id ?? crypto.randomUUID();
         const proposedAt = new Date(Number(chainProposal.proposedAt) * 1_000).toISOString();
@@ -1985,7 +2060,7 @@ Deno.serve(async (request) => {
           p_deployment_id: deployment.id,
           p_request_id: requestId,
           p_proposal_id: proposalId,
-          p_proposal_hash: proposed.args.proposalHash,
+          p_proposal_hash: proposed.proposalHash,
           p_evidence_digest: evidenceDigest,
           p_proposed_at: proposedAt,
           p_execute_after: executeAfter,
@@ -2005,7 +2080,7 @@ Deno.serve(async (request) => {
           request: tracker(row, expectedVersion + 1),
           recovery: {
             proposalId,
-            proposalHash: proposed.args.proposalHash,
+            proposalHash: proposed.proposalHash,
             evidenceDigest,
             executeAfter,
             requiredApprovals: Number(chainProposal.requiredApprovals),
@@ -2057,12 +2132,18 @@ Deno.serve(async (request) => {
             args: { tokenId: String(row.token_id), proposalHash: activeProposal.proposal_hash },
           });
         }
-        const chain = await receiptEvents(deployment, transactionHash, recoveryWallet);
-        const approved = findEvent(chain.logs, 'RecoveryApproved');
-        assertEventValue(approved.args.tokenId, String(row.token_id), 'token');
-        assertEventValue(approved.args.proposalHash, activeProposal.proposal_hash, 'proposal hash');
-        assertEventValue(approved.args.approver, recoveryWallet, 'recovery approver');
-        const approvals = Number(approved.args.approvals);
+        const approved = await confirmedRecoveryStep({
+          transactionHash,
+          manager: manager(deployment),
+          approver: recoveryWallet,
+          expectedChainId: Number(deployment.chain_id),
+          step: {
+            kind: 'approve',
+            tokenId: String(row.token_id),
+            proposalHash: activeProposal.proposal_hash,
+          },
+        });
+        const approvals = Number(approved.approvals);
         const { data: recorded, error: recordError } = await admin.rpc('record_recovery_approval', {
           p_deployment_id: deployment.id,
           p_request_id: requestId,
@@ -2116,13 +2197,30 @@ Deno.serve(async (request) => {
           args: { tokenId: String(row.token_id), proposalHash: activeProposal.proposal_hash },
         });
       }
-      const chain = await receiptEvents(deployment, transactionHash, recoveryWallet);
-      const finalized = findEvent(chain.logs, 'RedemptionFinalized');
-      assertEventValue(finalized.args.tokenId, String(row.token_id), 'token');
-      assertEventValue(finalized.args.gemId, String(row.gem_id), 'gem');
-      assertEventValue(finalized.args.owner, row.requester_wallet, 'owner');
-      if (finalized.args.recovered !== true)
-        throw new Error('Recovery transaction was not finalized as recovery');
+      await confirmedRecoveryStep({
+        transactionHash,
+        manager: manager(deployment),
+        approver: recoveryWallet,
+        expectedChainId: Number(deployment.chain_id),
+        step: {
+          kind: 'execute',
+          tokenId: String(row.token_id),
+          gemId: String(row.gem_id),
+          owner: row.requester_wallet,
+          proposalHash: activeProposal.proposal_hash,
+        },
+      });
+      // RedemptionFinalized names no proposal; the manager's record does.
+      const executedProposal = await loadChainRecoveryProposal(
+        manager(deployment),
+        BigInt(row.token_id),
+      );
+      assertEventValue(
+        executedProposal.proposalHash,
+        activeProposal.proposal_hash,
+        'proposal hash',
+      );
+      if (!executedProposal.executed) throw new Error('The recovery proposal is not executed');
       const executedAt = new Date().toISOString();
       const { data: recorded, error: recordError } = await admin.rpc('record_recovery_execution', {
         p_deployment_id: deployment.id,
@@ -2229,11 +2327,7 @@ Deno.serve(async (request) => {
         return json({ error: 'Owner signature challenge expired; prepare another' }, 409);
       const ownerSignature = String(body.ownerSignature ?? '') as Hash;
       if (
-        !(await verifyMessage({
-          address: getAddress(ownerWallet),
-          message: challenge.message,
-          signature: ownerSignature,
-        }))
+        !(await verifiedWalletSignature(getAddress(ownerWallet), challenge.message, ownerSignature))
       )
         return json({ error: 'Owner wallet signature is invalid' }, 403);
       if (
@@ -2243,6 +2337,19 @@ Deno.serve(async (request) => {
         row.proof_approval_version === null
       )
         throw new Error('Approved proof binding is incomplete');
+      // The manager's digest binds its own record, so sign what the chain holds.
+      // In particular the owner may have set a collector commitment on-chain
+      // whose receipt never reached us; signing the row's value would make an
+      // authorization that can never verify.
+      const binding = finalizeAuthorizationBinding({
+        row,
+        workflowIdHash: workflowIdHash(requestId),
+        record: await readRedemptionRecord(
+          serverChain(deployment),
+          manager(deployment),
+          BigInt(row.token_id),
+        ),
+      });
       const account = await configuredAuthorizer(deployment);
       // RedemptionManager rejects an issuedAt later than block.timestamp, and the
       // wallet simulates against the latest block, which is always some seconds
@@ -2251,7 +2358,7 @@ Deno.serve(async (request) => {
       const issuedAt = BigInt(Math.floor(Date.now() / 1_000)) - AUTHORIZATION_BACKDATE_SECONDS;
       const deadline = issuedAt + 15n * 60n;
       const nonce = randomHex(32);
-      const collectorCommitment = row.collector_commitment ?? zeroHash;
+      const collectorCommitment = binding.collectorCommitment as Hash;
       const message = {
         tokenId: BigInt(row.token_id),
         owner: getAddress(ownerWallet),
@@ -2315,9 +2422,20 @@ Deno.serve(async (request) => {
           authorizationPayload: serializedMessage,
           authorizationSignature: signature,
           authorizationAuthorizer: account.address,
+          // Reconciles the row to the on-chain commitment it was signed with.
+          ...(binding.collectorCommitmentChanged ? { collectorCommitment } : {}),
         },
         idempotencyKey,
       });
+      if (binding.collectorCommitmentChanged) {
+        await reconcileProxyNomination(
+          admin,
+          deployment.id,
+          requestId,
+          collectorCommitment,
+          user.id,
+        );
+      }
       const { data: consumed, error: consumeError } = await admin.rpc(
         'verify_redemption_owner_code',
         {
@@ -2348,11 +2466,7 @@ Deno.serve(async (request) => {
     if (action === 'mark_chain_burned') {
       if (!owner || row.status !== 'owner_authorized') return json({ error: 'Not found' }, 404);
       const transactionHash = requiredHash(body.transactionHash);
-      const chain = await receiptEvents(
-        deployment,
-        transactionHash,
-        getAddress(row.requester_wallet),
-      );
+      const chain = await ownerReceiptEvents(deployment, transactionHash);
       const finalized = findEvent(chain.logs, 'RedemptionFinalized');
       assertEventValue(finalized.args.tokenId, String(row.token_id), 'token');
       assertEventValue(finalized.args.gemId, String(row.gem_id), 'gem');

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { reconcileGiftTransfer } from './giftMutation';
+import {
+  UNSUBMITTED_OPERATION_RESET_MS,
+  pendingOperationAgeMs,
+  reconcileGiftTransfer,
+} from './giftMutation';
 
 describe('gift mutation reconciliation', () => {
   it('does not permit a duplicate while a broadcast outcome is uncertain', () => {
@@ -98,5 +102,81 @@ describe('gift mutation reconciliation', () => {
         operationAgeMs: 120_000,
       }),
     ).toBe('retry_fresh_nonce');
+  });
+
+  describe('a worker that died before recording the nonce', () => {
+    const unsubmitted = {
+      currentOwner: '0x1111111111111111111111111111111111111111',
+      destinationOwner: '0x2222222222222222222222222222222222222222',
+      transactionHash: null,
+      receiptStatus: null,
+      operationNonce: null,
+      senderPendingNonce: null,
+      senderLatestNonce: null,
+    };
+
+    it.each(['claim', 'cancel'])(
+      'resets a stale %s that recorded neither a nonce nor a hash',
+      () => {
+        expect(
+          reconcileGiftTransfer({
+            ...unsubmitted,
+            operationAgeMs: UNSUBMITTED_OPERATION_RESET_MS,
+          }),
+        ).toBe('reset_unsubmitted');
+      },
+    );
+
+    it('waits while the attempt may still be alive', () => {
+      expect(
+        reconcileGiftTransfer({
+          ...unsubmitted,
+          operationAgeMs: UNSUBMITTED_OPERATION_RESET_MS - 1,
+        }),
+      ).toBe('pending');
+    });
+
+    it('never resets once a nonce was recorded, since a broadcast may exist', () => {
+      expect(
+        reconcileGiftTransfer({
+          ...unsubmitted,
+          operationNonce: 41,
+          senderPendingNonce: 42,
+          senderLatestNonce: 41,
+          operationAgeMs: 60 * 60_000,
+        }),
+      ).toBe('pending');
+    });
+
+    it('never resets once a hash was recorded', () => {
+      expect(
+        reconcileGiftTransfer({
+          ...unsubmitted,
+          transactionHash: `0x${'a'.repeat(64)}`,
+          operationAgeMs: 60 * 60_000,
+        }),
+      ).toBe('pending');
+    });
+
+    it('still completes from ownership rather than resetting a transfer that landed', () => {
+      expect(
+        reconcileGiftTransfer({
+          ...unsubmitted,
+          currentOwner: unsubmitted.destinationOwner,
+          operationAgeMs: 60 * 60_000,
+        }),
+      ).toBe('complete');
+    });
+
+    it('treats a pending row with no start time as abandoned', () => {
+      expect(pendingOperationAgeMs(null)).toBe(Number.POSITIVE_INFINITY);
+      expect(
+        pendingOperationAgeMs('2026-10-29T10:00:00.000Z', Date.parse('2026-10-29T10:05:00.000Z')),
+      ).toBe(5 * 60_000);
+    });
+
+    it('waits longer than the operator lease before resetting', () => {
+      expect(UNSUBMITTED_OPERATION_RESET_MS).toBeGreaterThan(3 * 60_000);
+    });
   });
 });
