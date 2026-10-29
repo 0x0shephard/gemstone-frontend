@@ -1,6 +1,12 @@
 import { fallback, http, type Transport } from 'viem';
 
 export const SEPOLIA_PUBLIC_RPC = 'https://11155111.rpc.thirdweb.com';
+/** Offchain Labs' public endpoint: rate limited, so only a fallback. */
+export const ARBITRUM_PUBLIC_RPC = 'https://arb1.arbitrum.io/rpc';
+const PUBLIC_RPC_BY_CHAIN: Record<number, string> = {
+  11155111: SEPOLIA_PUBLIC_RPC,
+  42161: ARBITRUM_PUBLIC_RPC,
+};
 /**
  * Browser-safe endpoint used for historical event projection.
  *
@@ -30,11 +36,9 @@ export function resolveRpcUrls(
   configuredFallbackUrl: string,
 ): string[] {
   if (isLocalRpc(primaryUrl)) return [primaryUrl];
-  const urls = [
-    primaryUrl,
-    configuredFallbackUrl,
-    chainId === 11155111 ? SEPOLIA_PUBLIC_RPC : '',
-  ].filter(Boolean);
+  const urls = [primaryUrl, configuredFallbackUrl, PUBLIC_RPC_BY_CHAIN[chainId] ?? ''].filter(
+    Boolean,
+  );
   return [...new Set(urls)];
 }
 

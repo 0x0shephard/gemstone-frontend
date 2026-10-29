@@ -11,10 +11,7 @@ const staging = readFileSync(
   'utf8',
 );
 const corrective = readFileSync(
-  join(
-    process.cwd(),
-    'supabase/migrations/202610020003_protocol_release_request_scope.sql',
-  ),
+  join(process.cwd(), 'supabase/migrations/202610020003_protocol_release_request_scope.sql'),
   'utf8',
 );
 
@@ -115,5 +112,31 @@ describe('protocol deployment scope migration', () => {
     expect(corrective).toContain("status in ('staging', 'archived')");
     expect(corrective).toContain('if current_id = next_deployment_id then');
     expect(corrective).not.toMatch(/\btruncate\b|delete\s+from\s+public\./i);
+  });
+
+  it('stages the Arbitrum One release exactly as its frontend manifest, without activating it', () => {
+    const release = 'arbitrum-one-519342582';
+    const manifest = JSON.parse(
+      readFileSync(join(process.cwd(), 'deployments/frontend', `${release}.json`), 'utf8'),
+    ) as { chainId: number; deploymentBlock: number; addresses: Record<string, string> };
+    const sql = readFileSync(
+      join(process.cwd(), 'supabase/migrations/202610290001_stage_arbitrum_one_519342582.sql'),
+      'utf8',
+    );
+    expect(manifest.chainId).toBe(42161);
+    expect(sql).toContain(`'${release}',\n  42161,\n  ${manifest.deploymentBlock},`);
+    for (const name of [
+      'DGENFT',
+      'GemRegistry',
+      'Marketplace',
+      'PrimarySaleAuction',
+      'RedemptionManager',
+      'SwapEscrow',
+    ]) {
+      expect(sql, name).toContain(`lower('${manifest.addresses[name]}')`);
+    }
+    expect(sql).toContain("'staging'");
+    expect(sql).not.toContain("'active'");
+    expect(sql).not.toMatch(/activate_protocol_deployment\s*\(/);
   });
 });

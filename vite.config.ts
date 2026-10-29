@@ -92,11 +92,35 @@ function applyDeploymentEnvironment(config: BuildDeploymentConfig): void {
   for (const moduleName of contractModules) {
     process.env[contractEnvironmentKeys[moduleName]] = config.addresses[moduleName];
   }
-  if (config.paymentAssets?.mockUsdc) {
-    process.env.VITE_USDC_ADDRESS = config.paymentAssets.mockUsdc;
+  const usdc = config.paymentAssets?.usdc ?? config.paymentAssets?.mockUsdc;
+  if (usdc) {
+    process.env.VITE_USDC_ADDRESS = usdc;
   }
   if (config.paymentAssets?.mockUsdcFaucet) {
     process.env.VITE_MUSDC_FAUCET_ADDRESS = config.paymentAssets.mockUsdcFaucet;
+  }
+}
+
+/**
+ * RPC and explorer URLs come from the hosting environment, not the release, so a
+ * switch of release can leave them pointing at the old network. Refuse a build
+ * that mixes a mainnet release with Sepolia endpoints, or the reverse.
+ */
+function assertRpcMatchesRelease(
+  config: BuildDeploymentConfig,
+  urls: Record<string, string | undefined>,
+): void {
+  const sepolia = config.chainId === 11155111;
+  for (const [key, value] of Object.entries(urls)) {
+    const url = value?.trim().toLowerCase();
+    if (!url) continue;
+    if (
+      sepolia ? /arb-mainnet|arb1\.|arbitrum-one|arbiscan\.io/.test(url) : url.includes('sepolia')
+    ) {
+      throw new Error(
+        `${key} points at another network than release ${config.release} (chain ${config.chainId})`,
+      );
+    }
   }
 }
 
@@ -119,7 +143,16 @@ export default defineConfig(({ mode }) => {
     frontendEnv.VITE_DEPLOYMENT_RELEASE?.trim() ??
     '';
   const deploymentConfig = loadDeploymentConfig(deploymentRelease);
-  if (deploymentConfig) applyDeploymentEnvironment(deploymentConfig);
+  if (deploymentConfig) {
+    applyDeploymentEnvironment(deploymentConfig);
+    assertRpcMatchesRelease(deploymentConfig, {
+      VITE_RPC_URL: process.env.VITE_RPC_URL ?? frontendEnv.VITE_RPC_URL,
+      VITE_RPC_FALLBACK_URL: process.env.VITE_RPC_FALLBACK_URL ?? frontendEnv.VITE_RPC_FALLBACK_URL,
+      VITE_LOGS_RPC_URL: process.env.VITE_LOGS_RPC_URL ?? frontendEnv.VITE_LOGS_RPC_URL,
+      VITE_EXPLORER_BASE_URL:
+        process.env.VITE_EXPLORER_BASE_URL ?? frontendEnv.VITE_EXPLORER_BASE_URL,
+    });
+  }
   if (
     process.env.VITE_SUPABASE_SERVICE_ROLE_KEY?.trim() ||
     frontendEnv.VITE_SUPABASE_SERVICE_ROLE_KEY?.trim()
