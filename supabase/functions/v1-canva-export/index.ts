@@ -1,5 +1,6 @@
 import { audit, requireUser } from '../_shared/auth.ts';
 import { safeErrorMessage } from '../_shared/errors.ts';
+import { utf8ToBase64 } from '../_shared/base64.ts';
 import { json, preflight } from '../_shared/cors.ts';
 import {
   CANVA_API,
@@ -78,8 +79,9 @@ Deno.serve(async (request) => {
         authorization,
         'content-type': 'application/octet-stream',
         // Base64 so a name carrying an emoji or an accent survives an HTTP
-        // header, which Canva requires rather than merely permits.
-        'asset-upload-metadata': JSON.stringify({ name_base64: btoa(title) }),
+        // header, which Canva requires rather than merely permits. Of the
+        // UTF-8 bytes: `btoa(title)` threw on anything outside Latin-1.
+        'asset-upload-metadata': JSON.stringify({ name_base64: utf8ToBase64(title) }),
       },
       body: bytes,
     });

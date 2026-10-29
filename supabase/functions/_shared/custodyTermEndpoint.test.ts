@@ -16,9 +16,23 @@ describe('missing custody term repair', () => {
     const record = endpoint.slice(endpoint.indexOf("if (body.action === 'record_term')"));
     expect(record).toContain("functionName: 'getGem'");
     expect(record).toContain("functionName: 'ownerOf'");
-    expect(record).toContain("membership.kind === 'admin'");
+    expect(record).toContain('isGlobalOperationalAdmin(membership) && operatorCustodied');
     expect(record).toContain(".from('wallet_links')");
     expect(record).toContain('getAddress(walletAddress) === getAddress(gem.custodian)');
+  });
+
+  it('lets bank staff through the capability model, but only for stones their bank received', () => {
+    expect(endpoint).not.toContain('await requireVerifier(');
+    expect(endpoint).toMatch(
+      /CUSTODY_CAPABILITIES: readonly OperationalCapability\[\] = \[\s*'bank\.receive',\s*'custodian\.fulfill',?\s*\]/,
+    );
+    expect(endpoint).toContain(
+      'operationalMembership(admin, profileId, capability, organizationId)',
+    );
+    const record = endpoint.slice(endpoint.indexOf("if (body.action === 'record_term')"));
+    const bank = record.slice(record.indexOf("membership.kind === 'bank'"));
+    expect(bank).toContain(".eq('bank_organization_id', membership.organizationId)");
+    expect(bank).toContain(".eq('onchain_gem_id', term.gemId)");
   });
 
   it('cannot overwrite either a seller intake term or a prior attestation', () => {

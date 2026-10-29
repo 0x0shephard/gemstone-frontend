@@ -6,6 +6,11 @@ import {
   verifyPublishedBytes,
   verifyPublishedDocument,
 } from './metadataDocument.ts';
+import {
+  PRODUCTION_METADATA_DESCRIPTION,
+  TEST_NETWORK_METADATA_DESCRIPTION,
+  configuredChainId,
+} from './network.ts';
 
 const encoder = new TextEncoder();
 
@@ -62,26 +67,79 @@ function gatewayServingBytes(bodyByGateway: Record<string, Uint8Array | number>)
   }) as unknown as typeof fetch;
 }
 
+const ARBITRUM_ONE = { chainId: 42161 };
+const SEPOLIA = { chainId: 11155111 };
+
 describe('public metadata document', () => {
   it('emits the ERC-721 shape with standard attributes', () => {
-    const metadata = buildPublicMetadata(attributes);
+    const metadata = buildPublicMetadata(attributes, ARBITRUM_ONE);
     expect(metadata.name).toBe('Ruby Horizon');
     expect(metadata.attributes).toContainEqual({ trait_type: 'Carat Weight', value: 1.25 });
     expect(metadata.attributes).toContainEqual({ trait_type: 'Certification Lab', value: 'GIA' });
   });
 
   it('omits empty traits rather than publishing blanks', () => {
-    const metadata = buildPublicMetadata({ name: 'Bare', gemstoneType: 'ruby', origin: '' });
+    const metadata = buildPublicMetadata(
+      { name: 'Bare', gemstoneType: 'ruby', origin: '' },
+      ARBITRUM_ONE,
+    );
     expect(metadata.attributes).toEqual([{ trait_type: 'Gem Type', value: 'ruby' }]);
   });
 
   it('includes an image only when one is supplied', () => {
-    expect(buildPublicMetadata(attributes).image).toBeUndefined();
-    expect(buildPublicMetadata(attributes, { image: 'ipfs://bafyimage' }).image).toBe(
-      'ipfs://bafyimage',
+    expect(buildPublicMetadata(attributes, ARBITRUM_ONE).image).toBeUndefined();
+    expect(
+      buildPublicMetadata(attributes, { ...ARBITRUM_ONE, image: 'ipfs://bafyimage' }).image,
+    ).toBe('ipfs://bafyimage');
+  });
+
+  it('publishes a lab colour grade as its own trait', () => {
+    const metadata = buildPublicMetadata(
+      { name: 'Graded', color: 'red', colorGrade: 'medium' },
+      ARBITRUM_ONE,
+    );
+    expect(metadata.attributes).toEqual([
+      { trait_type: 'Color', value: 'red' },
+      { trait_type: 'Color Grade', value: 'medium' },
+    ]);
+  });
+});
+
+describe('metadata description by network', () => {
+  it('never tells a production holder their stone is a Sepolia or test record', () => {
+    for (const chainId of [42161, 1]) {
+      const { description } = buildPublicMetadata(attributes, { chainId });
+      expect(description).toBe(PRODUCTION_METADATA_DESCRIPTION);
+      expect(description).not.toMatch(/sepolia|test|mvp/i);
+    }
+  });
+
+  it('keeps the exact Sepolia sentence, so a republished Sepolia document is byte-identical', () => {
+    expect(buildPublicMetadata(attributes, SEPOLIA).description).toBe(
+      'Digital Carat Sepolia MVP gemstone submission with test-only automated valuation and custody activation.',
     );
   });
 
+  it('labels other test networks as test records', () => {
+    for (const chainId of [421614, 31337]) {
+      expect(buildPublicMetadata(attributes, { chainId }).description).toBe(
+        TEST_NETWORK_METADATA_DESCRIPTION,
+      );
+    }
+  });
+
+  it('refuses a chain it has no wording for rather than guessing', () => {
+    expect(() => buildPublicMetadata(attributes, { chainId: 8453 })).toThrow(/no network profile/);
+  });
+
+  it('reads the chain the way chain.ts does, defaulting an unset value to Sepolia', () => {
+    expect(configuredChainId(() => '42161')).toBe(42161);
+    expect(configuredChainId(() => undefined)).toBe(11155111);
+    expect(() => configuredChainId(() => 'arbitrum')).toThrow(/positive integer/);
+  });
+});
+
+describe('public metadata document safety', () => {
   it('refuses to publish private fields', () => {
     expect(() =>
       assertNoPrivateFields({

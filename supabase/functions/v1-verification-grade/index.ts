@@ -81,7 +81,7 @@ Deno.serve(async (request) => {
 
     const { data: submission, error: submissionError } = await admin
       .from('seller_submissions')
-      .select('id,status,graded_at,onchain_gem_id')
+      .select('id,status,graded_at,onchain_gem_id::text')
       .eq('id', submissionId)
       .eq('deployment_id', deployment.id)
       .maybeSingle();

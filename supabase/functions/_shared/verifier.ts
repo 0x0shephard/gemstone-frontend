@@ -56,6 +56,17 @@ export class ValuationLimitError extends Error {
   }
 }
 
+/**
+ * The caller's legacy verifier membership.
+ *
+ * A person may belong to several organisations (a lab and a bank, say). This
+ * used to read the membership with `.maybeSingle()`, which turns a second row
+ * into a database error, so anyone with two memberships could use none of
+ * them. Every active membership is read and one is chosen deterministically: an
+ * admin organisation first, then a custodian role, then a lab, with the
+ * organisation id as the tiebreak. Which organisations each endpoint accepts is
+ * unchanged; those checks still run on the returned membership.
+ */
 export async function requireVerifier(
   admin: AdminClient,
   profileId: string,
@@ -66,29 +77,44 @@ export async function requireVerifier(
       'profile_id,role,active,organization_id,verifier_organizations(id,name,kind,active,daily_valuation_limit)',
     )
     .eq('profile_id', profileId)
-    .eq('active', true)
-    .maybeSingle();
+    .eq('active', true);
   if (error) throw error;
 
-  const organization = data?.verifier_organizations as
-    | {
-        id: string;
-        name: string;
-        kind: 'lab' | 'admin';
-        active: boolean;
-        daily_valuation_limit: number;
-      }
-    | undefined;
-  if (!data || !organization || !organization.active) throw new NotAVerifierError();
-
-  return {
-    profileId,
-    organizationId: organization.id,
-    organizationName: organization.name,
-    kind: organization.kind,
-    role: data.role as VerifierMembership['role'],
-    dailyValuationLimit: organization.daily_valuation_limit,
-  };
+  const candidates = (data ?? []).flatMap((row) => {
+    const organization = row.verifier_organizations as unknown as {
+      id: string;
+      name: string;
+      kind: string;
+      active: boolean;
+      daily_valuation_limit: number;
+    } | null;
+    if (!organization?.active) return [];
+    return [
+      {
+        profileId,
+        organizationId: organization.id,
+        organizationName: organization.name,
+        kind: organization.kind as VerifierMembership['kind'],
+        role: row.role as VerifierMembership['role'],
+        dailyValuationLimit: organization.daily_valuation_limit,
+      },
+    ];
+  });
+  const rank = (membership: VerifierMembership) =>
+    membership.kind === 'admin'
+      ? 0
+      : membership.role === 'custodian'
+        ? 1
+        : (membership.kind as string) === 'lab' || (membership.kind as string) === 'gemlab'
+          ? 2
+          : 3;
+  candidates.sort(
+    (left, right) =>
+      rank(left) - rank(right) || left.organizationId.localeCompare(right.organizationId),
+  );
+  const membership = candidates[0];
+  if (!membership) throw new NotAVerifierError();
+  return membership;
 }
 
 /**

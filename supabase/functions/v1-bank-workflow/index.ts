@@ -41,7 +41,9 @@ Deno.serve(async (request) => {
         .from('seller_submissions')
         .select(
           'id,gem_name,status,created_at,bank_received_at,bank_location,current_appraisal_id,' +
-            'gem_appraisals!seller_submissions_current_appraisal_id_fkey(id,approved_valuation_usd,matrix_version,matrix_hash,created_at)',
+            // numeric(78,0) is read as text: as a JSON number an 18-decimal
+            // price loses precision.
+            'gem_appraisals!seller_submissions_current_appraisal_id_fkey(id,approved_valuation_usd::text,matrix_version,matrix_hash,created_at)',
         )
         .eq('deployment_id', deployment.id)
         .not('current_appraisal_id', 'is', null)

@@ -10,6 +10,8 @@
  * therefore irreversible once a gem is registered.
  */
 
+import { metadataDescription } from './network.ts';
+
 /** Attribute subset needed to describe a gem publicly. */
 export interface PublicAttributes {
   name: string;
@@ -18,6 +20,8 @@ export interface PublicAttributes {
   caratWeight?: number;
   dimensions?: string;
   color?: string;
+  /** Lab-graded tone within the colour (for example "medium"). */
+  colorGrade?: string;
   clarity?: string;
   cut?: string;
   treatment?: string;
@@ -36,8 +40,11 @@ export interface PublicMetadata {
   attributes: MetadataAttribute[];
 }
 
-const DESCRIPTION =
-  'Digital Carat Sepolia MVP gemstone submission with test-only automated valuation and custody activation.';
+/*
+ * The description is derived from the chain the document is published for.
+ * It used to be a fixed Sepolia sentence, which would have told every
+ * production holder, permanently, that their stone was a test record.
+ */
 
 /**
  * Fields that must never reach public metadata. Enforced rather than documented,
@@ -72,7 +79,7 @@ const FORBIDDEN_KEYS = [
  */
 export function buildPublicMetadata(
   attributes: PublicAttributes,
-  options: { image?: string } = {},
+  options: { image?: string; chainId: number },
 ): PublicMetadata {
   const traits: Array<[string, string | number | undefined]> = [
     ['Gem Type', attributes.gemstoneType],
@@ -80,6 +87,7 @@ export function buildPublicMetadata(
     ['Origin', attributes.origin],
     ['Dimensions', attributes.dimensions],
     ['Color', attributes.color],
+    ['Color Grade', attributes.colorGrade],
     ['Clarity', attributes.clarity],
     ['Cut', attributes.cut],
     ['Treatment', attributes.treatment],
@@ -87,7 +95,7 @@ export function buildPublicMetadata(
   ];
   const metadata: PublicMetadata = {
     name: attributes.name,
-    description: DESCRIPTION,
+    description: metadataDescription(options.chainId),
     ...(options.image ? { image: options.image } : {}),
     attributes: traits
       .filter(

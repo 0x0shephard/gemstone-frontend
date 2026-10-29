@@ -12,16 +12,34 @@ import {
 } from './chain.ts';
 import { createMvpValuation } from './mvpPricing.ts';
 import {
+  canonicalDocument,
   pinningConfigured,
   publishImage,
   publishMetadata,
   type PublishedImage,
   type PublishedMetadata,
 } from './ipfs.ts';
-import { isDataUri, type PublicAttributes } from './metadataDocument.ts';
+import { dataUri } from './metadataDocument.ts';
 import { protocolDeploymentId } from './deployment.ts';
 import { blocksBack, blocksForSeconds } from './blockTime.ts';
 import { findRegisteredGem } from './registrationRecovery.ts';
+import { configuredChainId, networkProfile } from './network.ts';
+import {
+  claimOperatorLease as claimSharedOperatorLease,
+  releaseOperatorLease as releaseSharedOperatorLease,
+  renewOperatorLease as renewSharedOperatorLease,
+} from './operatorLease.ts';
+import {
+  APPRAISAL_COLUMNS,
+  SELLER_SUBMISSION_COLUMNS,
+  approvedAttributesFromAppraisal,
+  commitmentMayBeRebuilt,
+  exactUint,
+  parseGradedInputs,
+  publicAttributesFromAppraisal,
+  registrationMayHaveBeenSent,
+  type GradedInputs,
+} from './sellerOnboarding.ts';
 
 type AdminClient = SupabaseClient;
 
@@ -30,10 +48,13 @@ interface SellerSubmission {
   deployment_id: string;
   seller_id: string;
   seller_wallet: string;
+  gem_name: string | null;
+  /** The seller's claim. Only `name` from here reaches the chain; grades come from the appraisal. */
   attributes: Record<string, unknown> & { caratWeight: number };
   sale_mode: 'buy_now' | 'auction';
   metadata_uri: string;
   metadata_cid: string | null;
+  metadata_document: string | null;
   primary_image_evidence_id: string | null;
   primary_image_cid: string | null;
   status: string;
@@ -42,11 +63,13 @@ interface SellerSubmission {
   canonical_payload: string | null;
   commitment_nonce: string | null;
   valuation_method: string | null;
+  /** Read `::text`; see `SELLER_SUBMISSION_COLUMNS`. */
   approved_valuation_usd: string | null;
   valuation_hash: Hash | null;
   valuation_matrix_hash: Hash | null;
   valuation_canonical_payload: string | null;
   valuation_nonce: string | null;
+  /** Read `::text`. */
   onchain_gem_id: string | null;
   activation_attempts: number;
   activation_started_at: string | null;
@@ -58,18 +81,79 @@ interface SellerSubmission {
   bank_received_at: string | null;
 }
 
-const sellerColumns =
-  'id,deployment_id,seller_id,seller_wallet,attributes,sale_mode,metadata_uri,metadata_cid,primary_image_evidence_id,primary_image_cid,status,approved_at,certificate_hash,canonical_payload,commitment_nonce,valuation_method,approved_valuation_usd,valuation_hash,valuation_matrix_hash,valuation_canonical_payload,valuation_nonce,onchain_gem_id,activation_attempts,activation_started_at,registration_tx_hash,registration_scan_from_block,current_appraisal_id,bank_received_at';
+/** The immutable lab appraisal: what was graded, by whom, and the exact price. */
+interface Appraisal {
+  id: string;
+  graded: GradedInputs;
+  laboratory: string;
+  approvedValuationUsd: bigint;
+  valuationHash: string;
+  matrixHash: string;
+  primaryImageEvidenceId: string | null;
+}
+
+/** Thrown when another activation of the same submission is already running. */
+class ActivationInProgressError extends Error {
+  constructor() {
+    super('Seller activation is already in progress');
+    this.name = 'ActivationInProgressError';
+  }
+}
+
+/** An activation older than this is presumed dead and may be taken over. */
+const STALE_ACTIVATION_MS = 5 * 60_000;
 
 async function loadSubmission(admin: AdminClient, submissionId: string): Promise<SellerSubmission> {
   const { data, error } = await admin
     .from('seller_submissions')
-    .select(sellerColumns)
+    .select(SELLER_SUBMISSION_COLUMNS)
     .eq('id', submissionId)
     .eq('deployment_id', protocolDeploymentId())
     .single();
   if (error || !data) throw error ?? new Error('Seller submission not found');
-  return data as SellerSubmission;
+  return data as unknown as SellerSubmission;
+}
+
+/**
+ * The appraisal the price came from, read from the immutable `gem_appraisals`
+ * row rather than from the copies on `seller_submissions`.
+ *
+ * `submission.attributes` is what the seller claimed. Publishing it, and
+ * committing it as `approvedAttributes`, recorded the seller's description
+ * permanently next to a price the lab computed from different inputs.
+ */
+async function loadAppraisal(admin: AdminClient, submission: SellerSubmission): Promise<Appraisal> {
+  if (!submission.current_appraisal_id) {
+    throw new Error('An immutable appraisal is required for activation');
+  }
+  const { data, error } = await admin
+    .from('gem_appraisals')
+    .select(APPRAISAL_COLUMNS)
+    .eq('id', submission.current_appraisal_id)
+    .eq('deployment_id', submission.deployment_id)
+    .eq('submission_id', submission.id)
+    .single();
+  if (error || !data) throw error ?? new Error('The submission appraisal was not found');
+  const row = data as unknown as {
+    id: string;
+    graded_inputs: unknown;
+    approved_valuation_usd: string;
+    matrix_hash: string;
+    valuation_hash: string;
+    primary_image_evidence_id: string | null;
+    verifier_organizations: { name: string } | null;
+  };
+  const laboratory = row.verifier_organizations?.name?.trim();
+  if (!laboratory) throw new Error('The appraising laboratory could not be identified');
+  return {
+    id: row.id,
+    graded: parseGradedInputs(row.graded_inputs),
+    laboratory,
+    approvedValuationUsd: exactUint(row.approved_valuation_usd, 'Appraised valuation'),
+    valuationHash: row.valuation_hash,
+    matrixHash: row.matrix_hash,
+    primaryImageEvidenceId: row.primary_image_evidence_id,
+  };
 }
 
 /**
@@ -81,22 +165,23 @@ async function loadSubmission(admin: AdminClient, submissionId: string): Promise
  */
 async function resolvePrimaryImage(
   admin: AdminClient,
-  submission: SellerSubmission,
+  submissionId: string,
+  primaryImageEvidenceId: string | null,
 ): Promise<{ bytes: Uint8Array; contentType: string; evidenceId: string } | undefined> {
   const query = admin
     .from('evidence_files')
-    .select('id,bucket,object_path,mime_type')
-    .eq('submission_id', submission.id)
+    .select('id,bucket,object_path,mime_type,sha256')
+    .eq('submission_id', submissionId)
     .eq('category', 'gem_media');
 
-  const { data: media, error } = submission.primary_image_evidence_id
-    ? await query.eq('id', submission.primary_image_evidence_id).maybeSingle()
+  const { data: media, error } = primaryImageEvidenceId
+    ? await query.eq('id', primaryImageEvidenceId).maybeSingle()
     : await query.order('created_at').limit(1).maybeSingle();
   if (error) throw error;
   if (!media) {
     // An explicit choice that cannot be found is a mismatch worth failing on; a
     // submission with no media at all simply publishes without an image.
-    if (submission.primary_image_evidence_id) {
+    if (primaryImageEvidenceId) {
       throw new Error('The selected primary image is not gemstone media for this submission');
     }
     return undefined;
@@ -108,11 +193,18 @@ async function resolvePrimaryImage(
   if (downloadError || !blob) {
     throw new Error(`Primary image could not be read from private storage: ${media.object_path}`);
   }
-  return {
-    bytes: new Uint8Array(await blob.arrayBuffer()),
-    contentType: media.mime_type,
-    evidenceId: media.id,
-  };
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  /*
+   * The photograph the lab looked at is identified by the digest recorded at
+   * upload. A storage object replaced since then is not that photograph, and
+   * pinning it would make the substitute the stone's permanent public image.
+   */
+  if (media.sha256 && media.sha256.toLowerCase() !== (await sha256(bytes))) {
+    throw new Error(
+      `Primary image ${media.object_path} does not match its recorded digest; activation stopped`,
+    );
+  }
+  return { bytes, contentType: media.mime_type, evidenceId: media.id };
 }
 
 /**
@@ -180,16 +272,37 @@ export async function prepareSellerSubmission(
   if (!submission.current_appraisal_id || !submission.bank_received_at) {
     throw new Error('An immutable appraisal and recorded bank receipt are required for activation');
   }
+  const chainId = configuredChainId((name) => Deno.env.get(name));
+  const network = networkProfile(chainId);
+  const appraisal = await loadAppraisal(admin, submission);
 
   let evidence: { hash: Hash; canonicalPayload: string; nonce: `0x${string}` } | undefined;
   let publication: PublishedMetadata | undefined;
+  let inlineMetadataUri: string | undefined;
   let image: PublishedImage | undefined;
   let imageEvidenceId: string | undefined;
-  if (!submission.certificate_hash || !submission.canonical_payload) {
+
+  /*
+   * Until `registerGem` may have been sent, the evidence commitment is always
+   * rebuilt here, from digests of the stored certificate bytes and from metadata
+   * this process just published. Nothing stored earlier is trusted: the seller
+   * could previously write their own commitment (from their own claimed digests
+   * and the unpinned inline URI) through `v1-seller-commitment`, and its mere
+   * presence made this step skip verification and pinning altogether.
+   *
+   * After a registration may have been sent the package is frozen, because
+   * recovery finds the registered gem by exactly these values.
+   */
+  if (commitmentMayBeRebuilt(submission)) {
     const certificateDigests = await certificateDigestsFromStorage(admin, submissionId);
-    if (certificateDigests.length === 0 || !submission.metadata_uri) {
-      throw new Error('Approved certificates and metadata URI are required');
+    if (certificateDigests.length === 0) {
+      throw new Error('Approved certificates are required');
     }
+    const publicAttributes = publicAttributesFromAppraisal({
+      displayName: String(submission.attributes?.name ?? submission.gem_name ?? ''),
+      graded: appraisal.graded,
+      laboratory: appraisal.laboratory,
+    });
 
     /*
      * Publish before committing. The commitment binds `metadataUri`, and
@@ -198,16 +311,20 @@ export async function prepareSellerSubmission(
      *
      * Image first, then the document that references its CID, then the
      * commitment over the document's URI. Each step is verified against
-     * independent gateways before the next depends on it.
+     * independent gateways before the next depends on it. Pinning identical
+     * bytes again yields the identical CID, so a retry republishes harmlessly.
      *
-     * Only inline URIs are replaced: once a submission carries a CID the
-     * document is already public and immutable. Without pinning credentials the
-     * inline document is kept, which is the Sepolia MVP path — and that path has
-     * no image, because there is nowhere public to host one.
+     * A production chain requires pinning: an inline `data:` document has no
+     * image and nowhere durable to live. Test networks without pinning
+     * credentials keep the inline document, rebuilt from the graded attributes.
      */
-    let metadataUri = submission.metadata_uri;
-    if (pinningConfigured() && isDataUri(metadataUri)) {
-      const primary = await resolvePrimaryImage(admin, submission);
+    let metadataUri: string;
+    if (pinningConfigured()) {
+      const primary = await resolvePrimaryImage(
+        admin,
+        submissionId,
+        appraisal.primaryImageEvidenceId ?? submission.primary_image_evidence_id,
+      );
       if (primary) {
         image = await publishImage(
           primary.bytes,
@@ -216,17 +333,29 @@ export async function prepareSellerSubmission(
         );
         imageEvidenceId = primary.evidenceId;
       }
-      publication = await publishMetadata(submission.attributes as unknown as PublicAttributes, {
+      publication = await publishMetadata(publicAttributes, {
         name: `digital-carat-submission-${submissionId}`,
         image: image?.uri,
+        chainId,
       });
       metadataUri = publication.uri;
+    } else {
+      if (network.production) {
+        throw new Error(
+          `IPFS pinning must be configured before a stone can be registered on ${network.slug}`,
+        );
+      }
+      inlineMetadataUri = dataUri(canonicalDocument(publicAttributes, { chainId }));
+      metadataUri = inlineMetadataUri;
     }
 
     evidence = createCommitment({
+      schemaVersion: 'digital-carat-evidence/v2',
       submissionId,
       sellerWallet: submission.seller_wallet,
-      approvedAttributes: submission.attributes,
+      appraisalId: appraisal.id,
+      gradedBy: appraisal.laboratory,
+      approvedAttributes: approvedAttributesFromAppraisal(appraisal.graded),
       saleMode: submission.sale_mode,
       certificateDigests,
       metadataUri,
@@ -243,10 +372,23 @@ export async function prepareSellerSubmission(
    * The automated figure is a test-only $500/ct rule and `approvedValuationUsd`
    * has no setter. Under lab gating a missing valuation means the grading step
    * did not run, so this fails loudly rather than quietly writing the fallback
-   * price a lab was supposed to replace.
+   * price a lab was supposed to replace. `createMvpValuation` additionally
+   * refuses every production chain.
    */
   if (valuationMissing && !options.allowAutomaticValuation) {
     throw new Error('This submission has no graded valuation; it cannot be activated');
+  }
+  if (!valuationMissing) {
+    // The submission row carries mutable copies of the appraisal. What reaches
+    // `verifyGem` must be exactly what the lab priced.
+    if (
+      exactUint(submission.approved_valuation_usd, 'Approved valuation') !==
+        appraisal.approvedValuationUsd ||
+      submission.valuation_hash?.toLowerCase() !== appraisal.valuationHash.toLowerCase() ||
+      submission.valuation_matrix_hash?.toLowerCase() !== appraisal.matrixHash.toLowerCase()
+    ) {
+      throw new Error('The submission valuation does not match its appraisal; activation stopped');
+    }
   }
 
   const valuation = valuationMissing
@@ -255,11 +397,13 @@ export async function prepareSellerSubmission(
         sellerWallet: submission.seller_wallet,
         attributes: submission.attributes,
         saleMode: submission.sale_mode,
+        chainId,
       })
     : undefined;
 
   if (evidence || valuation) {
-    const { error } = await admin
+    const staleBefore = new Date(Date.now() - STALE_ACTIVATION_MS).toISOString();
+    let write = admin
       .from('seller_submissions')
       .update({
         ...(evidence
@@ -275,6 +419,14 @@ export async function prepareSellerSubmission(
               metadata_cid: publication.cid,
               metadata_document: publication.document,
               metadata_published_at: new Date().toISOString(),
+            }
+          : {}),
+        ...(inlineMetadataUri
+          ? {
+              metadata_uri: inlineMetadataUri,
+              metadata_cid: null,
+              metadata_document: null,
+              metadata_published_at: null,
             }
           : {}),
         ...(image
@@ -298,8 +450,20 @@ export async function prepareSellerSubmission(
         activation_error: null,
       })
       .eq('id', submissionId)
-      .eq('deployment_id', protocolDeploymentId());
+      .eq('deployment_id', protocolDeploymentId())
+      // Never rewrite the package under a running activation.
+      .or(`activation_started_at.is.null,activation_started_at.lt.${staleBefore}`);
+    if (evidence) {
+      // Nor once a registration may have been sent: the stored values must keep
+      // agreeing with what is, or may be, on-chain.
+      write = write
+        .is('registration_scan_from_block', null)
+        .is('registration_tx_hash', null)
+        .is('onchain_gem_id', null);
+    }
+    const { data: written, error } = await write.select('id').maybeSingle();
     if (error) throw error;
+    if (!written) throw new ActivationInProgressError();
     submission = await loadSubmission(admin, submissionId);
     await audit(
       submission.seller_id,
@@ -309,6 +473,7 @@ export async function prepareSellerSubmission(
       {
         valuationMethod: submission.valuation_method,
         approvedValuationUsd: submission.approved_valuation_usd,
+        appraisalId: appraisal.id,
         metadataCid: publication?.cid ?? null,
         metadataConfirmedBy: publication?.confirmedBy ?? null,
         imageCid: image?.cid ?? null,
@@ -320,11 +485,13 @@ export async function prepareSellerSubmission(
 }
 
 /**
- * The gem id from a registration whose receipt was already recorded.
+ * The gem id from a registration whose hash was already recorded.
  *
  * Exact where the log scan is a search: the transaction hash names the one
- * transaction that could have registered this stone. Recorded before anything
- * else is written, so it survives the failure the scan exists to recover from.
+ * transaction that could have registered this stone. The hash is recorded at
+ * broadcast, before the receipt, so it survives the failure the scan exists to
+ * recover from — including a transaction that is still pending, which must stop
+ * the retry rather than read as "never registered".
  */
 async function gemIdFromRecordedTx(
   chain: ReturnType<typeof operatorChain>,
@@ -335,10 +502,22 @@ async function gemIdFromRecordedTx(
   const receipt = await chain.publicClient
     .getTransactionReceipt({ hash: hash as Hash })
     .catch(() => undefined);
-  // A hash the node cannot find is a transaction that never landed — dropped
-  // from the mempool, or replaced. Registering again is then correct, so this
-  // falls through to the scan rather than failing.
-  if (!receipt || receipt.status !== 'success') return undefined;
+  if (!receipt) {
+    const pending = await chain.publicClient
+      .getTransaction({ hash: hash as Hash })
+      .catch(() => undefined);
+    if (pending) {
+      throw new Error(
+        `Registration transaction ${hash} is still pending; retry once it is mined rather than registering again`,
+      );
+    }
+    // A hash the node cannot find at all is a transaction that never landed —
+    // dropped from the mempool, or replaced. Registering again is then
+    // correct, so this falls through to the scan rather than failing.
+    return undefined;
+  }
+  // A reverted registration registered nothing.
+  if (receipt.status !== 'success') return undefined;
   const event = parseEventLogs({
     abi: gemRegistryAbi,
     eventName: 'GemRegistered',
@@ -419,20 +598,7 @@ async function persistStep(
    * Failure here is ignored on purpose: the step really did happen, and losing
    * the lease is recoverable while losing the record of the step is not.
    */
-  await renewOperatorLease(admin, submissionId);
-}
-
-/** Extends the lease, but only for the activation already holding it. */
-async function renewOperatorLease(admin: AdminClient, submissionId: string): Promise<void> {
-  const now = new Date();
-  await admin
-    .from('protocol_operator_leases')
-    .update({
-      expires_at: new Date(now.getTime() + OPERATOR_LEASE_MS).toISOString(),
-      updated_at: now.toISOString(),
-    })
-    .eq('lease_name', 'sepolia-seller-activation')
-    .eq('holder_id', submissionId);
+  await renewSharedOperatorLease(admin, submissionId, OPERATOR_LEASE_MS);
 }
 
 /**
@@ -449,33 +615,9 @@ async function renewOperatorLease(admin: AdminClient, submissionId: string): Pro
 const OPERATOR_LEASE_MS = 15 * 60_000;
 
 async function claimOperatorLease(admin: AdminClient, submissionId: string): Promise<void> {
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + OPERATOR_LEASE_MS).toISOString();
-  const { data, error } = await admin
-    .from('protocol_operator_leases')
-    .update({
-      holder_id: submissionId,
-      expires_at: expiresAt,
-      updated_at: now.toISOString(),
-    })
-    .eq('lease_name', 'sepolia-seller-activation')
-    .or(`expires_at.lt.${now.toISOString()},holder_id.eq.${submissionId}`)
-    .select('lease_name')
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('Sepolia seller operator is busy; retry activation shortly');
-}
-
-async function releaseOperatorLease(admin: AdminClient, submissionId: string): Promise<void> {
-  await admin
-    .from('protocol_operator_leases')
-    .update({
-      holder_id: null,
-      expires_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('lease_name', 'sepolia-seller-activation')
-    .eq('holder_id', submissionId);
+  if (!(await claimSharedOperatorLease(admin, submissionId, OPERATOR_LEASE_MS))) {
+    throw new Error('The protocol operator is busy; retry activation shortly');
+  }
 }
 
 /**
@@ -501,15 +643,9 @@ export async function activateSellerSubmission(
   let submission: SellerSubmission;
   try {
     submission = await prepareSellerSubmission(admin, submissionId, options);
-    if (
-      !submission.certificate_hash ||
-      !submission.valuation_hash ||
-      !submission.valuation_matrix_hash ||
-      !submission.approved_valuation_usd
-    ) {
-      throw new Error('Seller activation package is incomplete');
-    }
   } catch (error) {
+    // Another run owns the row; its state is not this caller's to overwrite.
+    if (error instanceof ActivationInProgressError) throw error;
     const message = safeErrorMessage(error, 'Seller activation could not be prepared');
     await persistStep(admin, submissionId, {
       activation_state: 'failed',
@@ -520,11 +656,9 @@ export async function activateSellerSubmission(
   }
   const chain = operatorChain();
   await assertOperatorChain(chain);
-  const seller = getAddress(submission.seller_wallet);
-  const priceUsd = BigInt(submission.approved_valuation_usd);
-  let latestHash: Hash | undefined;
   const startedAt = new Date().toISOString();
-  const staleBefore = Date.now() - 5 * 60_000;
+  const staleBefore = Date.now() - STALE_ACTIVATION_MS;
+  const priorAttempts = submission.activation_attempts;
   let claim = admin
     .from('seller_submissions')
     .update({
@@ -545,7 +679,32 @@ export async function activateSellerSubmission(
   }
   const { data: claimed, error: claimError } = await claim.select('id').maybeSingle();
   if (claimError) throw claimError;
-  if (!claimed) throw new Error('Seller activation is already in progress');
+  if (!claimed) throw new ActivationInProgressError();
+
+  /*
+   * Everything below acts on the row as stored once this run owns it. A
+   * concurrent preparation may have rewritten the package between this run's
+   * own preparation and its claim; the stored package is the one recovery will
+   * later compare the chain against, so it is the one that must be sent.
+   */
+  submission = await loadSubmission(admin, submissionId);
+  if (
+    !submission.certificate_hash ||
+    !submission.valuation_hash ||
+    !submission.valuation_matrix_hash ||
+    !submission.approved_valuation_usd
+  ) {
+    await persistStep(admin, submissionId, {
+      activation_state: 'failed',
+      activation_error: 'Seller activation package is incomplete',
+      activation_started_at: null,
+    });
+    throw new Error('Seller activation package is incomplete');
+  }
+  const seller = getAddress(submission.seller_wallet);
+  // Exact: read `::text` and refused if it ever arrives as a JSON number.
+  const priceUsd = exactUint(submission.approved_valuation_usd, 'Approved valuation');
+  let latestHash: Hash | undefined;
 
   let operatorLeaseClaimed = false;
   try {
@@ -566,20 +725,22 @@ export async function activateSellerSubmission(
       });
     }
 
-    let gemId = submission.onchain_gem_id ? BigInt(submission.onchain_gem_id) : undefined;
-    if (!gemId && submission.activation_attempts > 0) {
+    let gemId = submission.onchain_gem_id
+      ? exactUint(submission.onchain_gem_id, 'On-chain gem id')
+      : undefined;
+    if (!gemId && (priorAttempts > 0 || registrationMayHaveBeenSent(submission))) {
       gemId = await recoverRegisteredGem(chain, submission);
     }
     if (!gemId) {
       /*
-       * Two writes before the registration, both cheap and both about being able
-       * to find it again afterwards.
+       * Two writes around the registration, both about being able to find it
+       * again afterwards.
        *
        * The floor is recorded first because it must survive the broadcast
        * itself failing to return. `registerGem` is not idempotent and the
        * registry enforces no uniqueness, so a registration that lands while this
        * process dies is a stone that gets registered twice unless the retry can
-       * locate it.
+       * locate it. It also closes seller withdrawal from this point on.
        */
       if (
         submission.registration_scan_from_block === null ||
@@ -590,17 +751,32 @@ export async function activateSellerSubmission(
         });
       }
 
-      latestHash = await writeAndConfirm(chain, {
-        address: chain.addresses.registry,
-        abi: gemRegistryAbi,
-        functionName: 'registerGem',
-        args: [seller, chain.account.address, submission.metadata_uri, submission.certificate_hash],
-      });
-
-      // The hash on its own, before anything that could fail. It was previously
-      // written in the same statement as the gem id, so the one value that makes
-      // recovery exact was lost by precisely the failure it was needed for.
-      await persistStep(admin, submissionId, { registration_tx_hash: latestHash });
+      /*
+       * The hash is persisted at broadcast, through the same lifecycle callback
+       * gift and redemption writes use, not after the receipt. Written after the
+       * receipt it was missing for the whole confirmation window, which is when
+       * a seller could still withdraw a stone that was already registered, and
+       * when a timed-out wait left recovery with nothing exact to go on.
+       */
+      latestHash = await writeAndConfirm(
+        chain,
+        {
+          address: chain.addresses.registry,
+          abi: gemRegistryAbi,
+          functionName: 'registerGem',
+          args: [
+            seller,
+            chain.account.address,
+            submission.metadata_uri,
+            submission.certificate_hash,
+          ],
+        },
+        {
+          onSubmitted: async (hash) => {
+            await persistStep(admin, submissionId, { registration_tx_hash: hash });
+          },
+        },
+      );
 
       const receipt = await chain.publicClient.getTransactionReceipt({ hash: latestHash });
       const event = parseEventLogs({
@@ -742,6 +918,6 @@ export async function activateSellerSubmission(
     );
     throw error;
   } finally {
-    if (operatorLeaseClaimed) await releaseOperatorLease(admin, submissionId);
+    if (operatorLeaseClaimed) await releaseSharedOperatorLease(admin, submissionId);
   }
 }
