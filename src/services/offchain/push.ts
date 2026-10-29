@@ -108,7 +108,9 @@ export async function enablePush(): Promise<PushState> {
   });
 
   const { data } = await supabase.auth.getUser();
-  if (!data.user) {
+  // An anonymous session cannot register a device (RLS refuses it), and has no
+  // person to notify anyway.
+  if (!data.user || data.user.is_anonymous) {
     // Do not leave a local subscription that has no server row. On the next
     // visit `pushState` would otherwise report "subscribed" even though no
     // notification could ever reach this device.
@@ -144,6 +146,13 @@ export async function enablePush(): Promise<PushState> {
    */
   if (error) {
     await subscription.unsubscribe().catch(() => undefined);
+    // The server accepts only the major browsers' push services (an SSRF
+    // guard, migration 202610300303). Retrying cannot fix that, so say so.
+    if (String(error.message ?? '').includes('push_endpoint_not_allowed')) {
+      throw new Error(
+        "This browser's push service is not supported. Try Chrome, Edge, Firefox or Safari.",
+      );
+    }
     throw new Error(
       'Notifications could not be registered on the server. Check your connection and try again.',
     );

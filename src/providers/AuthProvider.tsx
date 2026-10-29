@@ -68,6 +68,17 @@ export interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/**
+ * The session, unless it is an anonymous sign-in.
+ *
+ * Nothing in the app signs in anonymously, and the backend now refuses those
+ * sessions everywhere (Edge Functions and RLS). One left in storage from before
+ * that change would otherwise look signed in while every request failed.
+ */
+export function accountSession(session: Session | null): Session | null {
+  return session?.user?.is_anonymous === true ? null : session;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { signMessageAsync } = useSignMessage();
   const { address: connectedAddress, connector } = useAccount();
@@ -150,14 +161,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
+    const client = supabase;
+    // Deferred: calling back into auth from inside onAuthStateChange can
+    // deadlock on supabase-js's session lock.
+    const dropAnonymous = (raw: Session | null) => {
+      if (raw && !accountSession(raw)) {
+        setTimeout(() => void client.auth.signOut({ scope: 'local' }).catch(() => undefined), 0);
+      }
+    };
+    client.auth.getSession().then(({ data }) => {
       if (!mounted) return;
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-      if (data.session?.user) void loadPrimaryWallet(data.session.user.id);
+      dropAnonymous(data.session);
+      const current = accountSession(data.session);
+      setSession(current);
+      setUser(current?.user ?? null);
+      if (current?.user) void loadPrimaryWallet(current.user.id);
       setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: sub } = client.auth.onAuthStateChange((_event, raw) => {
+      dropAnonymous(raw);
+      const s = accountSession(raw);
       setSession(s);
       setUser(s?.user ?? null);
       if (s?.user) {

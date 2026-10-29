@@ -74,6 +74,53 @@ export class PushGoneError extends Error {
   }
 }
 
+/**
+ * Push services a browser can hand out an endpoint for.
+ *
+ * The endpoint is written by the browser, i.e. by whoever holds the session, so
+ * without this the sweep would POST to any URL a user stored: an internal
+ * address, a metadata service, someone else's API. The same list is enforced
+ * when the row is written (migration 202610300303); this is the second check,
+ * for rows written before it.
+ *
+ *   FCM            Chrome, Edge on Android, Samsung Internet, Opera, Brave
+ *   Mozilla        Firefox
+ *   Apple          Safari on macOS and iOS (Home Screen web apps)
+ *   Windows (WNS)  Edge on Windows
+ */
+export const PUSH_SERVICE_HOSTS = [
+  'fcm.googleapis.com',
+  'push.services.mozilla.com',
+  'push.apple.com',
+  'notify.windows.com',
+] as const;
+
+/** Whether `endpoint` is an https URL on a known push service, with no port or credentials. */
+export function isAllowedPushEndpoint(endpoint: string): boolean {
+  if (typeof endpoint !== 'string' || endpoint.length > 2_048) return false;
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port) return false;
+  const host = url.hostname.toLowerCase();
+  return PUSH_SERVICE_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
+/** The endpoint is not on a known push service. Retired like a gone subscription. */
+export class PushEndpointRejectedError extends PushGoneError {
+  constructor() {
+    super(0);
+    this.message = 'Push endpoint is not on a known push service';
+    this.name = 'PushEndpointRejectedError';
+  }
+}
+
+/** How long one device may hold up a send. */
+export const PUSH_TIMEOUT_MS = 5_000;
+
 export function pushConfigured(): boolean {
   return Boolean(
     Deno.env.get('VAPID_PUBLIC_KEY')?.trim() && Deno.env.get('VAPID_PRIVATE_KEY')?.trim(),
@@ -214,14 +261,20 @@ export interface PushMessage {
  *
  * Throws {@link PushGoneError} when the push service says the subscription is
  * dead, which is a normal end-of-life for a device rather than a fault: the
- * caller should retire the row and carry on with the other devices.
+ * caller should retire the row and carry on with the other devices. An
+ * endpoint off the allowlist throws {@link PushEndpointRejectedError} (a
+ * `PushGoneError`) without any request being made.
+ *
+ * Bounded by {@link PUSH_TIMEOUT_MS}, body included. Without it one push service
+ * that accepted the connection and never answered held the whole sweep.
  */
 export async function sendPush(
   subscription: PushSubscription,
   message: PushMessage,
-  options: { subject?: string; ttlSeconds?: number } = {},
+  options: { subject?: string; ttlSeconds?: number; timeoutMs?: number } = {},
 ): Promise<void> {
   if (!pushConfigured()) throw new Error('Web Push is not configured');
+  if (!isAllowedPushEndpoint(subscription.endpoint)) throw new PushEndpointRejectedError();
 
   const payload = await encryptPayload(subscription, JSON.stringify(message));
   const response = await fetch(subscription.endpoint, {
@@ -241,6 +294,8 @@ export async function sendPush(
       Urgency: 'normal',
     },
     body: payload as BodyInit,
+    redirect: 'error',
+    signal: AbortSignal.timeout(options.timeoutMs ?? PUSH_TIMEOUT_MS),
   });
 
   if (response.status === 404 || response.status === 410) {

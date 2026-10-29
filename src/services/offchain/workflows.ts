@@ -89,24 +89,79 @@ async function uploadEvidence(
   }
 }
 
+const KYC_STATUSES: readonly KycStatus[] = [
+  'not_started',
+  'pending',
+  'approved',
+  'rejected',
+  'on_hold',
+];
+
+/**
+ * The signed-in user's KYC status.
+ *
+ * Read from `kyc_profiles`, the table the Sumsub webhook writes (migration
+ * 202610300302). The old read of `kyc_status` named a legacy table nothing
+ * wrote, so the page always showed "not started". A failed read now surfaces as
+ * an error instead of looking like an unverified account.
+ */
 export async function getKycStatus(): Promise<KycStatus> {
   const client = requireClient();
   const {
     data: { user },
   } = await client.auth.getUser();
-  if (!user) return 'not_started';
-  const { data } = await client
-    .from('kyc_status')
+  if (!user || user.is_anonymous) return 'not_started';
+  const { data, error } = await client
+    .from('kyc_profiles')
     .select('status')
-    .eq('user_id', user.id)
+    .eq('profile_id', user.id)
     .maybeSingle();
-  const status = data?.status;
-  if (!status || status === 'none') return 'not_started';
-  return status as KycStatus;
+  if (error) throw new Error('Could not load your verification status.');
+  const status = data?.status as KycStatus | undefined;
+  return status && KYC_STATUSES.includes(status) ? status : 'not_started';
 }
 
-export async function issueSumsubToken(): Promise<{ token: string; expiresIn: number }> {
-  return invokeEdgeFunction<{ token: string; expiresIn: number }>('v1-sumsub-token');
+export interface SumsubToken {
+  token: string;
+  expiresIn: number;
+}
+
+export async function issueSumsubToken(): Promise<SumsubToken> {
+  const result = await invokeEdgeFunction<SumsubToken>('v1-sumsub-token');
+  if (!result || typeof result.token !== 'string' || !result.token) {
+    throw new Error('Identity verification could not be started. Try again.');
+  }
+  return result;
+}
+
+/** What the Sumsub WebSDK needs to open: a token, and a way to get the next one. */
+export interface KycSession {
+  accessToken: string;
+  /** When `accessToken` stops working, in ms since the epoch. */
+  expiresAt: number;
+  /**
+   * The WebSDK's `expirationHandler`: called when the token lapses mid-flow,
+   * resolves to a fresh token for the same applicant.
+   */
+  refreshToken: () => Promise<string>;
+}
+
+/**
+ * Starts (or resumes) identity verification for the signed-in user.
+ *
+ * Mints a short-lived Sumsub access token through `v1-sumsub-token`, which also
+ * creates the user's `kyc_profiles` row as `pending`. Hand the result to
+ * `<SumsubWebSdk accessToken={session.accessToken}
+ * expirationHandler={session.refreshToken} />`. The decision arrives by
+ * webhook; `getKycStatus` (polled by `useKyc`) picks it up.
+ */
+export async function beginKyc(): Promise<KycSession> {
+  const first = await issueSumsubToken();
+  return {
+    accessToken: first.token,
+    expiresAt: Date.now() + first.expiresIn * 1_000,
+    refreshToken: async () => (await issueSumsubToken()).token,
+  };
 }
 
 export interface SellerSubmissionResult {

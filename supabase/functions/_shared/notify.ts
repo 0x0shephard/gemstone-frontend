@@ -3,6 +3,7 @@ import { canonicalSiteOrigin } from './origins.ts';
 import { EmailNotConfiguredError, emailConfigured, escapeHtml, sendEmail } from './email.ts';
 import { PushGoneError, pushConfigured, sendPush } from './webpush.ts';
 import { protocolDeploymentId } from './deployment.ts';
+import { configuredChainId, walletLinkTrustedOn } from './authPolicy.ts';
 
 /**
  * Delivering a notification to whoever holds a wallet.
@@ -81,10 +82,20 @@ export async function notifyWallet(
   // starting them from empty.
   const { data: link } = await admin
     .from('wallet_links')
-    .select('profile_id')
+    .select('profile_id,chain_id,signature_kind')
     .eq('wallet_address', wallet)
     .maybeSingle();
-  const profileId = (link?.profile_id as string | null) ?? null;
+  /*
+   * A contract wallet proven on another chain is not this chain's owner of the
+   * address, so its account must not receive this chain's notices (they name
+   * offers, deadlines and redemption details). The row is still written, to the
+   * wallet alone, and attaches once the address is linked on this chain.
+   */
+  const trusted = walletLinkTrustedOn(
+    link as { chain_id: number | null; signature_kind: string | null } | null,
+    configuredChainId(Deno.env.get('CHAIN_ID')),
+  );
+  const profileId = trusted ? ((link?.profile_id as string | null) ?? null) : null;
 
   const { data: row, error } = await admin
     .from('notifications')
@@ -223,6 +234,31 @@ async function retryUndeliveredEmail(
   return { created: false, emailed: true, pushed: 0 };
 }
 
+/** Devices pushed to at once for one notification. */
+export const PUSH_CONCURRENCY = 4;
+
+/**
+ * Runs `task` over `items` with at most `limit` in flight, in input order of
+ * start. Never rejects: each task handles its own failure.
+ */
+export async function forEachConcurrently<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await task(item).catch(() => undefined);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, () => worker()),
+  );
+}
+
 /**
  * Pushes to every device this account has registered.
  *
@@ -230,6 +266,10 @@ async function retryUndeliveredEmail(
  * subscriptions and both should ring. Failures are per device and never
  * propagate — one dead endpoint must not stop the others, and none of it can be
  * allowed to fail the notification itself, which is already recorded.
+ *
+ * Concurrent, at most {@link PUSH_CONCURRENCY} at a time, and each send is
+ * bounded by `sendPush`'s own timeout. Sequential sends with no timeout let one
+ * stalled push service hold the sweep for as long as it liked.
  */
 async function pushToDevices(
   admin: SupabaseClient,
@@ -256,7 +296,7 @@ async function pushToDevices(
   };
 
   let delivered = 0;
-  for (const device of devices) {
+  await forEachConcurrently(devices, PUSH_CONCURRENCY, async (device) => {
     try {
       await sendPush(
         {
@@ -283,7 +323,7 @@ async function pushToDevices(
       // Anything else is transient as far as this run is concerned. The
       // notification is in the feed either way.
     }
-  }
+  });
 
   if (delivered > 0) {
     await admin
@@ -403,16 +443,20 @@ export async function reconcileNotificationProfileLinks(
 
   const { data: links, error: linkError } = await admin
     .from('wallet_links')
-    .select('wallet_address,profile_id')
+    .select('wallet_address,profile_id,chain_id,signature_kind')
     .in('wallet_address', wallets);
   if (linkError) throw linkError;
 
+  const chainId = configuredChainId(Deno.env.get('CHAIN_ID'));
   let linked = 0;
   await Promise.all(
     (links ?? []).map(async (link) => {
       const wallet = normalizeWallet(String(link.wallet_address ?? ''));
       const profileId = String(link.profile_id ?? '');
       if (!wallet || !profileId) return;
+      // Same rule as `notifyWallet`: a contract wallet linked on another chain
+      // does not own this chain's notices.
+      if (!walletLinkTrustedOn(link, chainId)) return;
       const { data, error } = await admin
         .from('notifications')
         .update({ profile_id: profileId })
