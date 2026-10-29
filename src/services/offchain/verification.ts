@@ -1,5 +1,6 @@
 import { usdFromBaseUnits as usdFromBase } from '@/lib/format';
 import { invokeEdgeFunction } from './invoke';
+import type { SellerWorkflowView } from './operations';
 
 /**
  * Verification portal client.
@@ -212,12 +213,37 @@ export async function recordCustodyTerm(input: {
   });
 }
 
-/** Refuses a stone. Writes nothing on-chain and pins nothing. */
-export async function rejectSubmission(
-  submissionId: string,
-  reason: string,
-): Promise<{ status: string }> {
-  return invoke('v1-verification-grade', { submissionId, action: 'reject', reason });
+/** Bounds the server enforces on a rejection reason. */
+export const REJECTION_REASON_MIN = 10;
+export const REJECTION_REASON_MAX = 2_000;
+
+/**
+ * Refuses a stone. Writes nothing on-chain and pins nothing.
+ *
+ * Sent to the versioned gem-lab workflow (#15). The grade endpoint it used to
+ * call is retired and answers 410 on the Arbitrum deployment. The status
+ * change and the `gem_rejected` workflow event commit together server-side,
+ * guarded by the workflow version the reviewer was looking at.
+ */
+export async function rejectSubmission(input: {
+  submissionId: string;
+  reason: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+}): Promise<{ submissionId: string; status: 'rejected'; workflow?: SellerWorkflowView }> {
+  const reason = input.reason.trim();
+  if (reason.length < REJECTION_REASON_MIN || reason.length > REJECTION_REASON_MAX) {
+    throw new Error(
+      `Give a rejection reason of ${REJECTION_REASON_MIN} to ${REJECTION_REASON_MAX} characters.`,
+    );
+  }
+  return invoke('v1-gemlab-workflow', {
+    action: 'reject',
+    submissionId: input.submissionId,
+    reason,
+    idempotencyKey: input.idempotencyKey,
+    expectedVersion: input.expectedVersion,
+  });
 }
 
 export const ppmToNumber = (ppm: string): number => Number(ppm) / 1_000_000;

@@ -48,6 +48,23 @@ export class EdgeFunctionOutcomeUnknownError extends Error {
   }
 }
 
+/**
+ * A definite rejection from an Edge Function, carrying the server's own message
+ * and, when known, its HTTP status. Callers that branch on the status (a 503
+ * for an unconfigured provider, a 409 for "not yet") read `status`; everyone
+ * else sees an ordinary `Error` with the server's explanation.
+ */
+export class EdgeFunctionError extends Error {
+  constructor(
+    readonly functionName: string,
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'EdgeFunctionError';
+  }
+}
+
 /** Pulls `{ error }` out of an unread error response body, if there is one. */
 async function bodyMessage(error: unknown): Promise<string | undefined> {
   const context = (error as { context?: unknown } | null)?.context;
@@ -113,5 +130,5 @@ export async function invokeEdgeFunction<T>(
   recordDiagnostic('server', `${name}: ${message}`, {
     status: typeof status === 'number' ? status : null,
   });
-  throw new Error(message);
+  throw new EdgeFunctionError(name, message, typeof status === 'number' ? status : undefined);
 }

@@ -62,6 +62,22 @@ function stageList(
   });
 }
 
+/** The gem lab's refusal, from the `gem_rejected` workflow event (#15). */
+function rejectionOf(workflow: SellerWorkflowView): WorkflowEventView | undefined {
+  return [...workflow.events]
+    .reverse()
+    .find((event) => event.type === 'gem_rejected' || event.toState === 'rejected');
+}
+
+function rejectionReason(event: WorkflowEventView | undefined): string | undefined {
+  const reason = event?.payload?.reason;
+  return typeof reason === 'string' && reason.trim() ? reason.trim() : undefined;
+}
+
+const EVENT_LABEL: Record<string, string> = {
+  gem_rejected: 'Rejected by gem lab',
+};
+
 export function eventPresentation(events: WorkflowEventView[]): LifecycleEvent[] {
   const correctionTargets = new Map(
     events
@@ -72,8 +88,10 @@ export function eventPresentation(events: WorkflowEventView[]): LifecycleEvent[]
     .sort((left, right) => right.sequence - left.sequence)
     .map((event) => ({
       id: event.id,
-      label: event.type.replaceAll('_', ' '),
-      detail: event.correctionReason ?? undefined,
+      label: EVENT_LABEL[event.type] ?? event.type.replaceAll('_', ' '),
+      detail:
+        event.correctionReason ??
+        (event.type === 'gem_rejected' ? rejectionReason(event) : undefined),
       occurredAt: event.occurredAt,
       actorLabel: event.actorLabel,
       correctionOf: event.supersedesEventId ?? undefined,
@@ -92,6 +110,29 @@ export function redemptionLifecycleStages(workflow: RedemptionTracker): Lifecycl
 }
 
 export function sellerLifecycleStages(workflow: SellerWorkflowView): LifecycleStage[] {
+  const rejection = rejectionOf(workflow);
+  if (workflow.state === 'rejected' || rejection) {
+    /*
+     * A rejected stone stops at submission: nothing after it will happen, so
+     * the remaining stages are not shown as pending work. The terminal stage
+     * carries the lab's reason.
+     */
+    return [
+      {
+        key: 'submitted',
+        label: 'Seller submission',
+        state: 'complete',
+        occurredAt: workflow.events.find((event) => event.toState === 'submitted')?.occurredAt,
+      },
+      {
+        key: 'rejected',
+        label: 'Rejected by gem lab',
+        state: 'attention',
+        occurredAt: rejection?.occurredAt,
+        detail: rejectionReason(rejection) ?? 'The gem lab declined this stone.',
+      },
+    ];
+  }
   const stages = stageList(sellerStages, workflow.state, workflow.events, workflow.legacyBaseline);
   const latest = (match: (event: WorkflowEventView) => boolean) =>
     [...workflow.events].reverse().find(match);

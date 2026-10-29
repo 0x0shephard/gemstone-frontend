@@ -40,6 +40,7 @@ const SUBMIT_OUTCOME: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = {
   awaiting_custody: 'Awaiting arrival',
   awaiting_grading: 'Awaiting lab review',
+  rejected: 'Rejected by the gem lab',
   withdrawn: 'Withdrawn',
 };
 
@@ -224,16 +225,27 @@ export default function SellerPage() {
     setActivationId(submissionId);
     setResult(undefined);
     try {
-      await activateSellerGem(submissionId);
-      setResult({
-        ok: true,
-        message: `Activation on ${activeChain.name} completed.`,
-      });
+      const outcome = await activateSellerGem(submissionId);
+      /*
+       * Activation is run by Digital Carat after the vault records receipt, so
+       * "not yet" comes back as the server's explanation (a 409). It is shown
+       * as information: nothing failed and there is nothing to retry.
+       */
+      setResult(
+        outcome.waiting
+          ? { ok: true, message: outcome.waiting }
+          : outcome.onchainGemId
+            ? {
+                ok: true,
+                message: `Activated on ${activeChain.name} as gem #${outcome.onchainGemId}.`,
+              }
+            : { ok: true, message: 'Activation is in progress. Check back shortly.' },
+      );
       await reloadSubmissions();
     } catch (error) {
       setResult({
         ok: false,
-        message: error instanceof Error ? error.message : 'Activation retry failed',
+        message: error instanceof Error ? error.message : 'Activation status could not be checked',
       });
       // A failed attempt still advances `activation_state` and `activation_error`.
       // Without this the row keeps rendering the previous failure beside a banner
@@ -542,7 +554,7 @@ export default function SellerPage() {
                         disabled={activationId === submission.id}
                         onClick={() => void retryActivation(submission.id)}
                       >
-                        {activationId === submission.id ? 'Activating…' : 'Retry activation'}
+                        {activationId === submission.id ? 'Checking…' : 'Check activation'}
                       </Button>
                     )}
                     {resumable && (

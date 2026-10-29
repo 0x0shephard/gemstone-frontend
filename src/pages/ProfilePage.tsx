@@ -21,6 +21,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { TransactionHistory } from '@/components/tx/TransactionHistory';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { KycStatus } from '@/components/kyc/KycStatus';
+import { KycVerifyButton } from '@/components/kyc/KycVerifyButton';
 import { CountdownBadge } from '@/components/ui/CountdownBadge';
 import { GemThumb } from '@/components/gem/GemThumb';
 import { Card } from '@/components/ui/Card';
@@ -118,6 +119,7 @@ export default function ProfilePage() {
             {user ? 'Email verified' : 'Not signed in'}
           </StatusBadge>
           <KycStatus status={kyc} />
+          {user && !user.is_anonymous && <KycVerifyButton status={kyc} />}
         </div>
       </Card>
 

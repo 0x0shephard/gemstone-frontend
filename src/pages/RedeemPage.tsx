@@ -623,11 +623,12 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
       )}
 
       {/*
-        Not in `accepted`: the server refuses a proxy nomination until the vault
-        custodian has collected the stone, so the form could only ever fail there.
+        Only in `onchain_requested`. The server refuses a nomination once the
+        request has been accepted, so offering the form there (as the
+        capability alone did) produced a form that could only fail.
       */}
       {capabilities.has('prepare_proxy_nomination') &&
-        request.status !== 'accepted' &&
+        request.status === 'onchain_requested' &&
         !preparedProxy && (
           <div className="space-y-3 border-t border-line/[0.07] pt-4">
             <div>

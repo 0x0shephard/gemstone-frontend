@@ -194,3 +194,33 @@ describe('owner redemption finalization', () => {
     );
   });
 });
+
+describe('pickup proxy nomination', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.resume.mockResolvedValue(null);
+  });
+
+  it.each([
+    ['onchain_requested', true],
+    // The server refuses a nomination once the request is accepted.
+    ['accepted', false],
+  ] as const)('in %s, shows the form: %s', async (status, shown) => {
+    const value = {
+      ...tracker,
+      status,
+      authorization: undefined,
+      capabilities: ['prepare_proxy_nomination'],
+    };
+    mocks.loadDetail.mockResolvedValue(value);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <OwnerRedemptionCard summary={value} />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(mocks.loadDetail).toHaveBeenCalled());
+    expect(Boolean(screen.queryByText('Nominate a pickup proxy'))).toBe(shown);
+  });
+});

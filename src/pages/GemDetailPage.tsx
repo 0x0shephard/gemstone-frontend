@@ -482,7 +482,7 @@ export default function GemDetailPage() {
                       </Button>
                     </>
                   )}
-                  {!gem.funded && gem.tokenId !== undefined && (
+                  {!gem.funded && (
                     <Button
                       variant="ghost"
                       className="col-span-2"

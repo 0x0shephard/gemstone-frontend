@@ -1,5 +1,5 @@
 import type { Hash } from 'viem';
-import { invokeEdgeFunction, requireClient } from './invoke';
+import { EdgeFunctionError, invokeEdgeFunction, requireClient } from './invoke';
 
 export type KycStatus = 'not_started' | 'pending' | 'approved' | 'rejected' | 'on_hold';
 
@@ -208,10 +208,25 @@ export interface SellerSubmissionSummary {
   activationState?: string;
   activationError?: string;
   valuationMethod?: string;
-  approvedValuationUsd?: string;
+  /** Exact 18-decimal USD, read as text and parsed as an integer; never a float. */
+  approvedValuationUsd?: bigint;
   /** Set by a grading lab when it refuses the stone. Visible to the seller. */
   rejectionReason?: string;
   createdAt: string;
+}
+
+/**
+ * Parses a `numeric(78,0)` column read with `::text` into an exact bigint.
+ *
+ * Only an integer string is accepted. A JS number here means the cast was lost
+ * and the value already rounded as a double (an 18-decimal $2,363 came back as
+ * 2363000000000000262144), so it is dropped rather than passed on as if exact.
+ */
+export function exactUsdBaseUnits(value: unknown): bigint | undefined {
+  if (value === null || value === undefined) return undefined;
+  // Shown as absent rather than as a rounded figure that looks exact.
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return undefined;
+  return BigInt(value);
 }
 
 export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]> {
@@ -242,10 +257,7 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
     activationState: submission.activation_state ?? undefined,
     activationError: submission.activation_error ?? undefined,
     valuationMethod: submission.valuation_method ?? undefined,
-    approvedValuationUsd:
-      submission.approved_valuation_usd === null
-        ? undefined
-        : String(submission.approved_valuation_usd),
+    approvedValuationUsd: exactUsdBaseUnits(submission.approved_valuation_usd),
     rejectionReason: submission.rejection_reason ?? undefined,
     createdAt: submission.created_at,
   }));
@@ -268,8 +280,34 @@ export async function withdrawSellerSubmission(submissionId: string): Promise<vo
   await invokeEdgeFunction('v1-seller-submit', { action: 'withdraw', submissionId });
 }
 
-export async function activateSellerGem(submissionId: string): Promise<void> {
-  await invokeEdgeFunction('v1-seller-activate', { submissionId });
+export interface SellerActivationStatus {
+  submissionId?: string;
+  status?: string;
+  activationState?: string | null;
+  onchainGemId?: string | null;
+}
+
+/**
+ * The seller's view of protocol activation.
+ *
+ * Activation is an administrator step once the vault custodian has recorded
+ * receipt. With the onboarding backend change (#15) this endpoint no longer
+ * runs activation; it reports the result, or answers 409 with an explanation
+ * of who will act. That 409 is a status, not a failure, so it is returned as
+ * `{ waiting }` for the page to show as information rather than as an error.
+ */
+export async function activateSellerGem(
+  submissionId: string,
+): Promise<SellerActivationStatus & { waiting?: string }> {
+  try {
+    return await invokeEdgeFunction<SellerActivationStatus>('v1-seller-activate', {
+      submissionId,
+    });
+  } catch (error) {
+    if (error instanceof EdgeFunctionError && error.status === 409)
+      return { waiting: error.message };
+    throw error;
+  }
 }
 
 export async function createSellerCommitment(

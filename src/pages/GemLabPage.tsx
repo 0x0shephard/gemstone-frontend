@@ -27,6 +27,11 @@ import {
   type GemGradeInput,
   type GemLabQueueItem,
 } from '@/services/offchain/operations';
+import {
+  REJECTION_REASON_MAX,
+  REJECTION_REASON_MIN,
+  rejectSubmission,
+} from '@/services/offchain/verification';
 
 type LabTab = 'queue' | 'matrix';
 
@@ -39,6 +44,72 @@ const EMPTY_GRADE: GemGradeInput = {
   color: '',
   colorGrade: '',
 };
+
+export function RejectStoneForm({
+  submissionId,
+  expectedVersion,
+  onRejected,
+}: {
+  submissionId: string;
+  expectedVersion: number;
+  onRejected: () => Promise<void> | void;
+}) {
+  const [reason, setReason] = useState('');
+  const trimmed = reason.trim();
+  const valid = trimmed.length >= REJECTION_REASON_MIN && trimmed.length <= REJECTION_REASON_MAX;
+  const reject = useMutation({
+    mutationFn: async () => {
+      const intent = `gemlab:${submissionId}:reject`;
+      const result = await rejectSubmission({
+        submissionId,
+        reason: trimmed,
+        expectedVersion,
+        idempotencyKey: operationIdempotencyKey(intent),
+      });
+      clearOperationIdempotencyKey(intent);
+      return result;
+    },
+    onSuccess: () => onRejected(),
+  });
+  return (
+    <form
+      className="space-y-3 border-t border-line/[0.07] pt-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (valid) reject.mutate();
+      }}
+    >
+      <div>
+        <h4 className="text-[13px] font-semibold text-ink">Reject this stone</h4>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+          Nothing is written on-chain or pinned. The seller sees this reason on their portal.
+        </p>
+      </div>
+      <label className="block">
+        <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
+          Reason for rejection
+        </span>
+        <textarea
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          maxLength={REJECTION_REASON_MAX}
+          rows={3}
+          className={inputClass}
+        />
+      </label>
+      {reject.error && (
+        <p role="alert" className="text-[12px] text-ruby">
+          {reject.error instanceof Error
+            ? reject.error.message
+            : 'The stone could not be rejected.'}
+        </p>
+      )}
+      <Button type="submit" size="sm" variant="danger" disabled={!valid || reject.isPending}>
+        {reject.isPending ? 'Rejecting…' : 'Reject stone'}
+      </Button>
+    </form>
+  );
+}
 
 export default function GemLabPage() {
   return (
@@ -232,6 +303,24 @@ function GemLabWorkspace() {
                   appraisal.mutate();
                 }}
               />
+
+              {/*
+                Offered only when the server lists `reject` as a next action,
+                which it does once the gem-lab reject path (#15) is deployed.
+                Before that the retired endpoint would answer 410.
+              */}
+              {has('gemlab.appraise') &&
+                detailQuery.data.workflow.nextActions.includes('reject') && (
+                  <RejectStoneForm
+                    submissionId={detailQuery.data.submission.submissionId}
+                    expectedVersion={detailQuery.data.workflow.version}
+                    onRejected={async () => {
+                      setMessage('Stone rejected. The seller sees the reason on their portal.');
+                      setSelected(undefined);
+                      await queryClient.invalidateQueries({ queryKey: ['operations', 'gemlab'] });
+                    }}
+                  />
+                )}
 
               <LifecycleTracker
                 title="Submission lifecycle"
