@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isLocalRpc, resolveRpcUrls, SEPOLIA_PUBLIC_RPC } from './rpc';
+import { ARBITRUM_PUBLIC_RPC, isLocalRpc, resolveRpcUrls, SEPOLIA_PUBLIC_RPC } from './rpc';
 
 describe('RPC endpoint resolution', () => {
   it('keeps the configured RPC first and adds a public Sepolia fallback', () => {
@@ -15,6 +15,13 @@ describe('RPC endpoint resolution', () => {
     );
     expect(resolveRpcUrls(11155111, SEPOLIA_PUBLIC_RPC, SEPOLIA_PUBLIC_RPC)).toEqual([
       SEPOLIA_PUBLIC_RPC,
+    ]);
+  });
+
+  it('falls back to the public Arbitrum One endpoint on Arbitrum', () => {
+    expect(resolveRpcUrls(42161, 'https://primary.example', '')).toEqual([
+      'https://primary.example',
+      ARBITRUM_PUBLIC_RPC,
     ]);
   });
 

@@ -10,6 +10,9 @@ export interface EmbeddedDeploymentConfig {
   addresses: Record<string, string>;
   paymentAssets?: {
     nativeEth?: string;
+    /** Real USDC on a mainnet release. */
+    usdc?: string;
+    /** Sepolia's mintable stand-in, with its own feed and faucet. */
     mockUsdc?: string;
     mockUsdcUsdFeed?: string;
     mockUsdcFaucet?: string;

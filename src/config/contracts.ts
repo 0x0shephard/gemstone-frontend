@@ -49,7 +49,8 @@ function parsePublicAsset(value: string | undefined, fallbackKey: string): Addre
 }
 
 export const usdcAddress = parsePublicAsset(
-  embeddedDeploymentConfig?.paymentAssets?.mockUsdc,
+  embeddedDeploymentConfig?.paymentAssets?.usdc ??
+    embeddedDeploymentConfig?.paymentAssets?.mockUsdc,
   'VITE_USDC_ADDRESS',
 );
 export const musdcFaucetAddress = parsePublicAsset(
