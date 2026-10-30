@@ -82,6 +82,9 @@ export const gemRegistryAbi = parseAbi([
   'function verifyGem(uint256 gemId, bytes32 valuationHash, bytes32 valuationMatrixHash, uint256 approvedValuationUsd)',
   'function listGem(uint256 gemId, uint256 priceUsd, uint8 saleMode)',
   'function primarySaleMode(uint256 gemId) view returns (uint8)',
+  // One-way Auction -> SellerMint, only while listed with no live primary auction.
+  'function setPrimarySaleMode(uint256 gemId, uint8 newMode)',
+  'function primaryAuctionActive(uint256 gemId) view returns (bool)',
   'event GemRegistered(uint256 indexed gemId, address indexed seller, address indexed custodian)',
 ]);
 
@@ -98,6 +101,10 @@ export const primarySaleAbi = parseAbi([
   // `_createAuction`, so the sweep can drive it without needing a role.
   'function settleAuction(uint256 gemId) returns (uint256 tokenId)',
   'function auctions(uint256 gemId) view returns (bool exists,bool settled,uint64 startTime,uint64 endTime,uint256 floorUsd,address highestBidder,address paymentAsset,uint256 amount,uint256 usdValue,uint256 reserveUsd)',
+  // Seller route "mint to my wallet". Always mints to the registered seller; the
+  // operator may call it only while nothing (reserve shortfall + fee) is due.
+  'function mintToSeller(uint256 gemId, address paymentAsset, uint256 amount) payable returns (uint256 tokenId)',
+  'function sellerMintDueUsd(uint256 gemId) view returns (uint256 reserveUsd, uint256 feeUsd)',
   'event BidPlaced(uint256 indexed gemId, address indexed bidder, address paymentAsset, uint256 amount, uint256 usdValue)',
   // Read by the notification sweep. A win and a refunded settlement are both
   // things the bidder has to be told: one means they own a stone, the other

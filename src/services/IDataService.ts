@@ -5,6 +5,8 @@ import type {
   Auction,
   Bid,
   BuyListingRequest,
+  MintToSellerRequest,
+  SellerMintDue,
   BuyNowRequest,
   CancelListingRequest,
   CancelRedemptionRequest,
@@ -110,6 +112,8 @@ export interface IDataService {
   getTokenApprovals(tokenIds: bigint[]): Promise<Record<string, Address>>;
 
   buyNow(request: BuyNowRequest): Promise<TxResult>;
+  getSellerMintDue(gemId: bigint): Promise<SellerMintDue>;
+  mintToSeller(request: MintToSellerRequest): Promise<TxResult>;
   buy(request: BuyListingRequest): Promise<TxResult>;
   list(request: ListRequest): Promise<TxResult>;
   cancelListing(request: CancelListingRequest): Promise<TxResult>;

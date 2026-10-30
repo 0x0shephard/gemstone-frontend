@@ -8,6 +8,12 @@ import { requireProtocolDeployment } from '../_shared/deployment.ts';
 import { configuredChainId } from '../_shared/network.ts';
 import { sellerActivationRefusal } from '../_shared/sellerOnboarding.ts';
 import { sellerWithdrawalBlocker } from '../_shared/sellerWithdrawal.ts';
+import {
+  SellerMintSwitchRefused,
+  switchSubmissionToSellerMint,
+  syncSellerMint,
+} from '../_shared/sellerAutomation.ts';
+import { requestedSaleMode } from '../_shared/sellerMintRules.ts';
 import { appendWorkflowEvent, loadProjection } from '../_shared/workflowEvents.ts';
 
 const walletPattern = /^0x[0-9a-f]{40}$/;
@@ -218,6 +224,30 @@ Deno.serve(async (request) => {
       return json({ submissionId, status: 'withdrawn' });
     }
 
+    if (body.action === 'switch_to_mint' || body.action === 'sync_mint') {
+      // "Mint to my wallet": switch an unbid auction stone, or record a mint the
+      // seller paid for and signed themselves. Both re-read the chain; nothing
+      // from the request is trusted beyond which of the seller's submissions.
+      const admin = adminClient();
+      await requireProtocolDeployment(admin, request);
+      const submissionId = String(body.submissionId ?? '');
+      if (!uuidPattern.test(submissionId)) return json({ error: 'Submission is invalid' }, 400);
+      try {
+        const result =
+          body.action === 'switch_to_mint'
+            ? await switchSubmissionToSellerMint(admin, submissionId, user.id)
+            : await syncSellerMint(admin, submissionId, user.id);
+        return json({
+          submissionId,
+          activationState: result.state,
+          tokenId: result.tokenId?.toString() ?? null,
+        });
+      } catch (error) {
+        if (error instanceof SellerMintSwitchRefused) return json({ error: error.message }, 409);
+        throw error;
+      }
+    }
+
     const sellerWallet = requiredText(body.sellerWallet, 'Seller wallet', 42).toLowerCase();
     if (!walletPattern.test(sellerWallet)) {
       return json({ error: 'Seller wallet is invalid' }, 400);
@@ -358,13 +388,13 @@ Deno.serve(async (request) => {
     }
     const attributes = parseAttributes(body.attributes);
     /*
-     * Auction is the only primary sale route: a gemstone becomes a token only by
-     * being won at auction. Forced here rather than validated, so a direct API
-     * call cannot request buy-now and skip price discovery. The contract agrees
-     * — `buyNow` reverts `WrongPrimarySaleMode` unless the gem was listed in
-     * BuyNow mode, which nothing does any more.
+     * The seller chooses the daily auction or "mint to my wallet". Buy-now is
+     * never offered: anything else, including a direct API call asking for it,
+     * becomes an auction. The contract agrees — `buyNow` reverts
+     * `WrongPrimarySaleMode` unless the gem was listed in BuyNow mode, which
+     * nothing does any more.
      */
-    const saleMode = 'auction';
+    const saleMode = requestedSaleMode(body.saleMode);
     if (
       !['protocol_custodian', 'approved_existing_custodian'].includes(
         String(body.custodyPreference),

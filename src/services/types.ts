@@ -281,6 +281,18 @@ export interface TxResult {
   status: 'success';
 }
 
+/** Seller-paid "mint to my wallet": pays the reserve shortfall plus the mint fee. */
+export interface MintToSellerRequest {
+  gemId: bigint;
+  paymentAsset: Address;
+}
+
+/** What `mintToSeller` would charge now, in 18-decimal USD. */
+export interface SellerMintDue {
+  reserveUsd: bigint;
+  feeUsd: bigint;
+}
+
 export interface BuyNowRequest {
   gemId: bigint;
   paymentAsset: Address;
