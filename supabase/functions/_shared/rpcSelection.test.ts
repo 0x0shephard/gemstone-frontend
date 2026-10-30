@@ -54,4 +54,9 @@ describe('historical logs RPC selection', () => {
     ).toBe('http://host.docker.internal:8545');
     expect(resolveLogsRpcUrl('http://127.0.0.1:8545')).toBe('http://127.0.0.1:8545');
   });
+
+  it('falls back on Arbitrum One to an endpoint that serves history from the deployment block', () => {
+    // PublicNode's free tier refuses archive ranges; arb1 serves them.
+    expect(DEFAULT_LOGS_RPC_URLS[42161]).toBe('https://arb1.arbitrum.io/rpc');
+  });
 });

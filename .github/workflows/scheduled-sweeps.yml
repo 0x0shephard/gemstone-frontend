@@ -103,6 +103,10 @@ jobs:
           fi
 
       - name: Notify people about state waiting on them
+        # Runs even when an earlier step failed: a broken demand ingest must not
+        # silence offer, swap and outbid notifications (it did, from 2026-10-29).
+        # The job still fails overall, so the earlier error stays visible.
+        if: ${{ !cancelled() }}
         env:
           URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
           SECRET: ${{ secrets.NOTIFY_SWEEP_SECRET }}
