@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount, useChainId } from 'wagmi';
+import { useAccount, useChainId, useDisconnect } from 'wagmi';
 import type { Address } from 'viem';
 import { activeChain } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn';
 import { detectWalletEnvironment } from '@/providers/walletSelection';
 import { WalletAddress } from '@/components/wallet/WalletAddress';
 import { isWalletConnectConnector } from '@/services/chain/walletConnectRouting';
+import { resetWalletSession } from '@/lib/walletReset';
 
 interface AccountMenuProps {
   className?: string;
@@ -21,12 +22,14 @@ export function AccountMenu({ className }: AccountMenuProps) {
   const [open, setOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [message, setMessage] = useState('');
   // Set when the server asks whether to replace an existing primary wallet.
   const [relinkFor, setRelinkFor] = useState<Address | null>(null);
   const { user, loading, linkedWallet, signOut, linkWallet } = useAuth();
   const { address, connector, isConnected } = useAccount();
   const chainId = useChainId();
+  const { disconnectAsync } = useDisconnect();
 
   const name =
     (user?.user_metadata?.full_name as string | undefined) ||
@@ -95,8 +98,20 @@ export function AccountMenu({ className }: AccountMenuProps) {
     setVerifying(false);
   }
 
+  /*
+   * Reloads rather than updating in place: the restored session lives in the
+   * connector's memory too, and only a fresh page starts without it.
+   */
+  async function disconnectWallet() {
+    setDisconnecting(true);
+    await resetWalletSession(() => disconnectAsync());
+    window.location.reload();
+  }
+
   async function handleSignOut() {
     setSigningOut(true);
+    // The next person to sign in on this browser must not inherit the wallet.
+    if (isConnected) await resetWalletSession(() => disconnectAsync());
     await signOut();
     setOpen(false);
     setSigningOut(false);
@@ -292,7 +307,8 @@ export function AccountMenu({ className }: AccountMenuProps) {
                           <p className="mt-2 rounded-[4px] border border-amber/25 bg-amber/[0.06] p-2.5 text-[11.5px] leading-relaxed text-ink">
                             Your wallet is on a different network. Switch it to {activeChain.name} —
                             use “Fix” above, or change networks in your wallet — and the
-                            verification step will appear.
+                            verification step will appear. If your wallet shows “Connection not
+                            found”, disconnect below and connect again.
                           </p>
                         )}
                         {!wrongNetwork && !walletVerified && address && (
@@ -341,6 +357,20 @@ export function AccountMenu({ className }: AccountMenuProps) {
                             </div>
                           </div>
                         )}
+                        {/*
+                          Always offered while connected. A phone browser keeps
+                          the wallet session after MetaMask has dropped it, and
+                          every request then fails in the wallet with
+                          "Connection not found"; this is the way back out.
+                        */}
+                        <button
+                          type="button"
+                          disabled={disconnecting}
+                          onClick={() => void disconnectWallet()}
+                          className="mt-2 flex h-9 w-full items-center justify-center rounded-[4px] border border-line/[0.12] px-3 text-[11.5px] font-medium text-ink-muted hover:bg-line/[0.035] hover:text-ink disabled:opacity-50"
+                        >
+                          {disconnecting ? 'Disconnecting…' : 'Disconnect wallet'}
+                        </button>
                       </>
                     )}
                   </div>
