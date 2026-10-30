@@ -8,7 +8,12 @@ export const DEFAULT_LOGS_RPC_URL = 'https://ethereum-sepolia-rpc.publicnode.com
  */
 export const DEFAULT_LOGS_RPC_URLS: Readonly<Record<number, string>> = {
   11155111: DEFAULT_LOGS_RPC_URL,
-  42161: 'https://arbitrum-one-rpc.publicnode.com',
+  // Arbitrum's own endpoint. PublicNode's free Arbitrum tier serves only recent
+  // blocks and refuses older ranges with -32602 "Archive requests require a
+  // personal token", which viem reports as "Invalid parameters were provided to
+  // the RPC method" — so a scan from the deployment block failed on its first
+  // chunk once the deployment was a day old, every run.
+  42161: 'https://arb1.arbitrum.io/rpc',
   421614: 'https://arbitrum-sepolia-rpc.publicnode.com',
 };
 
