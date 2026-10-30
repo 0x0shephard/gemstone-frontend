@@ -38,6 +38,8 @@ import type {
   BidRequest,
   BuyListingRequest,
   BuyNowRequest,
+  MintToSellerRequest,
+  SellerMintDue,
   CancelListingRequest,
   CancelRedemptionRequest,
   ConfirmRedemptionRequest,
@@ -233,6 +235,9 @@ const recoveryApprovedEvent = parseAbiItem(
 );
 const primaryPurchaseEvent = parseAbiItem(
   'event BuyNow(uint256 indexed gemId,uint256 indexed tokenId,address indexed buyer,address paymentAsset,uint256 amount,uint256 usdValue)',
+);
+const sellerMintedEvent = parseAbiItem(
+  'event SellerMinted(uint256 indexed gemId,uint256 indexed tokenId,address indexed seller,address paymentAsset,uint256 paidAmount,uint256 feeUsd,uint256 reserveUsd)',
 );
 const marketplacePurchaseEvent = parseAbiItem(
   'event Purchased(uint256 indexed tokenId,address indexed buyer,address paymentAsset,uint256 amount,uint256 usdValue)',
@@ -2047,6 +2052,61 @@ export const chainService: IDataService = {
           address: manifest.addresses.PrimarySaleAuction,
           event: primaryPurchaseEvent,
           args: { gemId: request.gemId, buyer: account },
+          fromBlock: observedFromBlock ?? fromBlock,
+          toBlock: 'latest',
+        });
+        return verifiedCallHash(
+          logs.map((log) => log.transactionHash),
+          account,
+          call,
+          expectedOperationKey,
+        );
+      },
+    };
+    const result = await runContractTransaction(call);
+    refresh();
+    return result;
+  },
+  getSellerMintDue: async (gemId: bigint): Promise<SellerMintDue> => {
+    const [reserveUsd, feeUsd] = (await client.readContract({
+      ...contract('PrimarySaleAuction'),
+      functionName: 'sellerMintDueUsd',
+      args: [gemId],
+    })) as readonly [bigint, bigint];
+    return { reserveUsd, feeUsd };
+  },
+  mintToSeller: async (request: MintToSellerRequest): Promise<TxResult> => {
+    const [reserveUsd, feeUsd] = (await client.readContract({
+      ...contract('PrimarySaleAuction'),
+      functionName: 'sellerMintDueUsd',
+      args: [request.gemId],
+    })) as readonly [bigint, bigint];
+    const dueUsd = reserveUsd + feeUsd;
+    if (dueUsd === 0n) {
+      throw new Error(
+        'Nothing is due on this stone; Digital Carat mints it for you automatically.',
+      );
+    }
+    // As with buy-now, the contract re-quotes and refunds any surplus.
+    const amount = withPurchaseHeadroom(await usdToAsset(request.paymentAsset, dueUsd));
+    const params = paymentParams(request.paymentAsset, amount);
+    if (params.approvals[0]) params.approvals[0].spender = manifest.addresses.PrimarySaleAuction;
+    const fromBlock = await client.getBlockNumber();
+    const call = {
+      ...contract('PrimarySaleAuction'),
+      functionName: 'mintToSeller',
+      intentKey: `mintToSeller:${request.gemId}`,
+      args: [request.gemId, request.paymentAsset, amount],
+      ...params,
+      reconcileBroadcast: async (
+        account: Address,
+        observedFromBlock?: bigint,
+        expectedOperationKey?: string,
+      ) => {
+        const logs = await client.getLogs({
+          address: manifest.addresses.PrimarySaleAuction,
+          event: sellerMintedEvent,
+          args: { gemId: request.gemId, seller: account },
           fromBlock: observedFromBlock ?? fromBlock,
           toBlock: 'latest',
         });

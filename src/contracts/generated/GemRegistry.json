@@ -481,6 +481,24 @@
   },
   {
     "type": "function",
+    "name": "setPrimarySaleMode",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "newMode",
+        "type": "uint8",
+        "internalType": "enum GemRegistry.PrimarySaleMode"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setSellerApproval",
     "inputs": [
       {
@@ -817,6 +835,31 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PrimarySaleModeUpdated",
+    "inputs": [
+      {
+        "name": "gemId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "previousMode",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum GemRegistry.PrimarySaleMode"
+      },
+      {
+        "name": "newMode",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum GemRegistry.PrimarySaleMode"
       }
     ],
     "anonymous": false

@@ -3,11 +3,11 @@
   "generatedFrom": "../gemstone/out",
   "sha256": {
     "DGENFT": "a0dfe2ff031fedbc47667e1dc591aa10f422383be3b9ed2d8113d03860ca3778",
-    "GemRegistry": "a5eee81ea8d5adb4101f6e424b81404b798a3cc18b175328c34225c14cce1b60",
+    "GemRegistry": "d68ab3cc2c7439493c13acd050b9f0cb11ee917ac051ffb3741e7b126aa7563e",
     "PaymentTokenRegistry": "eb42d455a714aadb76bf14ba9b634a5ba31ceef4ddbb659acc5c33b3ea89b56f",
     "ReserveManager": "6f46169bc35f3c66b32ee5ca657ed8eca2f0591f7ed8eac2f838e944b6d8d0ae",
     "Treasury": "27c63ba90311d1edd35321ee54dc2b1dd0ce68631f8fb545b218c2dfca686f35",
-    "PrimarySaleAuction": "094f86d7ec36c50765f66577f199207c8edd325a178caeab2c724efeadb4412d",
+    "PrimarySaleAuction": "4b809790eaf7176f6e942ec8953f720c4a5ab92c23f21fc53ecb509aa6d948ce",
     "Marketplace": "969a283381dbf452f188c7550b7fb792af35949be2869fbaf9058998edc0e226",
     "SwapEscrow": "12b56849bbbc126ad8c4c08ecbed7c170e78e5fece9631eb53fe5ebed22cac2b",
     "RedemptionManager": "f38a83350d2c370906344d340b0c39e5ec83f39658f8a725e1c8e3789c4df556",

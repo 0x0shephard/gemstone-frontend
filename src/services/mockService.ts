@@ -201,6 +201,8 @@ export const mockService: IDataService = {
 
   // writes — resolve a mock tx hash after simulated confirmation latency
   buyNow: ok,
+  getSellerMintDue: async () => ({ reserveUsd: 0n, feeUsd: 0n }),
+  mintToSeller: ok,
   buy: ok,
   list: ok,
   cancelListing: ok,

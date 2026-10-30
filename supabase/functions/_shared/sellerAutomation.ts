@@ -12,6 +12,12 @@ import {
 } from './chain.ts';
 import { createMvpValuation } from './mvpPricing.ts';
 import {
+  PRIMARY_SALE_MODE,
+  saleModeCode,
+  sellerMintSwitchBlocker,
+  type SaleMode,
+} from './sellerMintRules.ts';
+import {
   canonicalDocument,
   pinningConfigured,
   publishImage,
@@ -51,7 +57,7 @@ interface SellerSubmission {
   gem_name: string | null;
   /** The seller's claim. Only `name` from here reaches the chain; grades come from the appraisal. */
   attributes: Record<string, unknown> & { caratWeight: number };
-  sale_mode: 'buy_now' | 'auction';
+  sale_mode: SaleMode;
   metadata_uri: string;
   metadata_cid: string | null;
   metadata_document: string | null;
@@ -841,7 +847,7 @@ export async function activateSellerSubmission(
         address: chain.addresses.registry,
         abi: gemRegistryAbi,
         functionName: 'listGem',
-        args: [gemId, priceUsd, submission.sale_mode === 'auction' ? 2 : 1],
+        args: [gemId, priceUsd, saleModeCode(submission.sale_mode)],
       });
       await persistStep(admin, submissionId, {
         listing_tx_hash: latestHash,
@@ -870,9 +876,18 @@ export async function activateSellerSubmission(
       }
     }
 
+    // Listed in SellerMint mode: the operator mints now when nothing is due;
+    // otherwise the seller pays and signs from the site.
+    let finalState: string = submission.sale_mode === 'auction' ? 'auction_created' : 'listed';
+    if (submission.sale_mode === 'seller_mint') {
+      const minted = await mintSellerGem(admin, chain, submissionId, gemId);
+      finalState = minted.state;
+      latestHash = minted.hash ?? latestHash;
+    }
+
     await persistStep(admin, submissionId, {
       status: 'registered',
-      activation_state: submission.sale_mode === 'auction' ? 'auction_created' : 'listed',
+      activation_state: finalState,
       activation_tx_hash: latestHash,
       activation_error: null,
       activation_started_at: null,
@@ -894,7 +909,7 @@ export async function activateSellerSubmission(
     return {
       submissionId,
       status: submission.status,
-      activationState: submission.sale_mode === 'auction' ? 'auction_created' : 'listed',
+      activationState: finalState,
       onchainGemId: gemId.toString(),
       approvedValuationUsd: priceUsd.toString(),
       valuationMethod: submission.valuation_method,
@@ -920,4 +935,217 @@ export async function activateSellerSubmission(
   } finally {
     if (operatorLeaseClaimed) await releaseSharedOperatorLease(admin, submissionId);
   }
+}
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+
+type MintOutcome = { state: 'minted' | 'awaiting_seller_mint'; tokenId?: bigint; hash?: Hash };
+
+/**
+ * Mints a listed SellerMint gem to its seller when nothing is due.
+ *
+ * Idempotent: a gem already minted (an earlier run whose receipt was lost) is
+ * recorded rather than minted again, and the hash is persisted at broadcast. If
+ * a reserve shortfall or fee is due, the contract refuses the operator, so the
+ * submission waits for the seller to pay and sign `mintToSeller` themselves.
+ * Requires the caller to hold the operator lease.
+ */
+async function mintSellerGem(
+  admin: AdminClient,
+  chain: ReturnType<typeof operatorChain>,
+  submissionId: string,
+  gemId: bigint,
+): Promise<MintOutcome> {
+  const gem = (await chain.publicClient.readContract({
+    address: chain.addresses.registry,
+    abi: gemRegistryAbi,
+    functionName: 'getGem',
+    args: [gemId],
+  })) as { status: number; tokenId: bigint };
+  if (gem.tokenId > 0n) {
+    await persistStep(admin, submissionId, {
+      minted_token_id: gem.tokenId.toString(),
+      activation_state: 'minted',
+    });
+    return { state: 'minted', tokenId: gem.tokenId };
+  }
+  const [reserveUsd, feeUsd] = (await chain.publicClient.readContract({
+    address: chain.addresses.primarySale,
+    abi: primarySaleAbi,
+    functionName: 'sellerMintDueUsd',
+    args: [gemId],
+  })) as readonly [bigint, bigint];
+  if (reserveUsd + feeUsd > 0n) {
+    await persistStep(admin, submissionId, { activation_state: 'awaiting_seller_mint' });
+    return { state: 'awaiting_seller_mint' };
+  }
+  const hash = await writeAndConfirm(
+    chain,
+    {
+      address: chain.addresses.primarySale,
+      abi: primarySaleAbi,
+      functionName: 'mintToSeller',
+      args: [gemId, ZERO_ADDRESS, 0n],
+    },
+    {
+      onSubmitted: async (submitted) => {
+        await persistStep(admin, submissionId, { mint_tx_hash: submitted });
+      },
+    },
+  );
+  const minted = (await chain.publicClient.readContract({
+    address: chain.addresses.registry,
+    abi: gemRegistryAbi,
+    functionName: 'getGem',
+    args: [gemId],
+  })) as { tokenId: bigint };
+  if (minted.tokenId === 0n) throw new Error('mintToSeller confirmed but the gem is not minted');
+  await persistStep(admin, submissionId, {
+    minted_token_id: minted.tokenId.toString(),
+    activation_state: 'minted',
+  });
+  return { state: 'minted', tokenId: minted.tokenId, hash };
+}
+
+/** Thrown for a switch the seller cannot make yet; the message is shown to them. */
+export class SellerMintSwitchRefused extends Error {}
+
+/**
+ * Switches a seller's unbid auction stone to "mint to my wallet", then mints.
+ *
+ * Order: cancel the stale (unbid) round, set the registry mode, mint. Each step
+ * re-reads the chain first, so a retry after any failure resumes where it
+ * stopped. The sweep may reopen a round between the cancel and the mode change;
+ * the registry then refuses with `ActivePrimaryAuction` and the seller retries.
+ */
+export async function switchSubmissionToSellerMint(
+  admin: AdminClient,
+  submissionId: string,
+  sellerId: string,
+): Promise<MintOutcome & { gemId: string }> {
+  const submission = await loadSubmission(admin, submissionId);
+  if (submission.seller_id !== sellerId) throw new SellerMintSwitchRefused('Submission not found');
+  if (!submission.onchain_gem_id) {
+    throw new SellerMintSwitchRefused('This stone is not on the chain yet.');
+  }
+  if (submission.sale_mode !== 'auction' && submission.sale_mode !== 'seller_mint') {
+    throw new SellerMintSwitchRefused('Only an auction stone can switch to minting.');
+  }
+  const gemId = exactUint(submission.onchain_gem_id, 'On-chain gem id');
+  const chain = operatorChain();
+  await assertOperatorChain(chain);
+  await claimOperatorLease(admin, submissionId);
+  try {
+    const gem = (await chain.publicClient.readContract({
+      address: chain.addresses.registry,
+      abi: gemRegistryAbi,
+      functionName: 'getGem',
+      args: [gemId],
+    })) as { status: number; tokenId: bigint };
+    if (gem.tokenId > 0n) {
+      throw new SellerMintSwitchRefused('This stone has already been minted.');
+    }
+    if (gem.status !== 4) throw new SellerMintSwitchRefused('This stone is not listed.');
+
+    const mode = Number(
+      await chain.publicClient.readContract({
+        address: chain.addresses.registry,
+        abi: gemRegistryAbi,
+        functionName: 'primarySaleMode',
+        args: [gemId],
+      }),
+    );
+    if (mode === PRIMARY_SALE_MODE.auction) {
+      const [exists, settled, , endTime, , highestBidder] = (await chain.publicClient.readContract({
+        address: chain.addresses.primarySale,
+        abi: primarySaleAbi,
+        functionName: 'auctions',
+        args: [gemId],
+      })) as readonly [boolean, boolean, bigint, bigint, bigint, string, ...unknown[]];
+      const { data: cycle, error: cycleError } = await admin
+        .from('auction_cycles')
+        .select('rounds')
+        .eq('deployment_id', protocolDeploymentId())
+        .eq('gem_id', gemId.toString())
+        .maybeSingle();
+      if (cycleError) throw cycleError;
+      const head = await chain.publicClient.getBlock();
+      const blocker = sellerMintSwitchBlocker({
+        auction: { exists, settled, endTime, highestBidder },
+        nowSeconds: head.timestamp,
+        reopenedRounds: cycle?.rounds ?? 0,
+      });
+      if (blocker) throw new SellerMintSwitchRefused(blocker);
+      if (exists && !settled) {
+        await writeAndConfirm(chain, {
+          address: chain.addresses.primarySale,
+          abi: primarySaleAbi,
+          functionName: 'cancelAuction',
+          args: [gemId],
+        });
+      }
+      await writeAndConfirm(chain, {
+        address: chain.addresses.registry,
+        abi: gemRegistryAbi,
+        functionName: 'setPrimarySaleMode',
+        args: [gemId, PRIMARY_SALE_MODE.sellerMint],
+      });
+    } else if (mode !== PRIMARY_SALE_MODE.sellerMint) {
+      throw new SellerMintSwitchRefused('Only an auction stone can switch to minting.');
+    }
+
+    if (submission.sale_mode !== 'seller_mint') {
+      await persistStep(admin, submissionId, {
+        sale_mode: 'seller_mint',
+        sale_mode_switched_at: new Date().toISOString(),
+      });
+      await audit(sellerId, 'seller.sale_mode_switched', 'seller_submission', submissionId, {
+        gemId: gemId.toString(),
+        from: 'auction',
+        to: 'seller_mint',
+      });
+    }
+    const outcome = await mintSellerGem(admin, chain, submissionId, gemId);
+    if (outcome.state === 'minted') {
+      await audit(sellerId, 'seller.minted_to_wallet', 'seller_submission', submissionId, {
+        gemId: gemId.toString(),
+        tokenId: outcome.tokenId?.toString() ?? null,
+        transactionHash: outcome.hash ?? null,
+      });
+    }
+    return { ...outcome, gemId: gemId.toString() };
+  } finally {
+    await releaseSharedOperatorLease(admin, submissionId);
+  }
+}
+
+/**
+ * Records a mint the seller made from their own wallet (the paid path).
+ *
+ * Read-only on chain: it trusts nothing from the caller beyond which submission
+ * to look at, and only moves the row to `minted` once the registry says so.
+ */
+export async function syncSellerMint(
+  admin: AdminClient,
+  submissionId: string,
+  sellerId: string,
+): Promise<{ state: string; tokenId?: string }> {
+  const submission = await loadSubmission(admin, submissionId);
+  if (submission.seller_id !== sellerId) throw new SellerMintSwitchRefused('Submission not found');
+  if (!submission.onchain_gem_id || submission.sale_mode !== 'seller_mint') {
+    throw new SellerMintSwitchRefused('This stone is not set to mint to your wallet.');
+  }
+  const chain = operatorChain();
+  const gem = (await chain.publicClient.readContract({
+    address: chain.addresses.registry,
+    abi: gemRegistryAbi,
+    functionName: 'getGem',
+    args: [exactUint(submission.onchain_gem_id, 'On-chain gem id')],
+  })) as { tokenId: bigint };
+  if (gem.tokenId === 0n) return { state: 'awaiting_seller_mint' };
+  await persistStep(admin, submissionId, {
+    minted_token_id: gem.tokenId.toString(),
+    activation_state: 'minted',
+  });
+  return { state: 'minted', tokenId: gem.tokenId.toString() };
 }

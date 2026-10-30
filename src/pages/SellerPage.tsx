@@ -13,11 +13,14 @@ import { fmtUsdBaseUnits } from '@/lib/format';
 import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
 import { ensureUploadableImage } from '@/lib/imageTranscode';
+import { SellerMintPayment } from '@/components/seller/SellerMintPayment';
 import {
   activateSellerGem,
   getSellerSubmissions,
+  sellerCanSwitchToMint,
   sellerCanWithdraw,
   submitSellerGem,
+  switchSubmissionToMint,
   withdrawSellerSubmission,
   type SellerAttributes,
   type SellerSubmissionSummary,
@@ -58,18 +61,40 @@ const EMPTY_ATTRIBUTES: SellerAttributes = {
   certificateNumber: '',
 };
 
+const SALE_ROUTES = [
+  {
+    value: 'auction',
+    tag: '24 hours',
+    title: 'Sell at auction',
+    description:
+      'The stone opens a 24-hour auction with a floor at the approved valuation. The winning bidder receives the token and you receive the proceeds. A stone with no bid re-opens the next day, and you can switch it to minting then.',
+  },
+  {
+    value: 'seller_mint',
+    tag: 'Your wallet',
+    title: 'Mint to my wallet',
+    description:
+      'The token is minted straight to your verified wallet once the stone is activated. There are no sale proceeds; you can list it on the marketplace, gift it or transfer it like any owner.',
+  },
+] as const;
+
+const SALE_MODE_LABEL: Record<SellerSubmissionSummary['saleMode'], string> = {
+  auction: '24-hour auction',
+  seller_mint: 'Mint to my wallet',
+  buy_now: 'Buy now',
+};
+
 export default function SellerPage() {
   const { address } = useAccount();
   const { linkedWallet, user } = useAuth();
   const { data: gems = [] } = useGems();
   const [attributes, setAttributes] = useState(EMPTY_ATTRIBUTES);
   /*
-   * Not a choice any more. A gemstone becomes a token only by being won at
-   * auction, and `PrimarySaleAuction.buyNow` reverts `WrongPrimarySaleMode` for
-   * anything not listed in BuyNow mode — so the contract enforces this too,
-   * rather than the UI merely hiding the alternative.
+   * The seller's route: the daily primary auction, or the NFT minted straight to
+   * their wallet. Buy-now is never offered; `PrimarySaleAuction.buyNow` reverts
+   * for anything not listed in BuyNow mode, which nothing is any more.
    */
-  const saleMode = 'auction' as const;
+  const [saleMode, setSaleMode] = useState<'auction' | 'seller_mint'>('auction');
   const [custodyPreference, setCustodyPreference] = useState<
     'protocol_custodian' | 'approved_existing_custodian'
   >('protocol_custodian');
@@ -82,6 +107,7 @@ export default function SellerPage() {
   const [submissions, setSubmissions] = useState<SellerSubmissionSummary[]>([]);
   const [activationId, setActivationId] = useState<string>();
   const [withdrawingId, setWithdrawingId] = useState<string>();
+  const [switchingId, setSwitchingId] = useState<string>();
   const walletVerified = Boolean(address && linkedWallet?.toLowerCase() === address.toLowerCase());
   const registryAddress = getContractAddress('GemRegistry');
   const sellerApproval = useReadContract({
@@ -196,6 +222,10 @@ export default function SellerPage() {
     submissions.map((submission) => submission.onchainGemId).filter(Boolean),
   );
   const consignedGems = gems.filter((gem) => consignedGemIds.has(gem.gemId.toString()));
+  // A won auction leaves `activation_state` at `auction_created`; the token is the tell.
+  const mintedGemIds = new Set(
+    consignedGems.filter((gem) => gem.tokenId !== undefined).map((gem) => gem.gemId.toString()),
+  );
 
   async function withdraw(submissionId: string) {
     if (
@@ -217,6 +247,36 @@ export default function SellerPage() {
       });
     } finally {
       setWithdrawingId(undefined);
+      await reloadSubmissions();
+    }
+  }
+
+  async function switchToMint(submissionId: string) {
+    if (
+      !window.confirm(
+        'Mint this stone to your wallet instead of auctioning it? You receive the NFT, not sale proceeds, and the stone will not go back to auction.',
+      )
+    ) {
+      return;
+    }
+    setSwitchingId(submissionId);
+    setResult(undefined);
+    try {
+      const outcome = await switchSubmissionToMint(submissionId);
+      setResult({
+        ok: true,
+        message:
+          outcome.activationState === 'minted'
+            ? `Minted to your wallet${outcome.tokenId ? ` as token #${outcome.tokenId}` : ''}.`
+            : 'Switched to minting. A payment is due before the NFT can be minted; use the button on the submission.',
+      });
+    } catch (error) {
+      setResult({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The stone could not be switched',
+      });
+    } finally {
+      setSwitchingId(undefined);
       await reloadSubmissions();
     }
   }
@@ -397,17 +457,40 @@ export default function SellerPage() {
                 </option>
               </select>
             </label>
-            <div className="rounded-[4px] border border-line/[0.09] bg-inset p-4 sm:col-span-2">
-              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-atelier">
-                24 hours
-              </span>
-              <span className="mt-1 block text-[14px] font-semibold text-ink">Sold at auction</span>
-              <span className="mt-1 block text-[11.5px] leading-relaxed text-ink-muted">
-                Every stone opens a 24-hour auction once a lab grades it, with a floor at the
-                approved valuation. The winning bidder mints the token and you receive the proceeds.
-                A stone that draws no bid re-opens the next day.
-              </span>
-            </div>
+            <fieldset className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+              <legend className="mb-1.5 text-[12px] font-medium text-ink-muted">
+                After activation
+              </legend>
+              {SALE_ROUTES.map((route) => (
+                <label
+                  key={route.value}
+                  className={`cursor-pointer rounded-[4px] border p-4 transition-colors ${
+                    saleMode === route.value
+                      ? 'border-atelier/50 bg-atelier/[0.06]'
+                      : 'border-line/[0.09] bg-inset hover:border-line/[0.18]'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="sale-route"
+                      value={route.value}
+                      checked={saleMode === route.value}
+                      onChange={() => setSaleMode(route.value)}
+                    />
+                    <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-atelier">
+                      {route.tag}
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-[14px] font-semibold text-ink">
+                    {route.title}
+                  </span>
+                  <span className="mt-1 block text-[11.5px] leading-relaxed text-ink-muted">
+                    {route.description}
+                  </span>
+                </label>
+              ))}
+            </fieldset>
             <label>
               <span className="mb-1.5 block text-[12px] font-medium text-ink-muted">
                 Certificates · PDF/JPEG/PNG/HEIC · 20 MB each
@@ -507,7 +590,7 @@ export default function SellerPage() {
                         {submission.id}
                       </p>
                       <p className="mt-1 text-[11.5px] text-ink-muted">
-                        {submission.saleMode === 'auction' ? '24-hour auction' : 'Buy now'} ·{' '}
+                        {SALE_MODE_LABEL[submission.saleMode]} ·{' '}
                         {new Date(submission.createdAt).toLocaleDateString()}
                         {submission.verificationProvider === 'mvp-auto'
                           ? ' · MVP auto-verified'
@@ -535,6 +618,33 @@ export default function SellerPage() {
                         : (STATUS_LABEL[submission.status] ??
                           submission.status.replaceAll('_', ' '))}
                     </StatusBadge>
+                    {submission.activationState === 'minted' && (
+                      <StatusBadge tone="success">
+                        {submission.mintedTokenId
+                          ? `In your wallet · Token #${submission.mintedTokenId}`
+                          : 'Minted to your wallet'}
+                      </StatusBadge>
+                    )}
+                    {sellerCanSwitchToMint(submission) &&
+                      !mintedGemIds.has(submission.onchainGemId ?? '') && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={switchingId === submission.id}
+                          onClick={() => void switchToMint(submission.id)}
+                        >
+                          {switchingId === submission.id ? 'Minting…' : 'Mint to my wallet instead'}
+                        </Button>
+                      )}
+                    {submission.activationState === 'awaiting_seller_mint' &&
+                      submission.onchainGemId && (
+                        <SellerMintPayment
+                          submissionId={submission.id}
+                          gemId={BigInt(submission.onchainGemId)}
+                          onMinted={reloadSubmissions}
+                        />
+                      )}
                     {sellerCanWithdraw(submission) && (
                       <Button
                         type="button"

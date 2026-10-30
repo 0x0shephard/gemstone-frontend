@@ -20,7 +20,8 @@ export interface SellerAttributes {
 export interface SellerSubmissionInput {
   sellerWallet: string;
   attributes: SellerAttributes;
-  saleMode: 'buy_now' | 'auction';
+  /** The seller's route: the daily primary auction, or the NFT minted to their own wallet. */
+  saleMode: 'auction' | 'seller_mint';
   custodyPreference: 'protocol_custodian' | 'approved_existing_custodian';
   notes: string;
   certificates: File[];
@@ -255,13 +256,15 @@ export interface SellerSubmissionSummary {
     | 'registered'
     /** The seller took the stone back before it reached the chain. */
     | 'withdrawn';
-  saleMode: 'buy_now' | 'auction';
+  saleMode: 'buy_now' | 'auction' | 'seller_mint';
   verificationProvider?: string;
   metadataUri?: string;
   certificateHash?: Hash;
   onchainGemId?: string;
   activationState?: string;
   activationError?: string;
+  /** Set once the stone was minted straight to the seller's wallet. */
+  mintedTokenId?: string;
   valuationMethod?: string;
   /** Exact 18-decimal USD, read as text and parsed as an integer; never a float. */
   approvedValuationUsd?: bigint;
@@ -296,7 +299,7 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
        * the value has already lost precision as a double by then. Casting keeps
        * the exact integer and keeps it parseable.
        */
-      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id::text,activation_state,activation_error,valuation_method,approved_valuation_usd::text,rejection_reason,created_at',
+      'id,status,sale_mode,verification_provider,metadata_uri,certificate_hash,onchain_gem_id::text,activation_state,activation_error,minted_token_id::text,valuation_method,approved_valuation_usd::text,rejection_reason,created_at',
     )
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -311,6 +314,10 @@ export async function getSellerSubmissions(): Promise<SellerSubmissionSummary[]>
       submission.onchain_gem_id === null ? undefined : String(submission.onchain_gem_id),
     activationState: submission.activation_state ?? undefined,
     activationError: submission.activation_error ?? undefined,
+    mintedTokenId:
+      submission.minted_token_id === null || submission.minted_token_id === undefined
+        ? undefined
+        : String(submission.minted_token_id),
     valuationMethod: submission.valuation_method ?? undefined,
     approvedValuationUsd: exactUsdBaseUnits(submission.approved_valuation_usd),
     rejectionReason: submission.rejection_reason ?? undefined,
@@ -331,8 +338,56 @@ export function sellerCanWithdraw(submission: SellerSubmissionSummary): boolean 
   );
 }
 
+/**
+ * Whether to offer "Mint to my wallet instead" on an activated auction stone.
+ * The server decides for real (no live bid, a round ended unbid) and explains a
+ * refusal, because only it can read the auction and its rounds.
+ */
+export function sellerCanSwitchToMint(submission: SellerSubmissionSummary): boolean {
+  return (
+    submission.saleMode === 'auction' &&
+    Boolean(submission.onchainGemId) &&
+    submission.activationState === 'auction_created'
+  );
+}
+
 export async function withdrawSellerSubmission(submissionId: string): Promise<void> {
   await invokeEdgeFunction('v1-seller-submit', { action: 'withdraw', submissionId });
+}
+
+export interface SellerMintResult {
+  submissionId: string;
+  activationState: 'minted' | 'awaiting_seller_mint';
+  tokenId: string | null;
+}
+
+/**
+ * The cancel, mode switch and mint are up to three confirmed transactions, so
+ * this waits for the Edge Function's own wall-clock limit rather than the
+ * default deadline.
+ */
+const SELLER_MINT_SWITCH_DEADLINE_MS = 150_000;
+
+/**
+ * Switches an unbid auction stone to "mint to my wallet". The server re-checks
+ * that no bid is live and that a round has ended unbid, then cancels the stale
+ * round, changes the on-chain mode and mints when nothing is due. A refusal
+ * (409) carries the reason to show the seller.
+ */
+export async function switchSubmissionToMint(submissionId: string): Promise<SellerMintResult> {
+  return invokeEdgeFunction<SellerMintResult>(
+    'v1-seller-submit',
+    { action: 'switch_to_mint', submissionId },
+    SELLER_MINT_SWITCH_DEADLINE_MS,
+  );
+}
+
+/** Records a mint the seller paid for and signed from their own wallet. */
+export async function syncSellerMint(submissionId: string): Promise<SellerMintResult> {
+  return invokeEdgeFunction<SellerMintResult>('v1-seller-submit', {
+    action: 'sync_mint',
+    submissionId,
+  });
 }
 
 export interface SellerActivationStatus {
