@@ -18,6 +18,7 @@ import {
   discardRedemption,
   loadOwnerRedemptionTrackers,
   loadRedemptionTracker,
+  reconcileRedemptionOpening,
   markRedemptionChainBurned,
   nominateRedemptionProxy,
   operationIdempotencyKey,
@@ -429,6 +430,32 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
     },
     onSuccess: setPreparedCancellation,
   });
+  /*
+   * A request still at `committed` may in fact be open on-chain: the opening
+   * transaction is reported by this browser after the wallet confirms it, and a
+   * phone can lose that report in the switch to the wallet app. Ask the server
+   * to look for it on-chain before offering to discard, which it would refuse.
+   */
+  const reconcileStatus = request.status;
+  const reconcileVersion = request.version;
+  const reconcileId = request.id;
+  const reconcileQuery = useQuery({
+    queryKey: ['operations', 'redemption', reconcileId, 'reconcile-opening', reconcileVersion],
+    enabled: reconcileStatus === 'committed',
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const storageKey = `redemption:${reconcileId}:reconcile`;
+      const result = await reconcileRedemptionOpening({
+        requestId: reconcileId,
+        expectedVersion: reconcileVersion,
+        idempotencyKey: operationIdempotencyKey(storageKey),
+      });
+      clearOperationIdempotencyKey(storageKey);
+      if (result.reconciled) await reload();
+      return result.reconciled ?? false;
+    },
+  });
   const discardMutation = useMutation({
     mutationFn: async () => {
       const storageKey = `redemption:${request.id}:discard`;
@@ -535,32 +562,38 @@ export function OwnerRedemptionCard({ summary }: { summary: RedemptionTracker })
         </p>
       )}
 
-      {capabilities.has('discard_redemption') && (
-        <div className="space-y-3 border-t border-line/[0.07] pt-4">
-          <div>
-            <h5 className="text-[13px] font-semibold text-ink">Discard this request</h5>
-            <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
-              This request never opened on-chain, so your token is not locked. Discard it if you no
-              longer want to redeem, or start again from your holdings.
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="danger"
-            onClick={() => discardMutation.mutate()}
-            disabled={discardMutation.isPending}
-          >
-            {discardMutation.isPending ? 'Discarding…' : 'Discard request'}
-          </Button>
-          {discardMutation.error && (
-            <p role="alert" className="text-[12px] text-ruby">
-              {discardMutation.error instanceof Error
-                ? discardMutation.error.message
-                : 'The request could not be discarded.'}
-            </p>
-          )}
-        </div>
+      {request.status === 'committed' && reconcileQuery.isFetching && (
+        <p className="text-[11.5px] text-ink-muted">Checking the chain for this request…</p>
       )}
+
+      {capabilities.has('discard_redemption') &&
+        !reconcileQuery.isFetching &&
+        reconcileQuery.data !== true && (
+          <div className="space-y-3 border-t border-line/[0.07] pt-4">
+            <div>
+              <h5 className="text-[13px] font-semibold text-ink">Discard this request</h5>
+              <p className="mt-1 text-[11.5px] leading-relaxed text-ink-muted">
+                This request never opened on-chain, so your token is not locked. Discard it if you
+                no longer want to redeem, or start again from your holdings.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => discardMutation.mutate()}
+              disabled={discardMutation.isPending}
+            >
+              {discardMutation.isPending ? 'Discarding…' : 'Discard request'}
+            </Button>
+            {discardMutation.error && (
+              <p role="alert" className="text-[12px] text-ruby">
+                {discardMutation.error instanceof Error
+                  ? discardMutation.error.message
+                  : 'The request could not be discarded.'}
+              </p>
+            )}
+          </div>
+        )}
 
       {capabilities.has('cancel_redemption') && (
         <div className="space-y-3 border-t border-line/[0.07] pt-4">
