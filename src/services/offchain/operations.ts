@@ -541,6 +541,7 @@ export async function mutateRedemptionRecovery(
 export async function mutateRedemptionLifecycle(
   action:
     | 'mark_onchain_requested'
+    | 'reconcile_onchain_request'
     | 'discard_redemption'
     | 'accept_redemption'
     | 'custodian_collect'
@@ -582,6 +583,19 @@ export async function prepareRedemptionCancellation(input: {
   transactionHash?: `0x${string}`;
 }): Promise<RedemptionMutationResult> {
   return mutateRedemptionLifecycle('cancel_redemption', input);
+}
+
+/**
+ * Records an opening transaction the browser never reported, found by the
+ * server from its on-chain event. `reconciled: false` means the request really
+ * has not opened on-chain.
+ */
+export async function reconcileRedemptionOpening(input: {
+  requestId: string;
+  expectedVersion: number;
+  idempotencyKey: string;
+}): Promise<RedemptionMutationResult & { reconciled?: boolean }> {
+  return mutateRedemptionLifecycle('reconcile_onchain_request', input);
 }
 
 /** Abandons a request that never opened on-chain (draft or committed). */

@@ -22,6 +22,7 @@ import {
 } from '../_shared/operationalLifecycle.ts';
 import { stableRecoveryEligibleAt } from '../_shared/approvalIntent.ts';
 import { operatorChain, type OperatorChain } from '../_shared/chain.ts';
+import { blocksBack, blocksForSeconds } from '../_shared/blockTime.ts';
 import {
   ChainPhase,
   OperatorBusyError,
@@ -61,6 +62,7 @@ import {
   isAddress,
   keccak256,
   parseAbi,
+  parseAbiItem,
   toBytes,
   zeroHash,
   type Address,
@@ -698,6 +700,44 @@ async function reconcileProxyNomination(
 
 function manager(deployment: ProtocolDeployment): Address {
   return getAddress(deployment.redemption_manager_address);
+}
+
+const workflowBoundEvent = parseAbiItem(
+  'event RedemptionWorkflowBound(uint256 indexed tokenId, bytes32 indexed workflowIdHash)',
+);
+
+/** Widest `eth_getLogs` window asked for at once; both topics are indexed. */
+const OPENING_SCAN_SPAN = 50_000n;
+
+/**
+ * The transaction that bound `workflowIdHash` to `tokenId`, searched from just
+ * before the request was created up to the head.
+ */
+async function findOpeningTransaction(
+  chain: OperatorChain,
+  managerAddress: Address,
+  tokenId: bigint,
+  workflow: Hash,
+  createdAt: string,
+): Promise<Hash | undefined> {
+  const head = await chain.publicClient.getBlockNumber();
+  // Ten minutes of slack for clock skew between the database and the chain.
+  const ageSeconds = Math.max(0, (Date.now() - new Date(createdAt).getTime()) / 1_000) + 600;
+  let from = blocksBack(head, blocksForSeconds(chain.chainId, ageSeconds), chain.deploymentBlock);
+  while (from <= head) {
+    const to = from + OPENING_SCAN_SPAN - 1n > head ? head : from + OPENING_SCAN_SPAN - 1n;
+    const logs = await chain.publicClient.getLogs({
+      address: managerAddress,
+      event: workflowBoundEvent,
+      args: { tokenId, workflowIdHash: workflow },
+      fromBlock: from,
+      toBlock: to,
+    });
+    const hit = logs.find((log) => log.transactionHash);
+    if (hit?.transactionHash) return hit.transactionHash;
+    from = to + 1n;
+  }
+  return undefined;
 }
 
 /** The operator chain, refusing an RPC that points at a different network. */
@@ -1412,14 +1452,17 @@ Deno.serve(async (request) => {
     if (version !== expectedVersion && !isRecoveryReceipt)
       return json({ error: 'Workflow changed; reload before acting' }, 409);
 
-    if (action === 'mark_onchain_requested') {
-      if (!owner || row.status !== 'committed') return json({ error: 'Not found' }, 404);
-      const transactionHash = requiredHash(body.transactionHash);
+    /*
+     * Records the owner's opening transaction, verified from its receipt: the
+     * RedemptionOpened and RedemptionWorkflowBound events must name this token,
+     * gem, owner, request hash and workflow.
+     */
+    const recordOnchainRequested = async (transactionHash: Hash, intentAction: string) => {
       await storeIntent({
         admin,
         deploymentId: deployment.id,
         requestId,
-        action,
+        action: intentAction,
         idempotencyKey,
         expectedVersion,
         payload: {
@@ -1456,7 +1499,50 @@ Deno.serve(async (request) => {
         transactionHash,
         idempotencyKey,
       });
+    };
+
+    if (action === 'mark_onchain_requested') {
+      if (!owner || row.status !== 'committed') return json({ error: 'Not found' }, 404);
+      await recordOnchainRequested(requiredHash(body.transactionHash), action);
       return json({ request: tracker(row, expectedVersion + 1) });
+    }
+
+    if (action === 'reconcile_onchain_request') {
+      /*
+       * The owner's browser reports the opening transaction after the wallet
+       * confirms it. On a phone that report can be lost in the switch to the
+       * wallet app and back, leaving the request at `committed` while the token
+       * is already locked on-chain — and then neither discard (refused: it is
+       * open) nor cancel (refused: not recorded as open) works. Find the opening
+       * transaction from its event instead and record it exactly as above.
+       */
+      if (!owner || row.status !== 'committed') return json({ error: 'Not found' }, 404);
+      const chain = serverChain(deployment);
+      const record = await readRedemptionRecord(chain, manager(deployment), BigInt(row.token_id));
+      if (
+        record.phase === ChainPhase.None ||
+        record.workflowIdHash.toLowerCase() !== workflowIdHash(requestId).toLowerCase()
+      ) {
+        return json({ request: tracker(row, expectedVersion), reconciled: false });
+      }
+      const transactionHash = await findOpeningTransaction(
+        chain,
+        manager(deployment),
+        BigInt(row.token_id),
+        workflowIdHash(requestId),
+        row.created_at,
+      );
+      if (!transactionHash) {
+        return json(
+          {
+            error:
+              'The request is open on-chain but its transaction was not found yet. Try again shortly.',
+          },
+          409,
+        );
+      }
+      await recordOnchainRequested(transactionHash, 'mark_onchain_requested');
+      return json({ request: tracker(row, expectedVersion + 1), reconciled: true });
     }
 
     if (action === 'discard_redemption') {
