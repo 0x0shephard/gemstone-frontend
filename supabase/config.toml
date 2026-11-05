@@ -93,3 +93,7 @@ verify_jwt = false
 
 [functions.v1-notify-sweep]
 verify_jwt = false
+
+# Scheduled by pg_cron; checks its own x-health-check-secret header.
+[functions.v1-health-check]
+verify_jwt = false

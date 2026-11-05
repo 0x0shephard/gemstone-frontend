@@ -1,4 +1,4 @@
-name: Scheduled sweeps
+name: Scheduled sweeps (manual fallback)
 
 # Three operator jobs that keep the protocol moving without anyone watching:
 #
@@ -31,16 +31,10 @@ name: Scheduled sweeps
 # fall farther behind the chain on every run.
 
 on:
-  schedule:
-    # Hourly, at :15 — clear of the top of the hour, when GitHub's queue is
-    # busiest and scheduled jobs are most likely to be delayed.
-    #
-    # Daily used to be enough, when the only jobs were auction upkeep and demand
-    # ingest. It is not enough to notify anyone: a marketplace offer expires 24
-    # hours after it is made, so a daily pass can reach the owner minutes before
-    # the offer lapses, or after. The auction and demand steps below skip
-    # cheaply when there is nothing to do, so the extra passes cost little.
-    - cron: '15 * * * *'
+  # No schedule any more: since 2026-11-05 the sweeps run from Supabase pg_cron
+  # (supabase/migrations/202611050001_supabase_scheduler.sql, docs/scheduler.md).
+  # GitHub ran this hourly cron every 5-7 hours, then stopped entirely under a
+  # billing lock. Kept as a manual fallback only.
   workflow_dispatch:
 
 concurrency:
