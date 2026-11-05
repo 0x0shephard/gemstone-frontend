@@ -20,7 +20,7 @@ does nothing. No secret is in git.
 
 ## One-time setup
 
-Run these from the repo. The first command makes new random secrets, stores them as Edge Function
+Run these from the repo, in order. The second command makes new random secrets, stores them as Edge Function
 secrets, and stores the same values in Vault. Nothing is printed.
 
 ```bash
