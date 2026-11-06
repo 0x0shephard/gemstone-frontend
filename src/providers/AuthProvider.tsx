@@ -14,6 +14,7 @@ import { createSiweMessage } from 'viem/siwe';
 import { useAccount, useSignMessage } from 'wagmi';
 import { supabase } from './supabase';
 import { queryClient } from './queryClient';
+import { clearPersistedQueries } from './queryPersistence';
 import { disablePush } from '@/services/offchain/push';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
@@ -316,6 +317,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      * list that the next feature forgets to join.
      */
     queryClient.clear();
+    clearPersistedQueries();
   }, []);
 
   const linkWallet = useCallback(

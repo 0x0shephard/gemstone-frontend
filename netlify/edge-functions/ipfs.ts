@@ -12,7 +12,9 @@
 // actually loads pass through, and every response forbids scripts and sniffing.
 //
 // `cache: 'manual'` keeps the edge cache: a CID's bytes never change, so a 200 is
-// cached for a year and the gateway is asked once per edge node.
+// cached for a year. `durable` shares that across the CDN: without it each edge
+// node kept its own copy, and visitors kept landing on nodes that had none, paying
+// the public gateway's five seconds per file for content that can never change.
 
 const GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
 // The client tries the next gateway on failure, so a stalled one must fail fast.
@@ -104,6 +106,7 @@ export default async function ipfs(request: Request): Promise<Response> {
     ...LOCKED_DOWN,
     'Content-Type': type,
     'Cache-Control': 'public, max-age=31536000, immutable',
+    'Netlify-CDN-Cache-Control': 'public, durable, max-age=31536000, immutable',
   });
   for (const name of PASSED_THROUGH) {
     const value = upstream.headers.get(name);

@@ -69,3 +69,49 @@ describe('token metadata', () => {
     expect(trait({}, 'Gem Type')).toBeUndefined();
   });
 });
+
+describe('metadata across visits', () => {
+  const uri = 'ipfs://QmPCVhkYHp62ojTJmRWXuF5paL1qSRz5qqPt3XQ9gtexz7';
+  const stored = { name: 'Ruby', attributes: [{ trait_type: 'Gem Type', value: 'Ruby' }] };
+  const reloadPage = () => {
+    // Only the in-memory map goes on reload, so its entries are dropped directly.
+    const kept = { ...localStorage };
+    clearMetadataCache();
+    Object.entries(kept).forEach(([key, value]) => localStorage.setItem(key, String(value)));
+  };
+
+  it('needs no network on the next visit', async () => {
+    const fetchMock = vi.fn(async () => ok(stored));
+    vi.stubGlobal('fetch', fetchMock);
+    await readMetadata(uri);
+    reloadPage();
+
+    await expect(readMetadata(uri)).resolves.toEqual(stored);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not keep a failed read or a reply that is not token metadata', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fail())
+      .mockResolvedValue(ok({ error: 'rate limited' }));
+    vi.stubGlobal('fetch', fetchMock);
+    await readMetadata(uri);
+    await readMetadata(uri);
+    reloadPage();
+
+    await readMetadata(uri);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('only keeps content-addressed documents', async () => {
+    const httpUri = 'https://example.com/metadata.json';
+    const fetchMock = vi.fn(async () => ok(stored));
+    vi.stubGlobal('fetch', fetchMock);
+    await readMetadata(httpUri);
+    reloadPage();
+
+    await readMetadata(httpUri);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
