@@ -10,6 +10,9 @@ import {
 } from 'viem';
 
 const mocks = vi.hoisted(() => ({
+  publicGemCustody: vi.fn<(gemIds: bigint[]) => Promise<Map<string, unknown>>>(
+    async () => new Map(),
+  ),
   readContract: vi.fn(),
   multicall: vi.fn(),
   getBlock: vi.fn(),
@@ -88,7 +91,7 @@ vi.mock('./projection', () => ({
   syncProjection: mocks.syncProjection,
 }));
 vi.mock('@/services/offchain/custody', () => ({
-  publicGemCustody: async () => new Map(),
+  publicGemCustody: mocks.publicGemCustody,
 }));
 
 import { requireDeploymentManifest } from '@/config/contracts';
@@ -135,6 +138,7 @@ function mockMatchingTransaction(call: RecoverableCall, account: `0x${string}`) 
 beforeEach(() => {
   mocks.connectedAddress = undefined;
   window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
+  mocks.publicGemCustody.mockClear();
   mocks.readContract.mockReset();
   mocks.multicall.mockReset();
   mocks.getBlock.mockReset();
@@ -570,6 +574,83 @@ describe('chain profile reads', () => {
     expect(profile.stats.ownedCount).toBe(1);
     expect(profile.owned.map((gem) => gem.tokenId)).toEqual([18n]);
     expect(profile.activity).toEqual([]);
+  });
+
+  describe('reading the catalogue in as few rounds as possible', () => {
+    const availableGem = (id: number) => ({ ...registryGem(usd(1_000 + id)), status: 5 });
+    const gemReads = () =>
+      mocks.readContract.mock.calls.filter(([read]) => read.functionName === 'getGem');
+    const answerGemReads = () =>
+      mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {
+        if (
+          functionName === 'reserveBalanceUsd' ||
+          functionName === 'shortfallUsd' ||
+          functionName === 'requiredReserveUsd'
+        )
+          return 0n;
+        if (functionName === 'secondaryFeeBps') return 250;
+        throw new Error(`Unexpected read: ${functionName}`);
+      });
+
+    it('reuses what discovery read instead of reading each gem again', async () => {
+      mocks.multicall.mockResolvedValue([
+        { status: 'success', result: availableGem(1) },
+        { status: 'success', result: availableGem(2) },
+        { status: 'failure', error: new Error('InvalidGem') },
+      ]);
+      answerGemReads();
+
+      await expect(chainService.getGems()).resolves.toHaveLength(2);
+      expect(gemReads()).toHaveLength(0);
+    });
+
+    it('sends one custody lookup for gems read together', async () => {
+      mocks.multicall.mockResolvedValue([
+        { status: 'success', result: availableGem(1) },
+        { status: 'success', result: availableGem(2) },
+        { status: 'failure', error: new Error('InvalidGem') },
+      ]);
+      answerGemReads();
+
+      await chainService.getGems();
+      expect(mocks.publicGemCustody).toHaveBeenCalledTimes(1);
+      expect(mocks.publicGemCustody).toHaveBeenCalledWith([1n, 2n]);
+    });
+
+    it('never reads a network failure as the end of the catalogue', async () => {
+      mocks.multicall.mockResolvedValue([
+        { status: 'success', result: availableGem(1) },
+        { status: 'failure', error: new Error('HTTP 429 rate limited') },
+      ]);
+      mocks.readContract.mockRejectedValue(new Error('HTTP 429 rate limited'));
+
+      await expect(chainService.getGems()).rejects.toThrow(/429/);
+      expect(gemReads().length).toBeGreaterThan(0);
+    });
+
+    it('reads a gem afresh after a transaction', async () => {
+      mocks.multicall.mockResolvedValue([
+        { status: 'success', result: availableGem(1) },
+        { status: 'failure', error: new Error('InvalidGem') },
+      ]);
+      answerGemReads();
+      const pending = chainService.getGems();
+      await Promise.resolve();
+      await pending;
+      mocks.readContract.mockImplementation(
+        async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
+          if (functionName === 'getGem' && args?.[0] === 1n) return availableGem(1);
+          if (functionName === 'getGem') throw new Error('InvalidGem');
+          if (functionName === 'secondaryFeeBps') return 250;
+          return 0n;
+        },
+      );
+      mocks.multicall.mockReturnValue(new Promise(() => undefined));
+      window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
+
+      await chainService.getGem(1n);
+      expect(gemReads()).toHaveLength(1);
+    });
   });
 
   it('lets stones load before the history scan starts', async () => {
