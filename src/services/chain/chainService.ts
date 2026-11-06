@@ -453,8 +453,44 @@ async function readGemUncached(
     return;
 
   const connectedAddress = getAccount(wagmiConfig).address;
-  const [reserveBalanceUsd, reserveShortfallUsd, requiredReserveUsd, canRedeem, details, feePct] =
-    await Promise.all([
+  const minted = registryGem.tokenId > 0n && Number(registryGem.status) !== 8;
+  /*
+   * Started alongside the reads below, so the client's multicall batching sends
+   * them together. Awaited one at a time they cost a round trip each, for every
+   * gem, and a card cannot render until all of them have answered.
+   *
+   * A failed ownership read is unknown ownership, never "no owner". Swallowing
+   * this error let `getProfile` report zero tokens even though the NFT existed.
+   * Redeemed gems are filtered by registry status above, before this call.
+   */
+  const tokenState = minted
+    ? Promise.all([
+        client.readContract({
+          ...contract('DGENFT'),
+          functionName: 'ownerOf',
+          args: [registryGem.tokenId],
+        }) as Promise<Address>,
+        client
+          .readContract({
+            ...contract('DGENFT'),
+            functionName: 'transferLocked',
+            args: [registryGem.tokenId],
+          })
+          .catch(() => undefined) as Promise<boolean | undefined>,
+        client
+          .readContract({
+            ...contract('Marketplace'),
+            functionName: 'listings',
+            args: [registryGem.tokenId],
+          })
+          .catch(() => undefined) as Promise<readonly [Address, bigint] | undefined>,
+      ])
+    : undefined;
+  const [
+    [reserveBalanceUsd, reserveShortfallUsd, requiredReserveUsd, canRedeem, details, feePct],
+    tokenReads,
+  ] = await Promise.all([
+    Promise.all([
       client.readContract({
         ...contract('ReserveManager'),
         functionName: 'reserveBalanceUsd',
@@ -493,7 +529,9 @@ async function readGemUncached(
           secondaryFeePctPromise = undefined;
           throw error;
         })),
-    ]);
+    ]),
+    tokenState,
+  ]);
 
   // Standard `attributes` first, then the flat keys used by gems registered before
   // the standard shape. Their metadata URIs are immutable, so both paths persist.
@@ -523,24 +561,10 @@ async function readGemUncached(
   let listedPriceUsd: bigint | undefined;
   let listingWinningOfferId: bigint | undefined;
   let listingAuctionEnd: bigint | undefined;
-  if (registryGem.tokenId > 0n && Number(registryGem.status) !== 8) {
-    /*
-     * A failed ownership read is unknown ownership, never "no owner". Swallowing
-     * this error let `getProfile` report zero tokens even though the NFT existed.
-     * Redeemed gems are filtered by registry status above, before this call.
-     */
-    owner = (await client.readContract({
-      ...contract('DGENFT'),
-      functionName: 'ownerOf',
-      args: [registryGem.tokenId],
-    })) as Address;
-    transferLocked = (await client
-      .readContract({
-        ...contract('DGENFT'),
-        functionName: 'transferLocked',
-        args: [registryGem.tokenId],
-      })
-      .catch(() => undefined)) as boolean | undefined;
+  if (tokenReads) {
+    const [tokenOwner, locked, listing] = tokenReads;
+    owner = tokenOwner;
+    transferLocked = locked;
     // RedemptionManager sets the registry status and the lock together, so the
     // registry read already in hand answers when the lock read fails. Treating
     // an unread lock as "unlocked" offered redeeming stones in swaps.
@@ -556,13 +580,6 @@ async function readGemUncached(
         })
         .catch(() => undefined)) as Address | undefined;
     }
-    const listing = (await client
-      .readContract({
-        ...contract('Marketplace'),
-        functionName: 'listings',
-        args: [registryGem.tokenId],
-      })
-      .catch(() => undefined)) as readonly [Address, bigint] | undefined;
     if (listing && listing[0] !== zeroAddress) {
       listingSeller = listing[0];
       listedPriceUsd = listing[1];

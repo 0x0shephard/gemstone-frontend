@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
@@ -124,6 +124,49 @@ function assertRpcMatchesRelease(
   }
 }
 
+/**
+ * What every page needs before it can show a stone. Each is a dynamic import, so
+ * the browser only learns of one after the previous has downloaded and run, and a
+ * cold visit spent seconds walking that chain one layer at a time.
+ */
+const CRITICAL_MODULES = [
+  'src/providers/Web3Providers.tsx',
+  'src/components/layout/AppShell.tsx',
+  'src/services/chain/chainService.ts',
+];
+
+/** Names those chunks and their static imports in the HTML, to fetch them together. */
+function preloadCriticalChunks(): Plugin {
+  return {
+    name: 'preload-critical-chunks',
+    transformIndexHtml: {
+      order: 'post',
+      handler(_html, { bundle }) {
+        if (!bundle) return [];
+        const chunks = Object.values(bundle).filter((output) => output.type === 'chunk');
+        const roots = chunks.filter((chunk) =>
+          Object.keys(chunk.modules).some((id) =>
+            CRITICAL_MODULES.some((module) => id.endsWith(module)),
+          ),
+        );
+        const files = new Set<string>();
+        const visit = (fileName: string) => {
+          const chunk = bundle[fileName];
+          if (files.has(fileName) || chunk?.type !== 'chunk' || chunk.isEntry) return;
+          files.add(fileName);
+          chunk.imports.forEach(visit);
+        };
+        roots.forEach((chunk) => visit(chunk.fileName));
+        return [...files].map((file) => ({
+          tag: 'link',
+          attrs: { rel: 'modulepreload', crossorigin: true, href: `/${file}` },
+          injectTo: 'head' as const,
+        }));
+      },
+    },
+  };
+}
+
 function buildCommit(): string {
   if (process.env.COMMIT_REF) return process.env.COMMIT_REF.slice(0, 7);
   try {
@@ -184,6 +227,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       react(),
+      preloadCriticalChunks(),
       ...(deploymentConfig
         ? [
             {
