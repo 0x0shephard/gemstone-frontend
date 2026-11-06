@@ -231,4 +231,21 @@ describe('WalletConnect revival', () => {
     );
     cleanup();
   });
+
+  it('leaves the wallet SDKs alone until told they are ready', async () => {
+    const restart = vi.fn(async () => undefined);
+    let ready = false;
+    const cleanup = reviveWalletConnectOnReturn(configWithRelayer(restart, true), {
+      retryDelaysMs: [0],
+      isReady: () => ready,
+    });
+
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(restart).not.toHaveBeenCalled());
+
+    ready = true;
+    window.dispatchEvent(new Event('focus'));
+    await vi.waitFor(() => expect(restart).toHaveBeenCalled());
+    cleanup();
+  });
 });

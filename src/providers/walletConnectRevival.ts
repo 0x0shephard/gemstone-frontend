@@ -33,6 +33,8 @@ interface RelayerLike {
 }
 
 interface WalletConnectRevivalOptions {
+  /** Checked before each wake. Defaults to always. */
+  isReady?: () => boolean;
   reconnectAction?: (
     config: Config,
     parameters: { connectors: readonly Connector[] },
@@ -91,6 +93,7 @@ export function reviveWalletConnectOnReturn(
   const reconnectAction = options.reconnectAction ?? reconnect;
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RECOVERY_DELAYS_MS;
   const operationTimeoutMs = options.operationTimeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
+  const isReady = options.isReady ?? (() => true);
   let waking: Promise<void> | undefined;
   let disposed = false;
 
@@ -166,7 +169,7 @@ export function reviveWalletConnectOnReturn(
   };
 
   const wake = () => {
-    if (disposed || document.visibilityState !== 'visible') return;
+    if (disposed || document.visibilityState !== 'visible' || !isReady()) return;
     waking ??= wakeOnce().finally(() => {
       waking = undefined;
     });
