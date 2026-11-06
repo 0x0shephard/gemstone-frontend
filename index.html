@@ -39,16 +39,102 @@
         document.documentElement.dataset.colorScheme = 'atelier';
       }
     </script>
+    <!--
+      The first thing a visitor sees, drawn from this file alone. The app takes
+      seconds to arrive on a first visit, and until then the page was blank.
+      Inline and self-contained: nothing here may wait on a bundle.
+    -->
+    <style>
+      html {
+        background: #f8f5f0;
+      }
+      html[data-color-scheme='garnet'] {
+        background: #0a1524;
+      }
+      #boot-shell {
+        --bone: rgb(42 38 34 / 7%);
+        box-sizing: border-box;
+        max-width: 72rem;
+        margin: 0 auto;
+        padding: 1.25rem 1rem;
+        overflow: hidden;
+      }
+      html[data-color-scheme='garnet'] #boot-shell {
+        --bone: rgb(248 245 240 / 8%);
+      }
+      /* Gone as soon as React, or the boot guard below, puts anything in #root. */
+      #root:not(:empty) + #boot-shell {
+        display: none;
+      }
+      #boot-shell * {
+        box-sizing: border-box;
+        border-radius: 4px;
+        background: var(--bone);
+        animation: boot-pulse 1.6s ease-in-out infinite;
+      }
+      /* Real text, not a box: browsers do not count shapes as content. */
+      #boot-shell .mark {
+        margin: 0.5rem 0 2.25rem;
+        background: none;
+        animation: none;
+        color: #0b3b2c;
+        font:
+          500 1.25rem/1.5 Georgia,
+          'Times New Roman',
+          serif;
+        letter-spacing: 0.02em;
+      }
+      html[data-color-scheme='garnet'] #boot-shell .mark {
+        color: #e8dcb5;
+      }
+      #boot-shell .title {
+        height: 1.75rem;
+        width: min(22rem, 70%);
+        margin-bottom: 1.5rem;
+      }
+      #boot-shell .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+        gap: 1rem;
+        background: none;
+        animation: none;
+      }
+      #boot-shell .card {
+        aspect-ratio: 4 / 5;
+      }
+      @keyframes boot-pulse {
+        50% {
+          opacity: 0.55;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-shell * {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="boot-shell" role="status" aria-label="Loading Digital Carat">
+      <p class="mark">Digital Carat</p>
+      <div class="title"></div>
+      <div class="grid">
+        <div class="card"></div>
+        <div class="card"></div>
+        <div class="card"></div>
+        <div class="card"></div>
+        <div class="card"></div>
+        <div class="card"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       /*
        * Boot guard. Deliberately ES5 and inline, because it has to run on the
        * browsers that fail to run the app bundle at all.
        *
-       * `Sentry.ErrorBoundary` only catches errors thrown once React is
+       * The React error boundary only catches errors thrown once React is
        * rendering. A module that throws while evaluating — an API the browser
        * lacks, a failed chunk fetch — kills the bundle before any of that
        * mounts, leaving a blank page with nothing in the DOM. That happened on
