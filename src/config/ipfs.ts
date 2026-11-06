@@ -27,8 +27,8 @@ const LEGACY_MOBILE_GATEWAYS = new Set(['https://ipfs.io/ipfs', 'https://dweb.li
  * before a phone has to wait for that failure.
  */
 /**
- * This site's own `/ipfs/*` path, served from Pinata by a Netlify edge function
- * (netlify/edge-functions/ipfs.ts) and proxied by the Vite dev/preview servers.
+ * This site's own `/ipfs/*` path, served from Pinata by a Netlify function
+ * (netlify/functions/ipfs.ts) and proxied by the Vite dev/preview servers.
  * Same-origin, so a gateway's rate-limit reply can no longer be blocked as a
  * cross-origin response, and CDN-cached. Only images and JSON pass through.
  */

@@ -1,9 +1,12 @@
 import { QueryClient } from '@tanstack/react-query';
+import { PERSIST_MAX_AGE_MS } from './queryPersistence';
 
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 30_000,
+      // A query no page is showing must stay in the cache to stay in storage.
+      gcTime: PERSIST_MAX_AGE_MS,
       retry: 1,
       refetchOnWindowFocus: false,
     },

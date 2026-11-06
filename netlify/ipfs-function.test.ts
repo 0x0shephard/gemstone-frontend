@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import ipfs, { config, gatewayPath } from './edge-functions/ipfs';
+import ipfs, { config, gatewayPath } from './functions/ipfs';
 
 const CID_V0 = 'QmVHNHvdZ6dKLjfG7hB57R88wfsRYvwUByETa2DNADzBZv';
 const CID_V1 = 'bafkreigh2akiscaildcqabsyg3dfr6chu3fgpregiymsck7e7aqa4s52zy';
@@ -18,7 +18,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('/ipfs edge function', () => {
   it('is mounted on /ipfs/* with the edge cache kept', () => {
-    expect(config).toEqual({ path: '/ipfs/*', cache: 'manual' });
+    expect(config).toEqual({ path: '/ipfs/*' });
   });
 
   it.each(['image/jpeg', 'application/json; charset=utf-8', 'image/webp'])(
@@ -40,6 +40,7 @@ describe('/ipfs edge function', () => {
       expect(response.headers.get('content-security-policy')).toBe("default-src 'none'; sandbox");
       expect(response.headers.get('x-content-type-options')).toBe('nosniff');
       expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
+      expect(response.headers.get('netlify-cdn-cache-control')).toContain('durable');
       expect(response.headers.get('etag')).toBe('"x"');
     },
   );

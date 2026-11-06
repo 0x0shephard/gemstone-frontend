@@ -71,6 +71,36 @@ async function load(uri: string): Promise<Metadata> {
 }
 
 /**
+ * Kept across visits. An `ipfs://` URI names its content, and `metadataURI` is
+ * written once, so an entry can never go stale and never needs expiring. Public
+ * gateways take seconds per document and every gem card waits on one, so without
+ * this each page load repeats that wait. Storage can be blocked or full, and then
+ * the document is simply fetched as before.
+ */
+const STORE_PREFIX = 'dc:metadata:v1:';
+
+function recall(uri: string): Metadata | undefined {
+  if (!isIpfsUri(uri)) return undefined;
+  try {
+    const stored = localStorage.getItem(STORE_PREFIX + uri);
+    return stored ? (JSON.parse(stored) as Metadata) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function remember(uri: string, metadata: Metadata): void {
+  // Only a document that looks like token metadata, so a gateway's own 200 reply
+  // is not kept forever.
+  if (!isIpfsUri(uri) || !(metadata.name || metadata.attributes)) return;
+  try {
+    localStorage.setItem(STORE_PREFIX + uri, JSON.stringify(metadata));
+  } catch {
+    // Blocked or full: this visit still has the in-memory copy.
+  }
+}
+
+/**
  * Metadata for a gem, memoized by URI. `readGem` runs for every gem on every list
  * view, so without this the same immutable document is refetched dozens of times
  * per page. Failures are evicted so a transient gateway outage is retried rather
@@ -81,11 +111,23 @@ export function readMetadata(uri: string): Promise<Metadata> {
   const cached = cache.get(uri);
   if (cached) return cached;
 
-  const pending = load(uri).catch((error) => {
-    cache.delete(uri);
-    if (import.meta.env.DEV) console.warn(`Metadata unavailable for ${uri}`, error);
-    return {} as Metadata;
-  });
+  const stored = recall(uri);
+  if (stored) {
+    const ready = Promise.resolve(stored);
+    cache.set(uri, ready);
+    return ready;
+  }
+
+  const pending = load(uri)
+    .then((metadata) => {
+      remember(uri, metadata);
+      return metadata;
+    })
+    .catch((error) => {
+      cache.delete(uri);
+      if (import.meta.env.DEV) console.warn(`Metadata unavailable for ${uri}`, error);
+      return {} as Metadata;
+    });
   cache.set(uri, pending);
   return pending;
 }
@@ -93,4 +135,11 @@ export function readMetadata(uri: string): Promise<Metadata> {
 /** Test seam. */
 export function clearMetadataCache(): void {
   cache.clear();
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(STORE_PREFIX)) localStorage.removeItem(key);
+    }
+  } catch {
+    // Storage unavailable: nothing was remembered.
+  }
 }

@@ -11,8 +11,10 @@
 // proxied responses, so the fix has to be code: only the content types the app
 // actually loads pass through, and every response forbids scripts and sniffing.
 //
-// `cache: 'manual'` keeps the edge cache: a CID's bytes never change, so a 200 is
-// cached for a year and the gateway is asked once per edge node.
+// A Function rather than an Edge Function, for the durable cache: a CID's bytes
+// never change, so a 200 is cached for a year, once, across the whole CDN. Edge
+// Functions only get a per-node cache, and visitors kept landing on nodes without
+// a copy, paying the public gateway's five seconds per file on repeat requests.
 
 const GATEWAY = 'https://gateway.pinata.cloud/ipfs/';
 // The client tries the next gateway on failure, so a stalled one must fail fast.
@@ -104,6 +106,7 @@ export default async function ipfs(request: Request): Promise<Response> {
     ...LOCKED_DOWN,
     'Content-Type': type,
     'Cache-Control': 'public, max-age=31536000, immutable',
+    'Netlify-CDN-Cache-Control': 'public, durable, max-age=31536000, immutable',
   });
   for (const name of PASSED_THROUGH) {
     const value = upstream.headers.get(name);
@@ -112,4 +115,4 @@ export default async function ipfs(request: Request): Promise<Response> {
   return new Response(request.method === 'HEAD' ? null : upstream.body, { status: 200, headers });
 }
 
-export const config = { path: '/ipfs/*', cache: 'manual' };
+export const config = { path: '/ipfs/*' };

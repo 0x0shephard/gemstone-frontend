@@ -213,7 +213,7 @@ export default defineConfig(({ mode }) => {
       proxy: { '/ipfs': ipfsProxy },
     },
     // Stands in for the `/ipfs/*` edge function production uses
-    // (netlify/edge-functions/ipfs.ts).
+    // (netlify/functions/ipfs.ts).
     preview: {
       proxy: { '/ipfs': ipfsProxy },
     },
