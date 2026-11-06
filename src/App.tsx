@@ -1,26 +1,26 @@
 import { Suspense } from 'react';
 import { lazyRoute } from '@/lib/lazyRoute';
 import { RouterProvider } from 'react-router-dom';
-import * as Sentry from '@sentry/react';
 import { router } from './router';
+import { AppErrorBoundary } from './components/config/AppErrorBoundary';
 import { ConfigurationGate } from './components/config/ConfigurationGate';
 
 const Web3Providers = lazyRoute(() => import('./providers/Web3Providers'));
 
 export default function App() {
   return (
-    <Sentry.ErrorBoundary
-      fallback={<p role="alert">Digital Carat encountered an unexpected error.</p>}
-    >
-      <Suspense
-        fallback={<div className="min-h-screen bg-vault" aria-label="Loading application" />}
-      >
+    <AppErrorBoundary>
+      {/*
+        Renders nothing, because index.html's skeleton shows for as long as #root
+        is empty. Anything here would replace it with a blank page.
+      */}
+      <Suspense fallback={null}>
         <Web3Providers>
           <ConfigurationGate>
             <RouterProvider router={router} />
           </ConfigurationGate>
         </Web3Providers>
       </Suspense>
-    </Sentry.ErrorBoundary>
+    </AppErrorBoundary>
   );
 }

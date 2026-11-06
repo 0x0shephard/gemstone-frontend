@@ -167,6 +167,29 @@ function preloadCriticalChunks(): Plugin {
   };
 }
 
+/** Opens connections to the hosts the first reads go to, before they are needed. */
+function preconnectDataHosts(urls: readonly (string | undefined)[]): Plugin {
+  const origins = new Set<string>();
+  for (const url of urls) {
+    try {
+      if (url?.trim()) origins.add(new URL(url).origin);
+    } catch {
+      // Malformed URLs are reported by the app's own configuration check.
+    }
+  }
+  return {
+    name: 'preconnect-data-hosts',
+    transformIndexHtml: () =>
+      [...origins].map((href) => ({
+        tag: 'link',
+        // `fetch` uses the anonymous connection pool, so a plain preconnect would
+        // open a connection these requests could not reuse.
+        attrs: { rel: 'preconnect', href, crossorigin: true },
+        injectTo: 'head-prepend' as const,
+      })),
+  };
+}
+
 function buildCommit(): string {
   if (process.env.COMMIT_REF) return process.env.COMMIT_REF.slice(0, 7);
   try {
@@ -228,6 +251,11 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       preloadCriticalChunks(),
+      preconnectDataHosts([
+        process.env.VITE_RPC_URL ?? frontendEnv.VITE_RPC_URL,
+        process.env.VITE_LOGS_RPC_URL ?? frontendEnv.VITE_LOGS_RPC_URL,
+        process.env.VITE_SUPABASE_URL ?? frontendEnv.VITE_SUPABASE_URL,
+      ]),
       ...(deploymentConfig
         ? [
             {

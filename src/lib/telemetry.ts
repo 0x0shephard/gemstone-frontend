@@ -1,7 +1,24 @@
-import * as Sentry from '@sentry/react';
-import posthog from 'posthog-js';
 import { env } from '@/config/env';
 import { recordDiagnostic } from './diagnostics';
+
+/*
+ * Both libraries load only when configured. Imported statically they sat in the
+ * entry file, so every visitor downloaded and parsed them before the first page
+ * could render, whether or not anything was going to be reported.
+ */
+type Sentry = typeof import('@sentry/react');
+type PostHog = (typeof import('posthog-js'))['default'];
+
+let sentry: Promise<Sentry | undefined> | undefined;
+let posthog: Promise<PostHog | undefined> | undefined;
+
+function loadPostHog(): Promise<PostHog | undefined> {
+  posthog ??= import('posthog-js').then(
+    (module) => module.default,
+    () => undefined,
+  );
+  return posthog;
+}
 
 const ADDRESS = /0x[a-fA-F0-9]{40}/g;
 const SENSITIVE_KEYS =
@@ -21,34 +38,48 @@ function scrub(value: unknown, key = ''): unknown {
 }
 
 export function initializeTelemetry() {
-  if (env.sentryDsn) {
-    Sentry.init({
-      dsn: env.sentryDsn,
-      environment: env.dataMode,
-      tracesSampleRate: 0.1,
-      sendDefaultPii: false,
-      beforeSend: (event) => scrub(event) as typeof event,
-    });
+  if (env.sentryDsn && !sentry) {
+    sentry = import('@sentry/react').then(
+      (client) => {
+        client.init({
+          dsn: env.sentryDsn,
+          environment: env.dataMode,
+          tracesSampleRate: 0.1,
+          sendDefaultPii: false,
+          beforeSend: (event) => scrub(event) as typeof event,
+        });
+        return client;
+      },
+      () => undefined,
+    );
   }
   if (env.posthogKey && localStorage.getItem(CONSENT_KEY) === 'granted') {
-    posthog.init(env.posthogKey, {
-      api_host: env.posthogHost,
-      autocapture: false,
-      capture_pageview: false,
-      capture_pageleave: false,
-      disable_session_recording: true,
-      person_profiles: 'never',
-      persistence: 'localStorage',
-    });
+    void loadPostHog().then((client) =>
+      client?.init(env.posthogKey, {
+        api_host: env.posthogHost,
+        autocapture: false,
+        capture_pageview: false,
+        capture_pageleave: false,
+        disable_session_recording: true,
+        person_profiles: 'never',
+        persistence: 'localStorage',
+      }),
+    );
   }
+}
+
+/** For the app's error boundary. Does nothing when no reporting is configured. */
+export function captureError(error: unknown) {
+  void sentry?.then((client) => client?.captureException(error));
 }
 
 export function setAnalyticsConsent(enabled: boolean) {
   localStorage.setItem(CONSENT_KEY, enabled ? 'granted' : 'denied');
-  if (!enabled) posthog.opt_out_capturing();
-  else if (env.posthogKey) {
-    initializeTelemetry();
-    posthog.opt_in_capturing();
+  if (env.posthogKey) {
+    if (enabled) initializeTelemetry();
+    void loadPostHog().then((client) =>
+      enabled ? client?.opt_in_capturing() : client?.opt_out_capturing(),
+    );
   }
   window.dispatchEvent(new Event('dc:analytics-consent'));
 }
@@ -75,5 +106,5 @@ export function captureProductEvent(
     });
   }
   if (!allowedEvents.has(event) || !hasAnalyticsConsent()) return;
-  posthog.capture(event, properties);
+  if (env.posthogKey) void loadPostHog().then((client) => client?.capture(event, properties));
 }

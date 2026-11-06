@@ -8,7 +8,7 @@ import { embeddedDeploymentConfig } from './deployment';
  * while the build targets Safari 16 — and transpilation rewrites syntax, never
  * polyfills APIs. On an older browser it was `undefined`, and because this
  * module is evaluated on import by nearly the whole app, the `TypeError` fired
- * before React mounted. The `Sentry.ErrorBoundary` in `App.tsx` cannot catch
+ * before React mounted. The error boundary in `App.tsx` cannot catch
  * that, so the page rendered blank with nothing in the DOM and no report.
  */
 function isAbsoluteUrl(value: string): boolean {

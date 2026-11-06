@@ -572,6 +572,23 @@ describe('chain profile reads', () => {
     expect(profile.activity).toEqual([]);
   });
 
+  it('lets stones load before the history scan starts', async () => {
+    let finishCatalogue!: (result: unknown) => void;
+    mocks.multicall.mockReturnValue(new Promise((resolve) => (finishCatalogue = resolve)));
+    mocks.readContract.mockRejectedValue(new Error('InvalidGem'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    mocks.syncProjection.mockClear();
+
+    const listings = chainService.getListings();
+    window.dispatchEvent(new CustomEvent('dc:transaction-confirmed'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.syncProjection).not.toHaveBeenCalled();
+
+    finishCatalogue([{ status: 'failure', error: new Error('InvalidGem') }]);
+    await listings.catch(() => undefined);
+    await vi.waitFor(() => expect(mocks.syncProjection).toHaveBeenCalled());
+  });
+
   it('evicts a rejected fee read so a later portfolio refresh can recover', async () => {
     const availableGem = { ...registryGem(usd(1_000)), status: 5 };
     let feeAttempts = 0;

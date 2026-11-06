@@ -290,8 +290,40 @@ async function verifiedCallHash(
   }
 }
 
+/** Long enough for a slow connection, short enough not to hold history hostage. */
+const CATALOGUE_HEAD_START_MS = 3_000;
+let catalogueRead: Promise<void> | undefined;
+
+/*
+ * The history scan is dozens of `eth_getLogs` calls, and it runs in the same
+ * moment as the reads that put stones on screen. Those come first: nothing on a
+ * catalogue page needs history to render. Only a read already in flight holds the
+ * scan back, so a page without one starts it straight away.
+ */
+function trackCatalogueRead<T>(read: Promise<T>): Promise<T> {
+  const settled: Promise<void> = read
+    .then(
+      () => undefined,
+      () => undefined,
+    )
+    .finally(() => {
+      if (catalogueRead === settled) catalogueRead = undefined;
+    });
+  catalogueRead = settled;
+  return read;
+}
+
+function catalogueHeadStart(): Promise<void> {
+  if (!catalogueRead) return Promise.resolve();
+  return Promise.race([
+    catalogueRead,
+    new Promise<void>((resolve) => setTimeout(resolve, CATALOGUE_HEAD_START_MS)),
+  ]);
+}
+
 function startProjection(): Promise<ProjectionSnapshot> {
-  const running = Promise.resolve(syncProjection(client, { logClients: projectionLogClients }))
+  const running = catalogueHeadStart()
+    .then(() => syncProjection(client, { logClients: projectionLogClients }))
     .then((snapshot) => {
       settledSnapshot = snapshot;
       // Freshness begins when work completes, not when a potentially long
@@ -486,6 +518,12 @@ async function readGemUncached(
           .catch(() => undefined) as Promise<readonly [Address, bigint] | undefined>,
       ])
     : undefined;
+  // Started now for the same reason. A failed lookup only means the custodian is
+  // not named on this read.
+  const custodyLookup = Promise.race([
+    publicGemCustody([gemId]),
+    new Promise<undefined>((resolve) => setTimeout(resolve, CUSTODY_LOOKUP_TIMEOUT_MS)),
+  ]).catch(() => undefined);
   const [
     [reserveBalanceUsd, reserveShortfallUsd, requiredReserveUsd, canRedeem, details, feePct],
     tokenReads,
@@ -606,13 +644,7 @@ async function readGemUncached(
     }
   }
 
-  // A failed lookup only means the custodian is not named on this read.
-  const custody = (
-    await Promise.race([
-      publicGemCustody([gemId]),
-      new Promise<undefined>((resolve) => setTimeout(resolve, CUSTODY_LOOKUP_TIMEOUT_MS)),
-    ]).catch(() => undefined)
-  )?.get(gemId.toString());
+  const custody = (await custodyLookup)?.get(gemId.toString());
 
   const gem: Gem = {
     gemId,
@@ -708,7 +740,11 @@ function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   return entry.promise;
 }
 
-async function readGemBatch(): Promise<{ gems: DecoratedGem[]; failures: number }> {
+function readGemBatch(): Promise<{ gems: DecoratedGem[]; failures: number }> {
+  return trackCatalogueRead(readAllGems());
+}
+
+async function readAllGems(): Promise<{ gems: DecoratedGem[]; failures: number }> {
   const ids = await gemIds();
   const results: PromiseSettledResult<DecoratedGem | undefined>[] = new Array(ids.length);
   let cursor = 0;
@@ -1054,7 +1090,11 @@ async function getAuctions(): Promise<Auction[]> {
  * status. An ownership read failure is allowed to reject the query; it must not be
  * presented as evidence that the token does not exist.
  */
-async function getListings(): Promise<DecoratedGem[]> {
+function getListings(): Promise<DecoratedGem[]> {
+  return trackCatalogueRead(readListings());
+}
+
+async function readListings(): Promise<DecoratedGem[]> {
   const ids = await gemIds();
   const gems = await Promise.all(ids.map((gemId) => readGem(gemId)));
   // `readGem` resolves ownership and listing state, and returns no owner for a
