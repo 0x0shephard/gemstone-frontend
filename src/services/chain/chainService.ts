@@ -144,6 +144,7 @@ window.addEventListener('dc:transaction-confirmed', () => {
   gemIdsPromise = undefined;
   secondaryFeePctPromise = undefined;
   gemReadCache.clear();
+  registrySeeds.clear();
   void projection(true).catch(() => undefined);
 });
 
@@ -401,6 +402,21 @@ function isInvalidGem(error: unknown): boolean {
  * probed directly. `getGem` reverts `InvalidGem` past the last id, which ends the
  * walk. This keeps gem discovery off the event projection entirely.
  */
+/**
+ * Registry records from discovery, each kept for the one read that follows it.
+ * Discovery has just fetched every gem in a single call, and reading each again
+ * cost a further round trip before a card could render.
+ */
+const REGISTRY_SEED_TTL_MS = 5_000;
+const registrySeeds = new Map<string, { gem: RegistryGem; at: number }>();
+
+function takeRegistrySeed(gemId: bigint): RegistryGem | undefined {
+  const key = gemId.toString();
+  const seed = registrySeeds.get(key);
+  registrySeeds.delete(key);
+  return seed && Date.now() - seed.at <= REGISTRY_SEED_TTL_MS ? seed.gem : undefined;
+}
+
 async function discoverGemIds(): Promise<bigint[]> {
   const ids: bigint[] = [];
   for (let start = 1; start <= GEM_PROBE_LIMIT; start += GEM_PROBE_WINDOW) {
@@ -413,6 +429,14 @@ async function discoverGemIds(): Promise<bigint[]> {
       })),
       allowFailure: true,
     });
+    results.forEach((result, index) => {
+      if (result.status === 'success') {
+        registrySeeds.set(window[index].toString(), {
+          gem: result.result as RegistryGem,
+          at: Date.now(),
+        });
+      }
+    });
     const firstFailure = results.findIndex((result) => result.status !== 'success');
     if (firstFailure === -1) {
       ids.push(...window);
@@ -420,14 +444,17 @@ async function discoverGemIds(): Promise<bigint[]> {
     }
 
     ids.push(...window.slice(0, firstFailure));
+    // The slot's own revert already says this is the end of the registry.
+    if (isInvalidGem(results[firstFailure].error)) return ids;
 
     /*
      * `allowFailure` reports both a real `InvalidGem` and a transient RPC failure
-     * as the same failed slot. Treating either one as the end of the registry made
-     * a flaky mobile read cache an empty id list and therefore a convincing empty
-     * portfolio. Verify the remainder directly: only `InvalidGem` ends discovery;
-     * transport, rate-limit and decoding failures must reach React Query's error
-     * state so the user can retry them.
+     * as a failed slot, and only the first carries that revert. Treating either
+     * one as the end of the registry made a flaky mobile read cache an empty id
+     * list and therefore a convincing empty portfolio. Verify the remainder
+     * directly: only `InvalidGem` ends discovery; transport, rate-limit and
+     * decoding failures must reach React Query's error state so the user can
+     * retry them.
      */
     for (const gemId of window.slice(firstFailure)) {
       try {
@@ -480,7 +507,7 @@ async function readGemUncached(
   gemId: bigint,
   includeTerminal = false,
 ): Promise<DecoratedGem | undefined> {
-  const registryGem = await readRegistryGem(gemId);
+  const registryGem = takeRegistrySeed(gemId) ?? (await readRegistryGem(gemId));
   if (Number(registryGem.status) === 0 || (!includeTerminal && Number(registryGem.status) === 8))
     return;
 
@@ -521,7 +548,7 @@ async function readGemUncached(
   // Started now for the same reason. A failed lookup only means the custodian is
   // not named on this read.
   const custodyLookup = Promise.race([
-    publicGemCustody([gemId]),
+    batchedCustody(gemId),
     new Promise<undefined>((resolve) => setTimeout(resolve, CUSTODY_LOOKUP_TIMEOUT_MS)),
   ]).catch(() => undefined);
   const [
@@ -717,6 +744,29 @@ async function readGemUncached(
 }
 
 const GEM_READ_TTL_MS = 15_000;
+/** `public_gem_custody` takes at most this many ids. */
+const CUSTODY_BATCH_LIMIT = 200;
+let custodyBatch:
+  { gemIds: bigint[]; result: Promise<Awaited<ReturnType<typeof publicGemCustody>>> } | undefined;
+
+/** Gems read in the same tick share one lookup, which takes a list. */
+function batchedCustody(gemId: bigint): ReturnType<typeof publicGemCustody> {
+  if (!custodyBatch) {
+    const gemIds: bigint[] = [];
+    const flush = new Promise<void>((resolve) => setTimeout(resolve, 0));
+    custodyBatch = {
+      gemIds,
+      result: flush.then(() => {
+        if (custodyBatch?.gemIds === gemIds) custodyBatch = undefined;
+        return publicGemCustody(gemIds);
+      }),
+    };
+  }
+  const batch = custodyBatch;
+  batch.gemIds.push(gemId);
+  if (batch.gemIds.length >= CUSTODY_BATCH_LIMIT) custodyBatch = undefined;
+  return batch.result;
+}
 
 function readGem(gemId: bigint): Promise<DecoratedGem | undefined> {
   const key = gemId.toString();
