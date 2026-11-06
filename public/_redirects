@@ -1,4 +1,4 @@
-# `/ipfs/*` is served by netlify/edge-functions/ipfs.ts, which runs before these
+# `/ipfs/*` is served by netlify/functions/ipfs.ts, which runs before these
 # rules. It must not come back as a proxy rewrite here: a rewrite forwards any
 # content type, so a pinned HTML page would run as this site.
 /*    /index.html   200
