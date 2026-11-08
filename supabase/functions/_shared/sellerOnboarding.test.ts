@@ -72,8 +72,8 @@ describe('lab-graded public attributes', () => {
     }
     expect(metadata.attributes).toContainEqual({ trait_type: 'Carat Weight', value: 2.05 });
     expect(metadata.attributes).toContainEqual({
-      trait_type: 'Certification Lab',
-      value: 'Digital Carat Gem Lab',
+      trait_type: 'Graded By',
+      value: 'Digital Carat',
     });
   });
 

@@ -22,6 +22,7 @@ const BankPage = lazyRoute(() => import('@/pages/BankPage'));
 const CustodianPage = lazyRoute(() => import('@/pages/CustodianPage'));
 const VerifyPage = lazyRoute(() => import('@/pages/VerifyPage'));
 const AboutPage = lazyRoute(() => import('@/pages/AboutPage'));
+const OpenSeaBuyersPage = lazyRoute(() => import('@/pages/OpenSeaBuyersPage'));
 const GiftClaimPage = lazyRoute(() => import('@/pages/GiftClaimPage'));
 const GiftCodeEntryPage = lazyRoute(() => import('@/pages/GiftCodeEntryPage'));
 const CanvaCallbackPage = lazyRoute(() => import('@/pages/CanvaCallbackPage'));
@@ -63,6 +64,7 @@ export const router = createBrowserRouter([
       // "not found" the API returns rather than a sign-in prompt.
       { path: '/verify', element: route(<VerifyPage />) },
       { path: '/about', element: route(<AboutPage />) },
+      { path: '/opensea', element: route(<OpenSeaBuyersPage />) },
       // Where a printed gift card's QR code points. Public: the recipient may
       // have no account at all when they arrive, and the page's job is to show
       // them what the gift is before it asks them for anything.

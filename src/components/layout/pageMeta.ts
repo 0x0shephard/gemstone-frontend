@@ -34,6 +34,7 @@ export const PAGE_META: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Review lifecycle evidence, approvals and append-only corrections',
   },
   '/about': { title: 'About Digital Carat', subtitle: 'The vault for tokenized gemstones' },
+  '/opensea': { title: 'Bought on OpenSea?', subtitle: 'Your token is a real gemstone' },
 };
 
 /**

@@ -12,6 +12,9 @@ const OPENSEA_CHAIN_SLUG: Readonly<Record<number, string>> = {
   [polygon.id]: 'polygon',
 };
 
+/** The Digital Carat collection on OpenSea. Its slug is fixed by OpenSea. */
+export const OPENSEA_COLLECTION_URL = 'https://opensea.io/collection/digital-carat-gem';
+
 /** The token's OpenSea page, or undefined where OpenSea does not list the chain. */
 export function openSeaItemUrl(
   chainId: number,

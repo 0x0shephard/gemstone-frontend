@@ -1,6 +1,8 @@
 {
-  "name": "Digital Carat Gem",
-  "description": "Each token is one physical gemstone held in vault custody, and can be redeemed for the stone itself. Custody, reserve and redemption details for every token are at digitalcarat.io.",
-  "image": "https://digitalcarat.io/icon-512.png",
+  "name": "Digital Carat",
+  "description": "One token, one physical gemstone. Every stone in this collection has been graded and taken into custody, and the holder can redeem the token for the stone itself at digitalcarat.io. Redeeming retires the token.",
+  "image": "https://digitalcarat.io/brand/opensea-logo.png",
+  "banner_image": "https://digitalcarat.io/brand/opensea-banner.png",
+  "featured_image": "https://digitalcarat.io/brand/opensea-banner.png",
   "external_link": "https://digitalcarat.io"
 }
