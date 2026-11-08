@@ -10,7 +10,7 @@
  * therefore irreversible once a gem is registered.
  */
 
-import { metadataDescription } from './network.ts';
+import { metadataDescription, metadataExternalUrl } from './network.ts';
 
 /** Attribute subset needed to describe a gem publicly. */
 export interface PublicAttributes {
@@ -37,6 +37,7 @@ export interface PublicMetadata {
   name: string;
   description: string;
   image?: string;
+  external_url?: string;
   attributes: MetadataAttribute[];
 }
 
@@ -67,6 +68,45 @@ const FORBIDDEN_KEYS = [
   'kyc',
 ];
 
+/*
+ * Marketplaces show these documents as they are, and they can never be edited,
+ * so the wording has to be fit to display when it is written. Graders enter
+ * lowercase values; anything already cased is left as the grader wrote it.
+ */
+function displayCase(value?: string): string | undefined {
+  if (!value || value !== value.toLowerCase()) return value;
+  return value.replace(/(^|[\s-])(\p{L})/gu, (_, gap: string, letter: string) => {
+    return gap + letter.toUpperCase();
+  });
+}
+
+/** Clarity grades are codes (VS1, I1), so they read in capitals. */
+function clarityLabel(value?: string): string | undefined {
+  return value && /^[a-z]{1,4}\d?$/i.test(value) ? value.toUpperCase() : displayCase(value);
+}
+
+/**
+ * A stone called only "Emerald" is indistinguishable in a marketplace grid, so
+ * it takes its weight and cut. A name someone actually chose is kept.
+ */
+function marketName(attributes: PublicAttributes): string {
+  const gem = displayCase(attributes.gemstoneType);
+  if (!gem || typeof attributes.caratWeight !== 'number') return attributes.name;
+  if (attributes.name.trim().toLowerCase() !== gem.toLowerCase()) return attributes.name;
+  const cut = displayCase(attributes.cut);
+  return `${attributes.caratWeight.toFixed(2)} ct ${gem}${cut ? `, ${cut}` : ''}`;
+}
+
+/**
+ * Staff grading is recorded under the operations organisation. Listing that as
+ * a "Certification Lab" would read as an independent certificate.
+ */
+function gradingTrait(lab?: string): [string, string | undefined] {
+  return lab && /^digital carat\b/i.test(lab.trim())
+    ? ['Graded By', 'Digital Carat']
+    : ['Certification Lab', lab];
+}
+
 /**
  * ERC-721 metadata as specified in the contracts repo's off-chain data
  * architecture.
@@ -82,21 +122,23 @@ export function buildPublicMetadata(
   options: { image?: string; chainId: number },
 ): PublicMetadata {
   const traits: Array<[string, string | number | undefined]> = [
-    ['Gem Type', attributes.gemstoneType],
+    ['Gem Type', displayCase(attributes.gemstoneType)],
     ['Carat Weight', attributes.caratWeight],
     ['Origin', attributes.origin],
     ['Dimensions', attributes.dimensions],
-    ['Color', attributes.color],
-    ['Color Grade', attributes.colorGrade],
-    ['Clarity', attributes.clarity],
-    ['Cut', attributes.cut],
-    ['Treatment', attributes.treatment],
-    ['Certification Lab', attributes.gradingLab],
+    ['Color', displayCase(attributes.color)],
+    ['Color Grade', displayCase(attributes.colorGrade)],
+    ['Clarity', clarityLabel(attributes.clarity)],
+    ['Cut', displayCase(attributes.cut)],
+    ['Treatment', displayCase(attributes.treatment)],
+    gradingTrait(attributes.gradingLab),
   ];
+  const externalUrl = metadataExternalUrl(options.chainId);
   const metadata: PublicMetadata = {
-    name: attributes.name,
+    name: marketName(attributes),
     description: metadataDescription(options.chainId),
     ...(options.image ? { image: options.image } : {}),
+    ...(externalUrl ? { external_url: externalUrl } : {}),
     attributes: traits
       .filter(
         (entry): entry is [string, string | number] =>

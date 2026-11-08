@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { BrandMark } from '@/components/ui/BrandMark';
 import { activeChain } from '@/config/chains';
 
@@ -17,6 +18,12 @@ export function Footer() {
           <div className="font-mono text-[10px] uppercase tracking-[0.13em] text-emerald">
             Custody network verified
           </div>
+          <Link
+            to="/opensea"
+            className="mt-2 inline-block text-[11.5px] text-ink-muted hover:text-ink"
+          >
+            Bought a gem on OpenSea?
+          </Link>
           <p className="mt-2 text-[11.5px] text-ink-dim">
             © 2026 Digital Carat · {activeChain.name}
             {activeChain.testnet ? ' testnet' : ''}

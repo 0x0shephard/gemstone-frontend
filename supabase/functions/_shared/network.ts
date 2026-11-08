@@ -59,6 +59,9 @@ export const PRODUCTION_METADATA_DESCRIPTION =
   'A physical gemstone tokenised by Digital Carat. Its laboratory-graded attributes and approved ' +
   'valuation are committed on-chain, and the stone is held in custody until it is redeemed.';
 
+/** Where a buyer who found the token on an outside marketplace is sent. */
+export const PRODUCTION_METADATA_EXTERNAL_URL = 'https://digitalcarat.io/opensea';
+
 export const TEST_NETWORK_METADATA_DESCRIPTION =
   'Digital Carat test-network gemstone record. Its valuation and custody exist for testing only ' +
   'and confer no claim to a physical stone.';
@@ -68,4 +71,9 @@ export function metadataDescription(chainId: number): string {
   if (network.production) return PRODUCTION_METADATA_DESCRIPTION;
   if (chainId === 11155111) return SEPOLIA_METADATA_DESCRIPTION;
   return TEST_NETWORK_METADATA_DESCRIPTION;
+}
+
+/** Test records must not send anyone to the production site, permanently. */
+export function metadataExternalUrl(chainId: number): string | undefined {
+  return networkProfile(chainId).production ? PRODUCTION_METADATA_EXTERNAL_URL : undefined;
 }

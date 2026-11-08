@@ -71,6 +71,48 @@ const ARBITRUM_ONE = { chainId: 42161 };
 const SEPOLIA = { chainId: 11155111 };
 
 describe('public metadata document', () => {
+  it('makes a generic name distinct in a marketplace grid', () => {
+    const graded = { name: 'Emerald', gemstoneType: 'emerald', caratWeight: 0.6, cut: 'cushion' };
+    expect(buildPublicMetadata(graded, ARBITRUM_ONE).name).toBe('0.60 ct Emerald, Cushion');
+    expect(buildPublicMetadata({ ...graded, name: 'Sea Glass' }, ARBITRUM_ONE).name).toBe(
+      'Sea Glass',
+    );
+  });
+
+  it('writes trait values fit to display', () => {
+    const { attributes: traits } = buildPublicMetadata(
+      {
+        name: 'Graded',
+        color: 'deep green',
+        clarity: 'i1',
+        treatment: 'no oil',
+        cut: 'Step-Cut',
+      },
+      ARBITRUM_ONE,
+    );
+    expect(traits).toEqual([
+      { trait_type: 'Color', value: 'Deep Green' },
+      { trait_type: 'Clarity', value: 'I1' },
+      { trait_type: 'Cut', value: 'Step-Cut' },
+      { trait_type: 'Treatment', value: 'No Oil' },
+    ]);
+  });
+
+  it('does not present in-house grading as an outside certificate', () => {
+    const { attributes: traits } = buildPublicMetadata(
+      { name: 'Graded', gradingLab: 'Digital Carat Operations' },
+      ARBITRUM_ONE,
+    );
+    expect(traits).toEqual([{ trait_type: 'Graded By', value: 'Digital Carat' }]);
+  });
+
+  it('links production tokens to the site and test tokens nowhere', () => {
+    expect(buildPublicMetadata(attributes, ARBITRUM_ONE).external_url).toBe(
+      'https://digitalcarat.io/opensea',
+    );
+    expect(buildPublicMetadata(attributes, { chainId: 11155111 }).external_url).toBeUndefined();
+  });
+
   it('emits the ERC-721 shape with standard attributes', () => {
     const metadata = buildPublicMetadata(attributes, ARBITRUM_ONE);
     expect(metadata.name).toBe('Ruby Horizon');
@@ -83,7 +125,7 @@ describe('public metadata document', () => {
       { name: 'Bare', gemstoneType: 'ruby', origin: '' },
       ARBITRUM_ONE,
     );
-    expect(metadata.attributes).toEqual([{ trait_type: 'Gem Type', value: 'ruby' }]);
+    expect(metadata.attributes).toEqual([{ trait_type: 'Gem Type', value: 'Ruby' }]);
   });
 
   it('includes an image only when one is supplied', () => {
@@ -99,8 +141,8 @@ describe('public metadata document', () => {
       ARBITRUM_ONE,
     );
     expect(metadata.attributes).toEqual([
-      { trait_type: 'Color', value: 'red' },
-      { trait_type: 'Color Grade', value: 'medium' },
+      { trait_type: 'Color', value: 'Red' },
+      { trait_type: 'Color Grade', value: 'Medium' },
     ]);
   });
 });
