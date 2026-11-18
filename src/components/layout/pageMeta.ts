@@ -33,6 +33,11 @@ export const PAGE_META: Record<string, { title: string; subtitle: string }> = {
     title: 'Operations admin',
     subtitle: 'Review lifecycle evidence, approvals and append-only corrections',
   },
+  '/promotions': {
+    title: 'Promotions',
+    subtitle: 'Promotional codes, their token pools and who claimed them',
+  },
+  '/claim': { title: 'Claim a stone', subtitle: 'Redeem a promotional code' },
   '/about': { title: 'About Digital Carat', subtitle: 'The vault for tokenized gemstones' },
   '/opensea': { title: 'Bought on OpenSea?', subtitle: 'Your token is a real gemstone' },
 };
@@ -46,6 +51,7 @@ export const OPS_ROUTE_CAPABILITY: Readonly<Record<string, OperationsCapability>
   '/gemlab': 'gemlab.read',
   '/bank': 'bank.receive',
   '/custodian': 'custodian.fulfill',
+  '/promotions': 'admin.correct',
 };
 
 /** Whether the viewer may see an operations route: known yes, known no, or not yet known. */

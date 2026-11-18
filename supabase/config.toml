@@ -81,6 +81,9 @@ verify_jwt = false
 [functions.v1-gift-claim]
 verify_jwt = false
 
+[functions.v1-promo]
+verify_jwt = false
+
 # Machine-called sweeps. They carry no user session, so the platform's JWT gate
 # would reject a scheduler outright — a 401 from the gateway, before the function
 # runs, which looks exactly like a working cron that quietly does nothing.

@@ -150,6 +150,9 @@ export function staffNavigation(access?: OperationsAccess | null): NavItem[] {
   if (capabilities.has('admin.read')) {
     items.push(staffRoute('Operations admin', 'Admin', '/verify', 'OP'));
   }
+  if (capabilities.has('admin.correct')) {
+    items.push(staffRoute('Promotions', 'Promos', '/promotions', 'PR'));
+  }
   return items;
 }
 
@@ -181,7 +184,8 @@ export const primaryMobileItems = [
 
 export function groupForPath(pathname: string): string {
   if (pathname.startsWith('/gem/')) return 'Discover';
-  if (['/gemlab', '/bank', '/custodian', '/verify'].includes(pathname)) return 'Operations';
+  if (['/gemlab', '/bank', '/custodian', '/verify', '/promotions'].includes(pathname))
+    return 'Operations';
   return (
     navigationGroups.find((group) => group.items.some((item) => pathname === item.to))?.label ??
     'Private vault'

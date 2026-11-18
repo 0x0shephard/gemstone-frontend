@@ -25,6 +25,8 @@ const AboutPage = lazyRoute(() => import('@/pages/AboutPage'));
 const OpenSeaBuyersPage = lazyRoute(() => import('@/pages/OpenSeaBuyersPage'));
 const GiftClaimPage = lazyRoute(() => import('@/pages/GiftClaimPage'));
 const GiftCodeEntryPage = lazyRoute(() => import('@/pages/GiftCodeEntryPage'));
+const PromoClaimPage = lazyRoute(() => import('@/pages/PromoClaimPage'));
+const PromotionsPage = lazyRoute(() => import('@/pages/PromotionsPage'));
 const CanvaCallbackPage = lazyRoute(() => import('@/pages/CanvaCallbackPage'));
 const NotFoundPage = lazyRoute(() => import('@/pages/NotFoundPage'));
 
@@ -60,6 +62,7 @@ export const router = createBrowserRouter([
       { path: '/gemlab', element: route(<GemLabPage />) },
       { path: '/bank', element: route(<BankPage />) },
       { path: '/custodian', element: route(<CustodianPage />) },
+      { path: '/promotions', element: route(<PromotionsPage />) },
       // Deliberately absent from navigation. Non-members are shown the same
       // "not found" the API returns rather than a sign-in prompt.
       { path: '/verify', element: route(<VerifyPage />) },
@@ -72,6 +75,8 @@ export const router = createBrowserRouter([
       // resolve to something. Without it the instruction landed on Not Found.
       { path: '/gift', element: route(<GiftCodeEntryPage />) },
       { path: '/gift/:code', element: route(<GiftClaimPage />) },
+      // Where a promotional QR code points (/claim?code=FIRST100). Public, like /gift.
+      { path: '/claim', element: route(<PromoClaimPage />) },
       // Canva's registered redirect URI. One fixed path, since Canva matches
       // the whole URL against the integration's settings.
       { path: '/canva/callback', element: route(<CanvaCallbackPage />) },
