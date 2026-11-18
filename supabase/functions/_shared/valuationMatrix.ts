@@ -32,6 +32,16 @@ export interface VarietySpec {
   colors: readonly string[];
   /** Colour-grade choices for this variety. */
   colorGrades: readonly string[];
+  /**
+   * Flat pricing: price = basePricePerCaratUsd x carat weight, nothing else.
+   *
+   * For stones sold at a fixed rate (lab-created star rubies at $10/ct). Grades
+   * are still required and checked against the matrix, so the record stays
+   * complete, but clarity, treatment, the carat curve, demand and the price
+   * floor do not move the figure. Only the price ceiling still applies. Absent
+   * means false, and an absent key leaves older matrix hashes unchanged.
+   */
+  fixedPricePerCarat?: boolean;
 }
 
 export interface ValuationMatrix {

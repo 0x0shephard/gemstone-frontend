@@ -217,6 +217,10 @@ export function calculateValuation(
 
   const caratPpm = caratMultiplierPpm(microCarats, matrix.caratAnchors);
 
+  if (variety.fixedPricePerCarat) {
+    return fixedPerCaratValuation(input, variety.basePricePerCaratUsd, microCarats, matrix);
+  }
+
   // One division at the end keeps every intermediate at full precision.
   const baseValueUsd =
     (variety.basePricePerCaratUsd *
@@ -260,6 +264,53 @@ export function calculateValuation(
     marketMultiplierPpm,
     priceUsd: clampedUsd * USD_DECIMALS,
     priceClamped: clampedUsd !== wholeUsd,
+  };
+}
+
+/**
+ * Flat-rate pricing for a `fixedPricePerCarat` variety: base x carats, rounded
+ * up to whole USD, bounded only by the price ceiling.
+ *
+ * The grades were already validated by the caller (clarity, treatment, carat
+ * range); shape, colour and colour grade are validated here through
+ * `marketMultiplier`, and then recorded at exactly 1.0 so the stored breakdown
+ * shows they did not move the price. The carat "multiplier" is the weight
+ * itself (1 ct = 1,000,000 ppm), which is what base x carats means.
+ */
+function fixedPerCaratValuation(
+  input: ValuationInput,
+  basePricePerCaratUsd: bigint,
+  microCarats: bigint,
+  matrix: ValuationMatrix,
+): Valuation {
+  const variety = matrix.varieties[normalize(input.variety)];
+  const neutral = (detail: MultiplierDetail): MultiplierDetail => ({
+    ...detail,
+    rawPpm: PPM,
+    multiplierPpm: PPM,
+    clamped: false,
+  });
+  const marketMultipliers = [
+    neutral(marketMultiplier('shape', input.shape, matrix.shapes, {}, matrix)),
+    neutral(marketMultiplier('color', input.color, variety.colors, {}, matrix)),
+    neutral(marketMultiplier('colorGrade', input.colorGrade, variety.colorGrades, {}, matrix)),
+  ];
+
+  const baseValueUsd = (basePricePerCaratUsd * USD_DECIMALS * microCarats) / MICRO_CARAT;
+  const wholeUsd = ceilDiv(baseValueUsd, USD_DECIMALS);
+  const cappedUsd = wholeUsd > matrix.priceClampUsd.max ? matrix.priceClampUsd.max : wholeUsd;
+
+  return {
+    matrixVersion: matrix.version,
+    basePricePerCaratUsd,
+    caratMultiplierPpm: microCarats,
+    clarityMultiplierPpm: PPM,
+    treatmentMultiplierPpm: PPM,
+    baseValueUsd,
+    marketMultipliers,
+    marketMultiplierPpm: PPM,
+    priceUsd: cappedUsd * USD_DECIMALS,
+    priceClamped: cappedUsd !== wholeUsd,
   };
 }
 

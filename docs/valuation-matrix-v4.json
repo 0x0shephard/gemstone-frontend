@@ -1,0 +1,132 @@
+{
+  "caratAnchors": [
+    {
+      "microCarats": "500000",
+      "multiplierPpm": "550000"
+    },
+    {
+      "microCarats": "1000000",
+      "multiplierPpm": "1000000"
+    },
+    {
+      "microCarats": "2000000",
+      "multiplierPpm": "2400000"
+    },
+    {
+      "microCarats": "3000000",
+      "multiplierPpm": "4200000"
+    },
+    {
+      "microCarats": "5000000",
+      "multiplierPpm": "9000000"
+    },
+    {
+      "microCarats": "30000000",
+      "multiplierPpm": "9000000"
+    }
+  ],
+  "clarityPpm": {
+    "dcl": "50000",
+    "i1": "500000",
+    "i2": "300000",
+    "i3": "200000",
+    "si1": "1000000",
+    "si2": "750000",
+    "vs": "1150000",
+    "vvs": "1450000"
+  },
+  "criterionClampPpm": {
+    "max": "1300000",
+    "min": "750000"
+  },
+  "deltaPpm": {
+    "color": "500000",
+    "colorGrade": "500000",
+    "shape": "500000"
+  },
+  "demandPriorCount": "1",
+  "priceClampUsd": {
+    "max": "250000",
+    "min": "100"
+  },
+  "shapes": [
+    "cabochon",
+    "cushion",
+    "emerald cut",
+    "marquise",
+    "oval",
+    "pear",
+    "round",
+    "diamond cut"
+  ],
+  "totalClampPpm": {
+    "max": "1500000",
+    "min": "700000"
+  },
+  "treatmentPpm": {
+    "heated": "600000",
+    "minor heat": "850000",
+    "no oil": "1150000",
+    "oiled": "750000",
+    "unheated": "1200000"
+  },
+  "varieties": {
+    "aquamarine": {
+      "basePricePerCaratUsd": "300",
+      "colorGrades": ["dark", "medium", "light"],
+      "colors": ["blue", "deep blue", "greenish blue"]
+    },
+    "emerald": {
+      "basePricePerCaratUsd": "1000",
+      "colorGrades": ["bluish green", "deep green", "light green"],
+      "colors": ["green"]
+    },
+    "peridot": {
+      "basePricePerCaratUsd": "200",
+      "colorGrades": ["dark", "medium", "light"],
+      "colors": ["green"]
+    },
+    "ruby": {
+      "basePricePerCaratUsd": "1500",
+      "colorGrades": ["dark", "medium", "light"],
+      "colors": ["red"]
+    },
+    "sapphire": {
+      "basePricePerCaratUsd": "1200",
+      "colorGrades": ["dark", "medium", "light"],
+      "colors": [
+        "blue",
+        "purple",
+        "gray",
+        "green",
+        "brown",
+        "orange",
+        "pink",
+        "violet",
+        "white",
+        "yellow"
+      ]
+    },
+    "tourmaline": {
+      "basePricePerCaratUsd": "400",
+      "colorGrades": ["dark", "medium", "light"],
+      "colors": [
+        "blue",
+        "bluish green",
+        "greenish blue",
+        "orangey red",
+        "pink",
+        "pinkish red",
+        "red",
+        "watermelon"
+      ]
+    },
+    "synthetic star ruby": {
+      "basePricePerCaratUsd": "10",
+      "colors": ["red"],
+      "colorGrades": ["dark", "medium", "light"],
+      "fixedPricePerCarat": true
+    }
+  },
+  "version": "digital-carat-matrix-v4"
+}
