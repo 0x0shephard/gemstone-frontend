@@ -545,6 +545,23 @@ async function readGemUncached(
           .catch(() => undefined) as Promise<readonly [Address, bigint] | undefined>,
       ])
     : undefined;
+  /*
+   * A minted token's own URI, which `DGENFT.setTokenURI` can replace to correct
+   * its picture; the registry keeps the URI the gem was registered with. Read in
+   * the same batch as the token state, and any failure falls back to the
+   * registry's URI, which is what every token carried before such a correction.
+   */
+  const metadataUri: Promise<string> = minted
+    ? (
+        client.readContract({
+          ...contract('DGENFT'),
+          functionName: 'tokenURI',
+          args: [registryGem.tokenId],
+        }) as Promise<string>
+      )
+        .then((uri) => uri || registryGem.metadataURI)
+        .catch(() => registryGem.metadataURI)
+    : Promise.resolve(registryGem.metadataURI);
   // Started now for the same reason. A failed lookup only means the custodian is
   // not named on this read.
   const custodyLookup = Promise.race([
@@ -580,7 +597,7 @@ async function readGemUncached(
             }) as Promise<boolean>
           ).catch(() => false)
         : Promise.resolve(false),
-      readMetadata(registryGem.metadataURI),
+      metadataUri.then(readMetadata),
       (secondaryFeePctPromise ??= (
         client.readContract({
           ...contract('Marketplace'),
@@ -734,7 +751,7 @@ async function readGemUncached(
      * helped and is no longer what the gate checks.
      */
     redeem: canRedeem ? 'Eligible' : 'Blocked',
-    metadataUri: registryGem.metadataURI,
+    metadataUri: await metadataUri,
     // Full-resolution, same-origin original: card art and exports need the real
     // bytes, while on-screen thumbnails try the resized CDN copy first.
     image: imageUrls(details.image).find((url) => !url.startsWith('/.netlify/images')),

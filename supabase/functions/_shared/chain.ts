@@ -121,6 +121,10 @@ export const dgeNftAbi = parseAbi([
   'function transferLocked(uint256 tokenId) view returns (bool)',
   'function tokenGem(uint256 tokenId) view returns (uint256)',
   'function safeTransferFrom(address from, address to, uint256 tokenId)',
+  'function tokenURI(uint256 tokenId) view returns (string)',
+  // Picture corrections (METADATA_ROLE). Absent before the DGENFT metadata upgrade.
+  'function setTokenURI(uint256 tokenId, string uri)',
+  'function hasRole(bytes32 role, address account) view returns (bool)',
   'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
 ]);
 

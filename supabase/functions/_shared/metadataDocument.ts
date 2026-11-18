@@ -334,3 +334,32 @@ export function verifyPublishedDocument(
     ...options,
   });
 }
+
+/**
+ * A published metadata document with only its `image` replaced.
+ *
+ * Used to correct a minted token's picture (`DGENFT.setTokenURI`). Everything
+ * else — name, attributes, certificate hash — is carried over unchanged, so the
+ * new document differs from the registered one in exactly one field. Refuses a
+ * document that is not a JSON object, or one that carries private fields.
+ */
+export function replaceMetadataImage(document: string, image: string): PublicMetadata {
+  if (!/^ipfs:\/\/\S+$/.test(image)) throw new Error('The new image must be an ipfs:// URI');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(document);
+  } catch {
+    throw new Error('The current metadata is not valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('The current metadata is not a JSON object');
+  }
+  const next = { ...(parsed as PublicMetadata), image };
+  // Gems registered before the standard shape have flat keys and no
+  // `attributes`; check them without adding the field to their document.
+  assertNoPrivateFields({
+    ...next,
+    attributes: Array.isArray(next.attributes) ? next.attributes : [],
+  });
+  return next;
+}

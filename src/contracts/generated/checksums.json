@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "generatedFrom": "../gemstone/out",
   "sha256": {
-    "DGENFT": "a0dfe2ff031fedbc47667e1dc591aa10f422383be3b9ed2d8113d03860ca3778",
+    "DGENFT": "4550926d1560e450efd291440f04ab28061aab52abd81a894dd591ab032a8dd0",
     "GemRegistry": "d68ab3cc2c7439493c13acd050b9f0cb11ee917ac051ffb3741e7b126aa7563e",
     "PaymentTokenRegistry": "eb42d455a714aadb76bf14ba9b634a5ba31ceef4ddbb659acc5c33b3ea89b56f",
     "ReserveManager": "6f46169bc35f3c66b32ee5ca657ed8eca2f0591f7ed8eac2f838e944b6d8d0ae",

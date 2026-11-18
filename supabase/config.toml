@@ -42,6 +42,9 @@ verify_jwt = false
 [functions.v1-appraisal-matrix]
 verify_jwt = false
 
+[functions.v1-token-picture]
+verify_jwt = false
+
 [functions.v1-gemlab-workflow]
 verify_jwt = false
 

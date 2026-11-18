@@ -27,6 +27,7 @@ const GiftClaimPage = lazyRoute(() => import('@/pages/GiftClaimPage'));
 const GiftCodeEntryPage = lazyRoute(() => import('@/pages/GiftCodeEntryPage'));
 const PromoClaimPage = lazyRoute(() => import('@/pages/PromoClaimPage'));
 const PromotionsPage = lazyRoute(() => import('@/pages/PromotionsPage'));
+const TokenPicturesPage = lazyRoute(() => import('@/pages/TokenPicturesPage'));
 const CanvaCallbackPage = lazyRoute(() => import('@/pages/CanvaCallbackPage'));
 const NotFoundPage = lazyRoute(() => import('@/pages/NotFoundPage'));
 
@@ -63,6 +64,7 @@ export const router = createBrowserRouter([
       { path: '/bank', element: route(<BankPage />) },
       { path: '/custodian', element: route(<CustodianPage />) },
       { path: '/promotions', element: route(<PromotionsPage />) },
+      { path: '/token-pictures', element: route(<TokenPicturesPage />) },
       // Deliberately absent from navigation. Non-members are shown the same
       // "not found" the API returns rather than a sign-in prompt.
       { path: '/verify', element: route(<VerifyPage />) },

@@ -254,3 +254,48 @@ export function canonicalDocument(
 ): string {
   return canonicalize(buildPublicMetadata(attributes, options));
 }
+
+/**
+ * Fetches the exact bytes of a published metadata document, from an inline
+ * `data:` URI or through the gateways (operator override first, provider last).
+ */
+export async function readPublishedDocument(uri: string): Promise<string> {
+  if (uri.startsWith('data:')) {
+    const comma = uri.indexOf(',');
+    if (comma < 0) throw new Error('Malformed data: metadata URI');
+    const header = uri.slice(0, comma);
+    const payload = uri.slice(comma + 1);
+    return header.includes(';base64')
+      ? new TextDecoder().decode(Uint8Array.from(atob(payload), (char) => char.charCodeAt(0)))
+      : decodeURIComponent(payload);
+  }
+  const match = /^ipfs:\/\/(?:ipfs\/)?([^/?#]+)$/.exec(uri);
+  if (!match || !isValidCid(match[1])) throw new Error(`Unsupported metadata URI: ${uri}`);
+  let lastError: unknown;
+  for (const gateway of allGateways()) {
+    try {
+      const response = await fetch(`${gateway.replace(/\/$/, '')}/${match[1]}`, {
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) throw new Error(`${gateway} answered ${response.status}`);
+      return await response.text();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Metadata could not be fetched');
+}
+
+/**
+ * Pins and verifies an already-built public document (a picture correction),
+ * serialised canonically like every other published document.
+ */
+export async function publishCorrectedMetadata(
+  metadata: Record<string, unknown>,
+  name: string,
+): Promise<PublishedMetadata> {
+  const document = canonicalize(metadata);
+  const cid = await pinDocument(document, name);
+  const { confirmedBy } = await provePublished(cid, new TextEncoder().encode(document), 'Metadata');
+  return { uri: ipfsUri(cid), cid, document, confirmedBy };
+}
