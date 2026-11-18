@@ -152,6 +152,7 @@ export function staffNavigation(access?: OperationsAccess | null): NavItem[] {
   }
   if (capabilities.has('admin.correct')) {
     items.push(staffRoute('Promotions', 'Promos', '/promotions', 'PR'));
+    items.push(staffRoute('Token pictures', 'Pictures', '/token-pictures', 'TP'));
   }
   return items;
 }
@@ -184,7 +185,11 @@ export const primaryMobileItems = [
 
 export function groupForPath(pathname: string): string {
   if (pathname.startsWith('/gem/')) return 'Discover';
-  if (['/gemlab', '/bank', '/custodian', '/verify', '/promotions'].includes(pathname))
+  if (
+    ['/gemlab', '/bank', '/custodian', '/verify', '/promotions', '/token-pictures'].includes(
+      pathname,
+    )
+  )
     return 'Operations';
   return (
     navigationGroups.find((group) => group.items.some((item) => pathname === item.to))?.label ??

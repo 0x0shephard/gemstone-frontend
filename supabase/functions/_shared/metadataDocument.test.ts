@@ -423,3 +423,36 @@ describe('independent-confirmation requirement', () => {
     ).rejects.toThrow(/0 of 1 independent/i);
   });
 });
+
+describe('replacing a published document image', () => {
+  const published = JSON.stringify({
+    name: 'Green Tourmaline',
+    description: 'A gemstone',
+    image: 'ipfs://QmOld',
+    attributes: [{ trait_type: 'Gem Type', value: 'Tourmaline' }],
+  });
+
+  it('changes only the image', async () => {
+    const { replaceMetadataImage } = await import('./metadataDocument');
+    const next = replaceMetadataImage(published, 'ipfs://QmNew');
+    expect(next).toEqual({ ...JSON.parse(published), image: 'ipfs://QmNew' });
+  });
+
+  it('keeps a legacy flat document flat', async () => {
+    const { replaceMetadataImage } = await import('./metadataDocument');
+    const legacy = JSON.stringify({ name: 'Sapphire', gemstoneType: 'sapphire', image: 'x' });
+    const next = replaceMetadataImage(legacy, 'ipfs://QmNew') as unknown as Record<string, unknown>;
+    expect(next).toEqual({ name: 'Sapphire', gemstoneType: 'sapphire', image: 'ipfs://QmNew' });
+    expect('attributes' in next).toBe(false);
+  });
+
+  it('refuses a non-IPFS image, broken JSON and private fields', async () => {
+    const { replaceMetadataImage } = await import('./metadataDocument');
+    expect(() => replaceMetadataImage(published, 'https://example.com/a.png')).toThrow();
+    expect(() => replaceMetadataImage('{nope', 'ipfs://QmNew')).toThrow();
+    expect(() => replaceMetadataImage('[1]', 'ipfs://QmNew')).toThrow();
+    expect(() =>
+      replaceMetadataImage(JSON.stringify({ name: 'x', sellerWallet: '0x1' }), 'ipfs://QmNew'),
+    ).toThrow(/private fields/);
+  });
+});

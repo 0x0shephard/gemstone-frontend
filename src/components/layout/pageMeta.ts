@@ -38,6 +38,10 @@ export const PAGE_META: Record<string, { title: string; subtitle: string }> = {
     subtitle: 'Promotional codes, their token pools and who claimed them',
   },
   '/claim': { title: 'Claim a stone', subtitle: 'Redeem a promotional code' },
+  '/token-pictures': {
+    title: 'Token pictures',
+    subtitle: 'Replace the photo of a minted stone everywhere it is shown',
+  },
   '/about': { title: 'About Digital Carat', subtitle: 'The vault for tokenized gemstones' },
   '/opensea': { title: 'Bought on OpenSea?', subtitle: 'Your token is a real gemstone' },
 };
@@ -52,6 +56,7 @@ export const OPS_ROUTE_CAPABILITY: Readonly<Record<string, OperationsCapability>
   '/bank': 'bank.receive',
   '/custodian': 'custodian.fulfill',
   '/promotions': 'admin.correct',
+  '/token-pictures': 'admin.correct',
 };
 
 /** Whether the viewer may see an operations route: known yes, known no, or not yet known. */
