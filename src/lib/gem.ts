@@ -4,9 +4,10 @@ import { fmtUsd, fmtCarats } from './format';
 
 /** Accent color per gem type (matches the mockup + design tokens). */
 export function colorFor(type: GemType): string {
-  return type === 'ruby'
+  // Substring match so variants ("synthetic star ruby") keep their family colour.
+  return type.includes('ruby')
     ? 'var(--dc-ruby)'
-    : type === 'sapphire'
+    : type.includes('sapphire')
       ? 'var(--dc-sapphire)'
       : 'var(--dc-emerald)';
 }

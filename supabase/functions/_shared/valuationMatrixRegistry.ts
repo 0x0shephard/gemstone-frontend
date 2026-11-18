@@ -58,12 +58,18 @@ export function parseMatrixDocument(value: unknown): ValuationMatrix {
   const varieties = Object.fromEntries(
     Object.entries(object(source.varieties, 'varieties')).map(([name, candidate]) => {
       const spec = object(candidate, `varieties.${name}`);
+      if (spec.fixedPricePerCarat !== undefined && typeof spec.fixedPricePerCarat !== 'boolean') {
+        throw new Error(`${name}.fixedPricePerCarat must be true or false`);
+      }
       return [
         text(name, 'variety').toLowerCase(),
         {
           basePricePerCaratUsd: integer(spec.basePricePerCaratUsd, `${name}.basePricePerCaratUsd`),
           colors: stringList(spec.colors, `${name}.colors`),
           colorGrades: stringList(spec.colorGrades, `${name}.colorGrades`),
+          // Kept only when true, so documents without it canonicalise and hash
+          // exactly as before.
+          ...(spec.fixedPricePerCarat === true ? { fixedPricePerCarat: true } : {}),
         } satisfies VarietySpec,
       ];
     }),

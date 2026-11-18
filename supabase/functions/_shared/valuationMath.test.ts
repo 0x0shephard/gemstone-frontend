@@ -279,3 +279,60 @@ describe('matrix options are exhaustively priceable', () => {
     ).toThrow();
   });
 });
+
+describe('fixed price per carat (lab-created star ruby)', () => {
+  const FLAT = {
+    ...VALUATION_MATRIX,
+    version: 'test-flat',
+    varieties: {
+      ...VALUATION_MATRIX.varieties,
+      'synthetic star ruby': {
+        basePricePerCaratUsd: 10n,
+        colors: ['red'],
+        colorGrades: ['dark', 'medium', 'light'],
+        fixedPricePerCarat: true,
+      },
+    },
+  };
+  const STAR = {
+    variety: 'Synthetic Star Ruby',
+    caratWeight: 3,
+    clarity: 'i1',
+    treatment: 'heated',
+    shape: 'cabochon',
+    color: 'red',
+    colorGrade: 'medium',
+  };
+
+  it('prices exactly $10 per carat', () => {
+    expect(usd(calculateValuation(STAR, {}, FLAT).priceUsd)).toBe(30);
+  });
+
+  it('ignores clarity, treatment, demand and the $100 floor', () => {
+    const best = calculateValuation(
+      { ...STAR, clarity: 'vvs', treatment: 'unheated' },
+      { shape: { round: 500 } },
+      FLAT,
+    );
+    expect(usd(best.priceUsd)).toBe(30);
+    expect(best.priceClamped).toBe(false);
+    expect(best.marketMultiplierPpm).toBe(PPM);
+    expect(best.marketMultipliers.every((detail) => detail.multiplierPpm === PPM)).toBe(true);
+  });
+
+  it('rounds a fractional weight up to whole dollars', () => {
+    expect(usd(calculateValuation({ ...STAR, caratWeight: 2.37 }, {}, FLAT).priceUsd)).toBe(24);
+  });
+
+  it('still refuses grades the matrix does not know', () => {
+    expect(() => calculateValuation({ ...STAR, color: 'blue' }, {}, FLAT)).toThrow();
+    expect(() => calculateValuation({ ...STAR, clarity: 'flawless' }, {}, FLAT)).toThrow();
+    expect(() => calculateValuation({ ...STAR, caratWeight: 0.2 }, {}, FLAT)).toThrow();
+  });
+
+  it('leaves every other variety priced as before', () => {
+    expect(calculateValuation(EXAMPLE, {}, FLAT).priceUsd).toBe(
+      calculateValuation(EXAMPLE, {}, VALUATION_MATRIX).priceUsd,
+    );
+  });
+});
