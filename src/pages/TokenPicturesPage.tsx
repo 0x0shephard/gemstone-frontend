@@ -8,6 +8,8 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { explorerTxUrl } from '@/config/chains';
 import { gatewayUrl, isIpfsUri, PUBLIC_IPFS_GATEWAYS } from '@/config/ipfs';
 import { shortenAddress } from '@/lib/format';
+import { gemLabel, gemTokenLabel, parseGemNumbers } from '@/lib/gemNumbers';
+import { tokenIdForGem } from '@/services';
 import {
   inspectTokenPicture,
   replaceTokenPicture,
@@ -36,14 +38,18 @@ export default function TokenPicturesPage() {
 }
 
 function TokenPictures() {
-  const [tokenId, setTokenId] = useState('');
+  const [gemInput, setGemInput] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [token, setToken] = useState<TokenPicture | null>(null);
   const preview = useMemo(() => (file ? URL.createObjectURL(file) : undefined), [file]);
   useEffect(() => () => (preview ? URL.revokeObjectURL(preview) : undefined), [preview]);
 
   const inspect = useMutation({
-    mutationFn: (id: string) => inspectTokenPicture(id),
+    mutationFn: async (input: string) => {
+      const [gemId] = parseGemNumbers(input);
+      if (gemId === undefined) throw new Error('Enter a DGE number, such as DGE-14.');
+      return inspectTokenPicture((await tokenIdForGem(gemId)).toString());
+    },
     onSuccess: (result) => {
       setToken(result);
       setFile(null);
@@ -65,7 +71,7 @@ function TokenPictures() {
   function lookUp(event: FormEvent) {
     event.preventDefault();
     replace.reset();
-    inspect.mutate(tokenId.replace(/^#/, '').trim());
+    inspect.mutate(gemInput);
   }
 
   const error = (inspect.error ?? replace.error) as Error | null;
@@ -87,13 +93,17 @@ function TokenPictures() {
         <form onSubmit={lookUp} className="flex flex-wrap items-end gap-3">
           <div className="w-40">
             <Field
-              label="Token number"
-              placeholder="3"
-              value={tokenId}
-              onChange={(event) => setTokenId(event.target.value)}
+              label="DGE number"
+              placeholder="DGE-14"
+              value={gemInput}
+              onChange={(event) => setGemInput(event.target.value)}
             />
           </div>
-          <Button type="submit" variant="secondary" disabled={!tokenId.trim() || inspect.isPending}>
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={!gemInput.trim() || inspect.isPending}
+          >
             {inspect.isPending ? 'Loading…' : 'Look up'}
           </Button>
         </form>
@@ -104,10 +114,10 @@ function TokenPictures() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h3 className="text-[16px] font-semibold text-ink">
-                {token.name ?? `Token #${token.tokenId}`}
+                {token.name ?? gemLabel(token.gemId)}
               </h3>
               <p className="mt-1 font-mono text-[11px] text-ink-dim">
-                Token #{token.tokenId} · gem {token.gemId} · held by {shortenAddress(token.owner)}
+                {gemTokenLabel(token.gemId, token.tokenId)} · held by {shortenAddress(token.owner)}
               </p>
             </div>
             {!token.canEdit && (

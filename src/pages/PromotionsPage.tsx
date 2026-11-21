@@ -11,8 +11,9 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { TxButton } from '@/components/tx/TxButton';
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
+import { gemLabel, gemTokenLabel, parseGemNumbers, resolveGemTokens } from '@/lib/gemNumbers';
 import { qrMatrix } from '@/lib/qr';
-import { dataService } from '@/services';
+import { dataService, tokenIdForGem } from '@/services';
 import {
   addPromotionTokens,
   createPromotion,
@@ -86,6 +87,8 @@ function CampaignCard({ campaign, view }: { campaign: PromoCampaign; view: Promo
   });
   const pool = view.pool.filter((row) => row.campaign_id === campaign.id);
   const claims = view.claims.filter((row) => row.campaign_id === campaign.id);
+  // Claims record only the token; its gem was captured when the token was pooled.
+  const gemByToken = new Map(view.pool.map((row) => [row.token_id, row.gem_id]));
   const link = promoClaimUrl(campaign.code);
 
   return (
@@ -127,7 +130,7 @@ function CampaignCard({ campaign, view }: { campaign: PromoCampaign; view: Promo
 
       {pool.length > 0 && (
         <p className="text-[12px] text-ink-muted">
-          Pool: {pool.map((row) => `#${row.token_id}`).join(', ')}
+          Pool: {pool.map((row) => gemTokenLabel(row.gem_id, row.token_id)).join(', ')}
         </p>
       )}
 
@@ -136,7 +139,7 @@ function CampaignCard({ campaign, view }: { campaign: PromoCampaign; view: Promo
           <table className="w-full text-left text-[12px]">
             <thead className="text-ink-dim">
               <tr>
-                <th className="py-1.5 pr-3 font-medium">Token</th>
+                <th className="py-1.5 pr-3 font-medium">Stone</th>
                 <th className="py-1.5 pr-3 font-medium">Email</th>
                 <th className="py-1.5 pr-3 font-medium">Wallet</th>
                 <th className="py-1.5 pr-3 font-medium">Status</th>
@@ -146,7 +149,9 @@ function CampaignCard({ campaign, view }: { campaign: PromoCampaign; view: Promo
             <tbody className="text-ink-muted">
               {claims.map((claim) => (
                 <tr key={claim.token_id} className="border-t border-line/[0.06]">
-                  <td className="py-1.5 pr-3 font-mono">#{claim.token_id}</td>
+                  <td className="py-1.5 pr-3 font-mono">
+                    {gemTokenLabel(gemByToken.get(claim.token_id), claim.token_id)}
+                  </td>
                   <td className="py-1.5 pr-3">{claim.email}</td>
                   <td className="py-1.5 pr-3 font-mono">{shortenAddress(claim.wallet)}</td>
                   <td className="py-1.5 pr-3">
@@ -251,19 +256,39 @@ function AddTokens({
   const [outcome, setOutcome] = useState<{
     added: string[];
     refused: Array<{ tokenId: string; reason: string }>;
+    /** DGE numbers that never reached the pool check: missing or not minted. */
+    unresolved: string[];
+    gemByToken: Map<string, string>;
   } | null>(null);
 
-  const tokenIds = input.split(/[\s,#]+/).filter((value) => /^\d+$/.test(value));
+  const gemIds = parseGemNumbers(input);
   const add = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!address) throw new Error('Connect the wallet the tokens come from first.');
-      return addPromotionTokens({ campaignId, tokenIds, depositedFrom: address });
+      const resolved = await resolveGemTokens(gemIds, tokenIdForGem);
+      const gemByToken = new Map<string, string>();
+      const unresolved: string[] = [];
+      for (const row of resolved) {
+        if (row.tokenId === undefined)
+          unresolved.push(row.problem ?? `${gemLabel(row.gemId)} could not be read`);
+        else gemByToken.set(row.tokenId.toString(), row.gemId.toString());
+      }
+      const tokenIds = [...gemByToken.keys()];
+      const result =
+        tokenIds.length > 0
+          ? await addPromotionTokens({ campaignId, tokenIds, depositedFrom: address })
+          : { added: [], refused: [] };
+      return { ...result, unresolved, gemByToken };
     },
     onSuccess: async (result) => {
       setOutcome(result);
       await queryClient.invalidateQueries({ queryKey: ['operations', 'promotions'] });
     },
   });
+  const stoneName = (tokenId: string) => {
+    const gemId = outcome?.gemByToken.get(tokenId);
+    return gemId ? gemLabel(gemId) : `token #${tokenId}`;
+  };
   const notInEscrow = (outcome?.refused ?? []).filter((row) =>
     row.reason.includes('operator escrow'),
   );
@@ -277,8 +302,8 @@ function AddTokens({
     <div className="space-y-3">
       <form onSubmit={submit} className="space-y-2.5">
         <Field
-          label="Add tokens to the pool"
-          placeholder="12, 13, 14"
+          label="Add stones to the pool"
+          placeholder="DGE-16, DGE-17"
           value={input}
           onChange={(event) => setInput(event.target.value)}
         />
@@ -288,12 +313,8 @@ function AddTokens({
           ). Tokens not yet in escrow can be moved below, one transaction each. A cancelled claim
           returns its stone to this wallet.
         </p>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={tokenIds.length === 0 || add.isPending || !address}
-        >
-          {add.isPending ? 'Checking…' : `Add ${tokenIds.length || ''} to pool`}
+        <Button type="submit" size="sm" disabled={gemIds.length === 0 || add.isPending || !address}>
+          {add.isPending ? 'Checking…' : `Add ${gemIds.length || ''} to pool`}
         </Button>
       </form>
 
@@ -301,13 +322,21 @@ function AddTokens({
       {outcome && (
         <div className="space-y-2 text-[12px]">
           {outcome.added.length > 0 && (
-            <p className="text-emerald">Added: {outcome.added.map((id) => `#${id}`).join(', ')}</p>
+            <p className="text-emerald">
+              Added:{' '}
+              {outcome.added.map((id) => gemTokenLabel(outcome.gemByToken.get(id), id)).join(', ')}
+            </p>
           )}
+          {outcome.unresolved.map((problem) => (
+            <p key={problem} className="text-amber">
+              {problem}
+            </p>
+          ))}
           {outcome.refused
             .filter((row) => !row.reason.includes('operator escrow'))
             .map((row) => (
               <p key={row.tokenId} className="text-amber">
-                #{row.tokenId}: {row.reason}
+                {gemTokenLabel(outcome.gemByToken.get(row.tokenId), row.tokenId)}: {row.reason}
               </p>
             ))}
           {notInEscrow.length > 0 && (
@@ -323,11 +352,11 @@ function AddTokens({
                   action={() =>
                     dataService.transferToken({ tokenId: BigInt(row.tokenId), to: operatorWallet })
                   }
-                  pendingLabel={`Moving #${row.tokenId}…`}
-                  doneLabel={`#${row.tokenId} moved`}
+                  pendingLabel={`Moving ${stoneName(row.tokenId)}…`}
+                  doneLabel={`${stoneName(row.tokenId)} moved`}
                   telemetryFlow="promo_escrow"
                 >
-                  Move #{row.tokenId} to escrow
+                  Move {stoneName(row.tokenId)} to escrow
                 </TxButton>
               ))}
             </div>
