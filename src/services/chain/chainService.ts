@@ -503,6 +503,25 @@ async function readRegistryGem(gemId: bigint): Promise<RegistryGem> {
   })) as RegistryGem;
 }
 
+/**
+ * The token minted for a DGE number. Admin screens take DGE numbers because the
+ * two sequences drift apart: auction stones are minted only when they sell.
+ */
+export async function tokenIdForGem(gemId: bigint): Promise<bigint> {
+  let gem: RegistryGem;
+  try {
+    gem = await readRegistryGem(gemId);
+  } catch (error) {
+    if (isContractAnswer(error)) throw new Error(`DGE-${gemId} does not exist.`, { cause: error });
+    throw error;
+  }
+  if (Number(gem.status) === 0) throw new Error(`DGE-${gemId} does not exist.`);
+  if (gem.tokenId === 0n) {
+    throw new Error(`DGE-${gemId} has no token yet. Auction stones are minted when they sell.`);
+  }
+  return gem.tokenId;
+}
+
 async function readGemUncached(
   gemId: bigint,
   includeTerminal = false,
