@@ -7,7 +7,7 @@ import { generateGiftCode, hashGiftCode } from '../_shared/gift.ts';
 import { requireProtocolDeployment } from '../_shared/deployment.ts';
 import { assertNoLegacySepoliaFallback } from '../_shared/legacySepoliaEnv.ts';
 import { MissingCapabilityError, operationalMembership } from '../_shared/operations.ts';
-import { normalizePromoCode, promoErrorMessage } from '../_shared/promo.ts';
+import { claimWalletMismatch, normalizePromoCode, promoErrorMessage } from '../_shared/promo.ts';
 
 /**
  * Promotional claims (FIRST100): one pooled token per new collector.
@@ -155,6 +155,20 @@ Deno.serve(async (request) => {
       await assertOperatorChain(chain);
       const escrowWallet = getAddress(chain.account.address);
 
+      // One stone per wallet covers the wallet a stone actually reached, not
+      // only the one a claim recorded.
+      const { data: reached } = await admin
+        .from('promo_claims')
+        .select('id,gift_cards!inner(claimed_wallet)')
+        .eq('campaign_id', campaign.id)
+        .eq('gift_cards.claimed_wallet', wallet.toLowerCase())
+        .neq('profile_id', user.id)
+        .limit(1);
+      if (reached && reached.length > 0) {
+        const known = promoErrorMessage('promo_already_claimed')!;
+        return json({ error: known.message, state: known.state }, 409);
+      }
+
       const giftCode = generateGiftCode();
       const codeHash = await hashGiftCode(giftCode);
       const { data: assigned, error: assignError } = await admin.rpc('assign_promo_token', {
@@ -207,6 +221,14 @@ Deno.serve(async (request) => {
         if (card?.status !== 'active' && card?.status !== 'claim_pending') {
           return json({ error: 'This claim was withdrawn. Contact Digital Carat support.' }, 409);
         }
+        // An unfinished retry must still go to the wallet the claim recorded.
+        const { data: claim } = await admin
+          .from('promo_claims')
+          .select('wallet')
+          .eq('gift_card_id', row.gift_card_id)
+          .maybeSingle();
+        const mismatch = claimWalletMismatch(String(claim?.wallet ?? ''), wallet);
+        if (mismatch) return json({ error: mismatch }, 409);
         const { error: rotateError } = await admin
           .from('gift_cards')
           .update({ code_hash: codeHash })

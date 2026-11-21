@@ -30,3 +30,16 @@ export function promoErrorMessage(
   const key = Object.keys(REFUSALS).find((candidate) => databaseMessage.includes(candidate));
   return key ? REFUSALS[key] : null;
 }
+
+/**
+ * A claim is recorded against one wallet, and only that wallet may receive its
+ * stone. `v1-gift-claim` sends to the caller's primary wallet at transfer time,
+ * so a claimant who switched wallets between claiming and the transfer would
+ * otherwise route the stone to a wallet no claim records, which could then
+ * claim again from another account. Null when the wallets match.
+ */
+export function claimWalletMismatch(recordedWallet: string, currentWallet: string): string | null {
+  if (recordedWallet.toLowerCase() === currentWallet.toLowerCase()) return null;
+  const short = `${recordedWallet.slice(0, 6)}…${recordedWallet.slice(-4)}`;
+  return `This claim was made for wallet ${short}. Make it your primary wallet again to receive the stone.`;
+}
