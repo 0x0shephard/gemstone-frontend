@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/States';
 import { ClaimSteps } from '@/components/gift/ClaimSteps';
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
+import { useClaimFunnel } from '@/hooks/useClaimFunnel';
 import { claimGiftCard, inspectGiftCard, type GiftCardSummary } from '@/services/offchain/gift';
 
 /**
@@ -34,6 +35,7 @@ export default function GiftClaimPage() {
   }, [code]);
 
   useEffect(load, [load]);
+  const report = useClaimFunnel('gift', undefined, Boolean(card));
 
   if (loadError) {
     return (
@@ -65,7 +67,12 @@ export default function GiftClaimPage() {
             </>
           }
           claimHint="Digital Carat releases the token from escrow to your wallet. There is nothing to pay."
-          onClaim={async () => setCard(await claimGiftCard(code))}
+          onClaim={async () => {
+            const claimed = await claimGiftCard(code);
+            report('completed', claimed.state);
+            setCard(claimed);
+          }}
+          onProgress={report}
         />
       ) : (
         <TerminalState card={card} />

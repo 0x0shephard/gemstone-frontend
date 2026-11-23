@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { useAccount, useChainId } from 'wagmi';
 import type { Address } from 'viem';
@@ -56,6 +56,7 @@ export function ClaimSteps({
   claimHint,
   claimLabel = 'Claim the token',
   onClaim,
+  onProgress,
 }: {
   /** Where the sign-in link and Google sign-in return to. */
   returnTo: string;
@@ -64,6 +65,8 @@ export function ClaimSteps({
   claimLabel?: string;
   /** Performs the claim; a thrown error is shown under the steps. */
   onClaim: () => Promise<void>;
+  /** Called once each when the email and the wallet become verified (for analytics). */
+  onProgress?: (step: 'email_verified' | 'wallet_verified') => void;
 }) {
   const { user, loading, linkedWallet, googleAuthAvailable, signInWithEmail, signInWithGoogle } =
     useAuth();
@@ -80,6 +83,14 @@ export function ClaimSteps({
   const emailVerified = Boolean(user?.email);
   const walletVerified = Boolean(address && linkedWallet?.toLowerCase() === address.toLowerCase());
   const wrongNetwork = isConnected && chainId !== activeChain.id;
+
+  // Parents pass a stable callback and report each step once.
+  useEffect(() => {
+    if (emailVerified) onProgress?.('email_verified');
+  }, [emailVerified, onProgress]);
+  useEffect(() => {
+    if (walletVerified) onProgress?.('wallet_verified');
+  }, [walletVerified, onProgress]);
 
   async function sendLink(event: React.FormEvent) {
     event.preventDefault();

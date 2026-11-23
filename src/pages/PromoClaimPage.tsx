@@ -10,6 +10,9 @@ import { Skeleton } from '@/components/ui/States';
 import { ClaimSteps } from '@/components/gift/ClaimSteps';
 import { explorerTxUrl } from '@/config/chains';
 import { shortenAddress } from '@/lib/format';
+import { withUtm } from '@/lib/attribution';
+import { campaignTags } from '@/lib/telemetry';
+import { useClaimFunnel } from '@/hooks/useClaimFunnel';
 import {
   claimPromo,
   inspectPromo,
@@ -43,6 +46,14 @@ export default function PromoClaimPage() {
 
   useEffect(load, [load]);
 
+  const report = useClaimFunnel('promo', promo?.code, Boolean(promo));
+  const claim = useCallback(async () => {
+    if (!promo) return;
+    const claimed = await claimPromo(promo.code);
+    report('completed', claimed.state);
+    setResult(claimed);
+  }, [promo, report]);
+
   if (!code || loadError) {
     return <CodeEntry error={loadError} onCode={(next) => setParams({ code: next })} />;
   }
@@ -55,11 +66,15 @@ export default function PromoClaimPage() {
         <ClaimResult result={result} />
       ) : promo.state === 'open' ? (
         <ClaimSteps
-          returnTo={`${window.location.origin}/claim?code=${encodeURIComponent(promo.code)}`}
+          returnTo={withUtm(
+            `${window.location.origin}/claim?code=${encodeURIComponent(promo.code)}`,
+            campaignTags(),
+          )}
           emailHint="Sign in with your email address. Each email, account and wallet can claim one stone with this code."
           claimHint="Digital Carat transfers the token from escrow to your wallet. There is nothing to pay, and it appears in your portfolio once the transfer confirms."
           claimLabel="Claim my free stone"
-          onClaim={async () => setResult(await claimPromo(promo.code))}
+          onClaim={claim}
+          onProgress={report}
         />
       ) : (
         <Card className="dc-facet-border p-6">
