@@ -18,11 +18,12 @@ export function AnalyticsConsent() {
       />
       <span>
         <span className="block text-[13px] font-medium text-ink">
-          Share anonymous product events
+          Share anonymous usage and ad measurement
         </span>
         <span className="mt-0.5 block text-[11.5px] leading-relaxed text-ink-muted">
-          Opt in to onboarding and transaction funnel events. Wallet addresses, signatures,
-          certificates, private forms, and delivery details are never sent.
+          Page visits, the ad campaign that brought you here, and claim and transaction steps,
+          measured with PostHog and the Meta Pixel. Wallet addresses, emails, gift codes,
+          signatures, certificates, private forms and delivery details are never sent.
         </span>
       </span>
     </label>

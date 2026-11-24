@@ -61,6 +61,7 @@ const schema = z.object({
   VITE_SENTRY_DSN: z.string().trim().default(''),
   VITE_POSTHOG_KEY: z.string().trim().default(''),
   VITE_POSTHOG_HOST: optionalUrl.default('https://us.i.posthog.com'),
+  VITE_META_PIXEL_ID: z.string().trim().regex(/^\d*$/, 'The Meta Pixel ID is a number').default(''),
 });
 
 const parsed = schema.safeParse(import.meta.env);
@@ -95,6 +96,7 @@ export const env = {
   sentryDsn: values.VITE_SENTRY_DSN,
   posthogKey: values.VITE_POSTHOG_KEY,
   posthogHost: values.VITE_POSTHOG_HOST,
+  metaPixelId: values.VITE_META_PIXEL_ID,
 } as const;
 
 export const isConfigured = (value: string): boolean => value.length > 0;
