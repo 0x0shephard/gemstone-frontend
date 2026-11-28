@@ -14,6 +14,15 @@ type PostHog = (typeof import('posthog-js'))['default'];
 let sentry: Promise<Sentry | undefined> | undefined;
 let posthog: Promise<PostHog | undefined> | undefined;
 
+type AnalyticsIdentity = {
+  distinctId: string;
+  email?: string;
+  name?: string;
+};
+
+let analyticsIdentity: AnalyticsIdentity | undefined;
+let appliedIdentityId: string | undefined;
+
 function loadPostHog(): Promise<PostHog | undefined> {
   posthog ??= import('posthog-js').then(
     (module) => module.default,
@@ -38,9 +47,24 @@ export function campaignTags(): UtmTags {
   return { ...landingUtm, ...readUtm(window.location.search) };
 }
 
+function posthogConfigured(): boolean {
+  const missingVariable = !env.posthogKey
+    ? 'VITE_POSTHOG_KEY'
+    : !env.posthogHost
+      ? 'VITE_POSTHOG_HOST'
+      : undefined;
+  if (!missingVariable) return true;
+  if (import.meta.env.DEV) {
+    throw new Error(
+      `${missingVariable} variable required by PostHog is missing or un-configured, this causes events to be silently missed. This error stops appearing once ${missingVariable} is configured`,
+    );
+  }
+  return false;
+}
+
 /** Whether any analytics tool is configured, which is when the consent banner shows. */
 export function analyticsConfigured(): boolean {
-  return Boolean(env.posthogKey || env.metaPixelId);
+  return posthogConfigured() || Boolean(env.metaPixelId);
 }
 
 /** True once the visitor has answered the consent banner either way. */
@@ -61,6 +85,33 @@ function scrub(value: unknown, key = ''): unknown {
   return value;
 }
 
+function applyAnalyticsIdentity(client: PostHog) {
+  if (!analyticsIdentity || appliedIdentityId === analyticsIdentity.distinctId) return;
+  const { distinctId, ...personProperties } = analyticsIdentity;
+  client.identify(distinctId, personProperties);
+  appliedIdentityId = distinctId;
+}
+
+/**
+ * Identifies the authenticated Supabase account after consent. The UUID is the
+ * durable distinct id; contact details are person properties, never event data.
+ */
+export function identifyAnalyticsUser(identity: AnalyticsIdentity) {
+  analyticsIdentity = identity;
+  if (!hasAnalyticsConsent() || !posthogConfigured()) return;
+  void loadPostHog().then((client) => {
+    if (client?.__loaded) applyAnalyticsIdentity(client);
+  });
+}
+
+/** Clears the browser identity when an authenticated account signs out. */
+export function resetAnalyticsUser() {
+  analyticsIdentity = undefined;
+  appliedIdentityId = undefined;
+  if (!hasAnalyticsConsent() || !posthogConfigured()) return;
+  void loadPostHog().then((client) => client?.reset());
+}
+
 export function initializeTelemetry() {
   if (env.sentryDsn && !sentry) {
     sentry = import('@sentry/react').then(
@@ -78,22 +129,28 @@ export function initializeTelemetry() {
     );
   }
   if (localStorage.getItem(CONSENT_KEY) !== 'granted') return;
-  if (env.posthogKey) {
+  if (posthogConfigured()) {
     void loadPostHog().then((client) => {
       if (!client || client.__loaded) return;
       client.init(env.posthogKey, {
         api_host: env.posthogHost,
-        autocapture: false,
-        // Sent by `capturePageView` after each navigation, with a cleaned address.
+        // Dedicated PostHog logger; existing browser console output remains local.
+        logs: {
+          serviceName: 'digital-carat-frontend',
+          environment: env.dataMode,
+        },
+        // Pageviews are sent by `capturePageView` after each navigation, with a cleaned address.
         capture_pageview: false,
         capture_pageleave: false,
-        disable_session_recording: true,
-        person_profiles: 'never',
+        // Report errors that escape application handling; console errors remain out of scope.
+        capture_exceptions: {
+          capture_unhandled_errors: true,
+          capture_unhandled_rejections: true,
+          capture_console_errors: false,
+        },
+        // Keep anonymous browsing private while allowing authenticated people.
+        person_profiles: 'identified_only',
         persistence: 'localStorage',
-        // No feature flags or remote scripts: the flags request carries the raw
-        // first address, which `before_send` never sees.
-        advanced_disable_flags: true,
-        disable_external_dependency_loading: true,
         // Addresses can carry gift codes and sign-in tokens; see attribution.ts.
         before_send: (event) => (event ? sanitizeProperties(event, window.location.origin) : event),
       });
@@ -101,6 +158,9 @@ export function initializeTelemetry() {
         Object.entries(landingUtm).map(([key, value]) => [`landing_${key}`, value]),
       );
       if (Object.keys(first).length > 0) client.register_once(first);
+      // On a refresh, identity may be known before the consent-gated SDK loads.
+      applyAnalyticsIdentity(client);
+      client.logger.info('browser telemetry initialized', { initialization: 'consent_granted' });
       // The page the visitor is on when tracking starts; later ones come from
       // `capturePageView`. Promise callbacks run in order, so init comes first.
       client.capture('$pageview');
@@ -121,7 +181,7 @@ export function captureError(error: unknown) {
 export function setAnalyticsConsent(enabled: boolean) {
   localStorage.setItem(CONSENT_KEY, enabled ? 'granted' : 'denied');
   if (enabled) initializeTelemetry();
-  if (env.posthogKey && posthog) {
+  if (posthogConfigured() && posthog) {
     void loadPostHog().then((client) =>
       enabled ? client?.opt_in_capturing() : client?.opt_out_capturing(),
     );
@@ -149,7 +209,7 @@ export function capturePageView() {
   const key = pageKey();
   if (key === lastPageView) return;
   lastPageView = key;
-  if (env.posthogKey) void loadPostHog().then((client) => client?.capture('$pageview'));
+  if (posthogConfigured()) void loadPostHog().then((client) => client?.capture('$pageview'));
   trackMetaPixel('PageView');
 }
 
@@ -171,7 +231,7 @@ export function captureClaimStep(
   properties: { flow: 'promo' | 'gift'; code?: string; result?: string },
 ) {
   if (!hasAnalyticsConsent()) return;
-  if (env.posthogKey) {
+  if (posthogConfigured()) {
     void loadPostHog().then((client) => client?.capture(`claim_${step}`, properties));
   }
   const pixel = PIXEL_CLAIM_EVENTS[step];
@@ -190,18 +250,50 @@ const allowedEvents = new Set([
   'transaction_started',
   'transaction_confirmed',
   'transaction_failed',
+  'kyc_verification_started',
+  'seller_submission_completed',
+  'gift_card_issued',
 ]);
 
+type ProductEvent =
+  | 'onboarding_step'
+  | 'transaction_started'
+  | 'transaction_confirmed'
+  | 'transaction_failed'
+  | 'kyc_verification_started'
+  | 'seller_submission_completed'
+  | 'gift_card_issued';
+
 export function captureProductEvent(
-  event: 'onboarding_step' | 'transaction_started' | 'transaction_confirmed' | 'transaction_failed',
-  properties: { flow: string; step?: string; paymentAsset?: 'ETH' | 'USDC'; result?: string },
+  event: ProductEvent,
+  properties: {
+    flow: string;
+    step?: string;
+    paymentAsset?: 'ETH' | 'USDC';
+    result?: string;
+    saleMode?: 'auction' | 'seller_mint';
+    custodyPreference?: 'protocol_custodian' | 'approved_existing_custodian';
+    template?: string;
+  },
 ) {
   // Local only, and independent of analytics consent: it never leaves the device.
-  if (event !== 'onboarding_step') {
+  if (event.startsWith('transaction_')) {
     recordDiagnostic('tx', `${event.replace('transaction_', '')} ${properties.flow}`, {
       result: properties.result ?? null,
     });
   }
   if (!allowedEvents.has(event) || !hasAnalyticsConsent()) return;
-  if (env.posthogKey) void loadPostHog().then((client) => client?.capture(event, properties));
+  if (posthogConfigured()) {
+    void loadPostHog().then((client) => {
+      if (!client) return;
+      client.capture(event, properties);
+      if (
+        event === 'kyc_verification_started' ||
+        event === 'seller_submission_completed' ||
+        event === 'gift_card_issued'
+      ) {
+        client.logger.info('high-value product action recorded', { product_event: event });
+      }
+    });
+  }
 }

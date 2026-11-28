@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import type { KycStatus } from '@/hooks/useKyc';
 import { startKycSession, type KycSession } from '@/services/offchain/kycSession';
+import { captureProductEvent } from '@/lib/telemetry';
 
 // The WebSDK is large and only needed once someone actually starts verifying.
 const SumsubWebSdk = lazy(() => import('@sumsub/websdk-react'));
@@ -36,6 +37,7 @@ export function KycVerifyButton({ status }: { status: KycStatus }) {
     setError(undefined);
     try {
       setSession(await startKycSession());
+      captureProductEvent('kyc_verification_started', { flow: 'kyc' });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Identity verification could not start.');
     } finally {

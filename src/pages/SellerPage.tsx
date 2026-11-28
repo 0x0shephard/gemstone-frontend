@@ -14,6 +14,7 @@ import { getContractAddress } from '@/config/contracts';
 import { gemRegistryAbi } from '@/contracts/abis';
 import { ensureUploadableImage } from '@/lib/imageTranscode';
 import { SellerMintPayment } from '@/components/seller/SellerMintPayment';
+import { captureProductEvent } from '@/lib/telemetry';
 import {
   activateSellerGem,
   getSellerSubmissions,
@@ -187,6 +188,11 @@ export default function SellerPage() {
         notes,
         certificates,
         media,
+      });
+      captureProductEvent('seller_submission_completed', {
+        flow: 'seller_intake',
+        saleMode,
+        custodyPreference,
       });
       setResult({
         ok: true,
