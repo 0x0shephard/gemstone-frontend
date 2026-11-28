@@ -19,6 +19,7 @@ import { disablePush } from '@/services/offchain/push';
 import { authConfigured, env } from '@/config/env';
 import { friendlyAuthError, oauthRedirectError, type AuthActionResult } from '@/lib/auth';
 import { functionErrorMessage, functionResponseBody } from '@/lib/supabaseFunctions';
+import { identifyAnalyticsUser, resetAnalyticsUser } from '@/lib/telemetry';
 import { setTransactionAuthSnapshot } from './authSnapshot';
 import {
   isWalletConnectConnector,
@@ -84,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const { signMessageAsync } = useSignMessage();
   const { address: connectedAddress, connector } = useAccount();
   const siweNonce = useRef<CachedSiweNonce | null>(null);
+  const identifiedAnalyticsUserId = useRef<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -196,6 +198,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sub.subscription.unsubscribe();
     };
   }, [loadPrimaryWallet]);
+
+  useEffect(() => {
+    if (!user) {
+      if (identifiedAnalyticsUserId.current) resetAnalyticsUser();
+      identifiedAnalyticsUserId.current = null;
+      return;
+    }
+    if (identifiedAnalyticsUserId.current === user.id) return;
+    // A direct account change does not necessarily pass through an anonymous state.
+    if (identifiedAnalyticsUserId.current) resetAnalyticsUser();
+    identifyAnalyticsUser({
+      distinctId: user.id,
+      ...(user.email ? { email: user.email } : {}),
+      ...(typeof user.user_metadata.full_name === 'string'
+        ? { name: user.user_metadata.full_name }
+        : {}),
+    });
+    identifiedAnalyticsUserId.current = user.id;
+  }, [user]);
 
   /*
    * Issue the nonce as soon as a signed-in account connects. The previous flow

@@ -53,6 +53,7 @@ import {
 import { cn } from '@/lib/cn';
 import { useAuth } from '@/providers/AuthProvider';
 import { env } from '@/config/env';
+import { captureProductEvent } from '@/lib/telemetry';
 
 type Step = 'compose' | 'escrow' | 'issued';
 
@@ -248,6 +249,7 @@ export function GiftCardComposer({ gem, open, onClose, onBack }: GiftCardCompose
       // server. Keep the scoped session copy through the issued screen and
       // remove it only when the sender explicitly finishes with the card.
       persist(card, escrowTxHash);
+      captureProductEvent('gift_card_issued', { flow: 'gift_card', template });
       setStep('issued');
     } catch (confirmError) {
       setError(

@@ -60,7 +60,7 @@ const schema = z.object({
   VITE_SUMSUB_BACKEND_URL: optionalUrl.default(''),
   VITE_SENTRY_DSN: z.string().trim().default(''),
   VITE_POSTHOG_KEY: z.string().trim().default(''),
-  VITE_POSTHOG_HOST: optionalUrl.default('https://us.i.posthog.com'),
+  VITE_POSTHOG_HOST: z.string().trim().default(''),
   VITE_META_PIXEL_ID: z.string().trim().regex(/^\d*$/, 'The Meta Pixel ID is a number').default(''),
 });
 
